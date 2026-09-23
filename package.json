@@ -1,0 +1,13 @@
+{
+  "name": "twinstack-web",
+  "private": true,
+  "scripts": {
+    "postinstall": "npm --prefix client install && npm --prefix server install",
+    "dev": "concurrently -n api,web -c blue,green \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "build": "npm --prefix client run build",
+    "start": "concurrently -n api,web \"npm --prefix server start\" \"npm --prefix client start\""
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}

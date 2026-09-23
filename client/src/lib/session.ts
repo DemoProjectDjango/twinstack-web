@@ -1,0 +1,33 @@
+import "server-only";
+import { cookies } from "next/headers";
+
+export type User = {
+  id: number;
+  login: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string;
+  profileUrl: string;
+};
+
+const apiUrl = process.env.API_URL ?? "http://localhost:4000";
+
+export const SESSION_COOKIE = "session";
+
+/** Resolves the current user by asking the Express API to verify the session cookie. */
+export async function getUser(): Promise<User | null> {
+  const session = (await cookies()).get(SESSION_COOKIE);
+  if (!session) return null;
+
+  try {
+    const res = await fetch(`${apiUrl}/api/me`, {
+      headers: { cookie: `${SESSION_COOKIE}=${session.value}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { user: User };
+    return data.user;
+  } catch {
+    return null;
+  }
+}
