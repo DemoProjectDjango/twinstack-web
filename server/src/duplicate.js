@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 export const GIT_TIMEOUT_MS = 8 * 60 * 1000;
 const REPO_NAME_PATTERN = /^[A-Za-z0-9._-]{1,100}$/;
-const OWNER_PATTERN = /^[A-Za-z0-9-]{1,39}$/;
+export const OWNER_PATTERN = /^[A-Za-z0-9-]{1,39}$/;
 
 /** An error whose message is safe to show to the user. */
 /** The token lacks a scope the operation needs; the user must sign in again to grant it. */
@@ -34,15 +34,20 @@ async function githubJson(pathname, accessToken, init) {
 
 // The token is passed to git through environment config (never argv or a
 // remote URL) so it doesn't show up in process listings or .git/config.
-function gitEnv(accessToken) {
+export function gitEnv(accessToken) {
   const basic = Buffer.from(`x-access-token:${accessToken}`).toString("base64");
   return {
     ...process.env,
     GIT_TERMINAL_PROMPT: "0",
     GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_COUNT: "2",
     GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
     GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
+    // An empty helper clears any configured ones (e.g. Git Credential Manager on
+    // Windows), so a rejected token fails fast instead of waiting on a hidden
+    // sign-in prompt until the timeout.
+    GIT_CONFIG_KEY_1: "credential.helper",
+    GIT_CONFIG_VALUE_1: "",
   };
 }
 
@@ -169,7 +174,7 @@ async function findEmptyOwnRepo(userLogin, name, accessToken, env) {
 }
 
 // Keep the lines that explain the failure; drop git's progress noise.
-function summarizeGitError(stderr) {
+export function summarizeGitError(stderr) {
   const lines = stderr
     .split("\n")
     .map((l) => l.trim())

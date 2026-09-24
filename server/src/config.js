@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 function required(name) {
   const value = process.env[name];
@@ -26,4 +28,13 @@ export const config = {
   sessionCookie: "session",
   stateCookie: "oauth_state",
   sessionMaxAgeSeconds: 60 * 60 * 24 * 7,
+  // Where site working copies are cloned. Must survive restarts to keep
+  // uncommitted work, so point it at persistent disk outside tmp in production.
+  workspacesDir: path.resolve(process.env.WORKSPACES_DIR || path.join(tmpdir(), "twinstack-workspaces")),
+  // Who may open site workspaces (which runs the site repo's own code on this
+  // server). Empty means everyone in development and no one in production.
+  allowedLogins: (process.env.ALLOWED_GITHUB_LOGINS ?? "")
+    .split(",")
+    .map((login) => login.trim().toLowerCase())
+    .filter(Boolean),
 };

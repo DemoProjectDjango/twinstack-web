@@ -50,6 +50,41 @@ is still empty. A non-empty repo is never overwritten.
 The GitHub token is handed to git via `GIT_CONFIG_*` env vars, never argv or a remote URL. The server
 host needs `git` installed. Git LFS objects, issues, PRs, wikis and settings are not copied.
 
+### Site manager
+
+Writable repos on the dashboard have a **Manage site** button (`/sites/:owner/:repo`). For a
+twinstack-site repo (one with `site.config.json` and `scripts/build.js`) it runs the site's `npm run`
+commands from a web page:
+
+| Tab | Site command |
+| --- | --- |
+| Build & preview | `check`, `build --drafts` (shown in an iframe), `npm ci`, `changelog` |
+| Pages | `new <type> "Title" [--draft] [--slug=]` |
+| Navigation | `nav:add`, `nav:remove` |
+| Edit with Claude | `page:edit` (single edit and the `page-commands.json` queue, each with a preview) |
+| Site tree | edits `scripts/site-tree.md`, then `scaffold` / `scaffold:preview` / `--force` |
+| Schedule | edits the job list in `scripts/scaffold-schedule.md`, then `scaffold:schedule` / preview |
+| Changes | diff, discard, commit, push |
+
+How it works:
+
+- Express keeps one clone per user and repo under `WORKSPACES_DIR`. Opening a site clones it the first
+  time and fetches after that. Uncommitted work is kept between visits.
+- Commands run `node scripts/<x>.js` in that clone (no shell, one at a time per clone). The browser
+  polls for output. Only a short list of variables like `PATH` and `HOME` is passed to the scripts.
+  The GitHub token and server secrets are never passed. `ANTHROPIC_API_KEY` is passed only to the
+  Claude commands.
+- Claude commands use **the user's own Anthropic key**. It's entered on the dashboard, checked with
+  Anthropic, and stored only in the encrypted session cookie.
+- By default, publishing creates a branch (`twinstack/<date>-<time>`), pushes it and opens a pull
+  request into the default branch. Later commits on that branch update the same PR. Pushing directly
+  to the current branch is an option.
+- The preview is served from a signed URL (`/api/preview/...`) into an iframe sandboxed to an
+  opaque origin, so the site's scripts can't call this app's API as the user.
+- Opening a site runs that repo's code on the server. Set `ALLOWED_GITHUB_LOGINS` to decide who may
+  use it. When it's empty, everyone can in development and no one can in production. Container
+  isolation is not implemented yet.
+
 ## Setup
 
 1. Create a GitHub OAuth App at <https://github.com/settings/developers>:

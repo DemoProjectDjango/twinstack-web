@@ -20,7 +20,9 @@ async function decryptSession(token) {
       contentEncryptionAlgorithms: ["A256GCM"],
     });
     if (!payload.user || !payload.github) return null;
-    return { user: payload.user, github: payload.github };
+    // The user's own Anthropic key rides in the same encrypted cookie; there is
+    // no server-side store for it.
+    return { user: payload.user, github: payload.github, anthropicKey: payload.anthropicKey ?? null };
   } catch {
     return null;
   }
@@ -37,15 +39,20 @@ export function cookieOptions(maxAgeSeconds) {
   };
 }
 
-/** Writes `{ user, github }` to the session cookie. */
+/** The current session, or null when the cookie is missing, expired or tampered with. */
+export async function readSession(req) {
+  const token = req.cookies?.[config.sessionCookie];
+  return token ? decryptSession(token) : null;
+}
+
+/** Writes `{ user, github, anthropicKey? }` to the session cookie. */
 export async function setSession(res, session) {
   const token = await encryptSession(session);
   res.cookie(config.sessionCookie, token, cookieOptions(config.sessionMaxAgeSeconds));
 }
 
 export async function requireAuth(req, res, next) {
-  const token = req.cookies?.[config.sessionCookie];
-  const session = token ? await decryptSession(token) : null;
+  const session = await readSession(req);
   if (!session) {
     return res.status(401).json({ error: "Not authenticated" });
   }

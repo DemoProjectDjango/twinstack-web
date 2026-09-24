@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { AnthropicKey } from "@/components/AnthropicKey";
 import { RepoList } from "@/components/RepoList";
 import { getUser } from "@/lib/session";
 
@@ -39,6 +40,8 @@ export default async function DashboardPage() {
           {user.email && <p className="truncate text-sm text-zinc-500">{user.email}</p>}
         </div>
       </section>
+
+      <AnthropicKey />
 
       <RepoList />
     </main>

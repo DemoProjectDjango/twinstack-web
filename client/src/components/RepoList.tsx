@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { DuplicateRepo } from "./DuplicateRepo";
 
@@ -135,7 +136,15 @@ export function RepoList() {
                   <Badge>{repo.private ? "Private" : "Public"}</Badge>
                   {repo.fork && <Badge>Fork</Badge>}
                   {repo.archived && <Badge>Archived</Badge>}
-                  <div className="ml-auto has-[form]:ml-0 has-[form]:basis-full has-[p]:ml-0 has-[p]:basis-full">
+                  <div className="ml-auto flex items-center gap-2 has-[form]:ml-0 has-[form]:basis-full has-[p]:ml-0 has-[p]:basis-full">
+                    {repo.permission !== "read" && !repo.archived && (
+                      <Link
+                        href={`/sites/${repo.owner}/${repo.name}`}
+                        className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+                      >
+                        Manage site
+                      </Link>
+                    )}
                     <DuplicateRepo repo={repo} onDuplicated={addRepo} />
                   </div>
                 </div>

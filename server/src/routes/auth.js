@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { Router } from "express";
 import { config } from "../config.js";
 import { exchangeCode, githubFetch } from "../github.js";
-import { cookieOptions, setSession } from "../session.js";
+import { cookieOptions, readSession, setSession } from "../session.js";
 
 export const authRouter = Router();
 
@@ -75,8 +75,12 @@ authRouter.get("/github/callback", async (req, res) => {
       profileUrl: profile.html_url,
     };
 
+    // Signing in again (e.g. to grant a new scope) keeps the user's saved Anthropic key.
+    const previous = await readSession(req);
+    const anthropicKey = previous?.user.id === user.id ? previous.anthropicKey : null;
+
     res.clearCookie(config.stateCookie, { path: "/" });
-    await setSession(res, { user, github });
+    await setSession(res, { user, github, anthropicKey });
     res.redirect(`${config.clientUrl}/dashboard`);
   } catch (err) {
     console.error("GitHub OAuth callback error:", err);

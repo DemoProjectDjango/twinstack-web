@@ -2,6 +2,9 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import { config } from "./config.js";
 import { authRouter } from "./routes/auth.js";
+import { previewRouter } from "./routes/preview.js";
+import { settingsRouter } from "./routes/settings.js";
+import { jobsRouter, workspacesRouter } from "./routes/workspaces.js";
 import { requireAuth } from "./session.js";
 import { ReauthRequiredError, getAccessToken, listRepos } from "./github.js";
 import { DuplicateError, MissingScopeError, duplicateRepo, isValidRepoName } from "./duplicate.js";
@@ -80,6 +83,11 @@ app.post("/api/repos/:owner/:repo/duplicate", requireAuth, async (req, res) => {
     });
   }
 });
+
+app.use("/api/settings", settingsRouter);
+app.use("/api/workspaces", workspacesRouter);
+app.use("/api/jobs", jobsRouter);
+app.use("/api/preview", previewRouter);
 
 app.use("/auth", authRouter);
 
