@@ -1,28 +1,31 @@
 # Twinstack Web
 
-Next.js 16 (App Router) frontend + Express 5 API, with GitHub OAuth sign-in.
+Next.js 16 (App Router) frontend + Express 5 API + MongoDB. Users have email and password accounts and
+connect GitHub to them.
 
 ```
 client/   Next.js app (port 3000)
-server/   Express API (port 4000) — owns the OAuth flow and sessions
+server/   Express API (port 4000) — owns accounts, sessions and the GitHub connection
 ```
 
 ## How auth works
 
-1. "Sign in with GitHub" → `/auth/github` (proxied by Next.js rewrites to Express), which sets a
-   short-lived `oauth_state` cookie and redirects to GitHub.
-2. GitHub redirects to `/auth/github/callback`. Express checks the state, exchanges the code for an
-   access token, fetches the profile, and stores `{ user, githubToken }` in an **encrypted** JWT
-   (JWE, A256GCM) in an httpOnly `session` cookie (7 days).
-3. Next.js server components call `GET /api/me` on Express with that cookie to get the user.
-   `src/proxy.ts` redirects guests away from `/dashboard`.
-4. The dashboard fetches `GET /api/repos` from the browser. Express lists every repo the user can
-   access (owned, collaborator, org member — including private ones). If the GitHub token has
-   expired (OAuth Apps with "Expire user access tokens" enabled issue 8-hour tokens), Express
-   refreshes it and re-issues the cookie.
-5. "Sign out" posts to `/auth/logout`, which clears the cookie.
-
-The session (including the GitHub token) lives only in the encrypted cookie.
+1. **Accounts.** `/register` and `/login` (Next.js pages) post JSON to `/auth/register` and `/auth/login`, which
+   the Next.js rewrites proxy to Express. Passwords are hashed with scrypt (`server/src/passwords.js`). A failed
+   login returns the same message for an unknown email as for a wrong password, and an email is locked for
+   15 minutes after 10 failures. On success Express sets an httpOnly `session` cookie: an **encrypted** JWT
+   (JWE, A256GCM, 7 days) that holds only the account id.
+2. **Every request** loads the account from MongoDB (`requireAuth` in `server/src/session.js`). Next.js server
+   components get it from `GET /api/me`, and `src/proxy.ts` sends guests to `/login`.
+3. **Connect GitHub.** From the dashboard, `/auth/github` sets a short-lived `oauth_state` cookie and redirects to
+   GitHub (logged-in users only). `/auth/github/callback` checks the state, exchanges the code, fetches the
+   profile and links it to the account. The profile and the token are saved in MongoDB, with the token
+   encrypted. One GitHub account can be linked to only one account. Disconnecting removes the link.
+4. **GitHub features** (`/api/repos`, duplicating, the site manager) require a linked account (`requireGithub`,
+   otherwise `401 github_not_connected`). Expired GitHub tokens are refreshed and saved back (OAuth Apps with
+   "Expire user access tokens" enabled issue 8-hour tokens).
+5. "Sign out" posts to `/auth/logout`, which clears the cookie. The GitHub connection and Anthropic key stay with
+   the account.
 
 ### MongoDB
 
@@ -30,7 +33,7 @@ The API connects at startup and won't run without it (`server/src/db.js`):
 
 | Collection | `_id` | Holds |
 | --- | --- | --- |
-| `users` | GitHub user id | Profile (login, name, email, avatar), `createdAt`, `lastLoginAt`, `loginCount`, updated on every sign-in. Also `anthropicKey`: the user's key encrypted with AES-256-GCM under `DATA_ENCRYPTION_KEY`, bound to the user id, plus a masked `hint`. |
+| `users` | ObjectId | `email` (unique, lowercase), `name`, `passwordHash`, `createdAt`, `lastLoginAt`, `loginCount`. `github`: the linked profile (unique by GitHub id) plus `token`. `anthropicKey` plus a masked `hint`. `token` and `anthropicKey` are encrypted with AES-256-GCM under `DATA_ENCRYPTION_KEY`, bound to the account id. |
 | `siteCopies` | GitHub repo id | Repos duplicated from the site template, so they stay recognised as copies even after a rename. |
 
 ### Which repositories users see
@@ -123,7 +126,7 @@ Open <http://localhost:3000>.
 
 ## Production notes
 
-For a step-by-step DigitalOcean droplet setup (MongoDB, PM2, Nginx, HTTPS without a domain), see
+For a step-by-step setup on a new Ubuntu VPS with your own subdomain (DNS, MongoDB, PM2, Nginx, HTTPS), see
 [DEPLOY.md](DEPLOY.md).
 
 - Set `NODE_ENV=production` on the server so cookies get the `Secure` flag (requires HTTPS).

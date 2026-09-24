@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { getUser } from "@/lib/session";
-import { GitHubIcon } from "./GitHubIcon";
 import { NavLinks } from "./NavLinks";
 
 export async function Navbar() {
@@ -23,16 +22,21 @@ export async function Navbar() {
         <div className="ml-auto flex items-center gap-3">
           {user ? (
             <>
-              <a
-                href={user.profileUrl}
-                target="_blank"
-                rel="noreferrer"
+              <Link
+                href="/dashboard"
+                title={user.email}
                 className="flex items-center gap-2 text-sm text-zinc-600 hover:text-foreground dark:text-zinc-400"
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={user.avatarUrl} alt="" width={24} height={24} className="size-6 rounded-full" />
-                <span className="hidden md:inline">{user.login}</span>
-              </a>
+                {user.github ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={user.github.avatarUrl} alt="" width={24} height={24} className="size-6 rounded-full" />
+                ) : (
+                  <span aria-hidden="true" className="grid size-6 place-items-center rounded-full bg-zinc-200 text-xs font-medium dark:bg-zinc-800">
+                    {user.name.slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+                <span className="hidden md:inline">{user.name}</span>
+              </Link>
               <form action="/auth/logout" method="post">
                 <button
                   type="submit"
@@ -43,14 +47,17 @@ export async function Navbar() {
               </form>
             </>
           ) : (
-            // Plain <a>: a full-page navigation to the Express OAuth route.
-            <a
-              href="/auth/github"
-              className="inline-flex items-center gap-2 rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background hover:opacity-90"
-            >
-              <GitHubIcon className="size-4" />
-              Sign in
-            </a>
+            <>
+              <Link href="/login" className="rounded-md px-3 py-1.5 text-sm text-zinc-600 hover:text-foreground dark:text-zinc-400">
+                Log in
+              </Link>
+              <Link
+                href="/register"
+                className="rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background hover:opacity-90"
+              >
+                Sign up
+              </Link>
+            </>
           )}
         </div>
       </nav>

@@ -1,6 +1,7 @@
-# Deploying to a DigitalOcean droplet
+# Deploying to builder.mydomain.com
 
-This guide runs Twinstack Web on one Ubuntu droplet (22.04 or 24.04). Everything lives on the droplet:
+This guide takes a **brand-new Ubuntu 24.04 VPS** to a working Twinstack Web at `https://builder.mydomain.com`.
+Everything runs on that one server:
 
 ```
 browser ──HTTPS──> Nginx :443 ──> Next.js 127.0.0.1:3000 ──> Express 127.0.0.1:4000 ──> MongoDB 127.0.0.1:27017
@@ -8,65 +9,97 @@ browser ──HTTPS──> Nginx :443 ──> Next.js 127.0.0.1:3000 ──> Exp
 
 Replace these placeholders everywhere below:
 
-| Placeholder | Example | What it is |
-| --- | --- | --- |
-| `203.0.113.10` | your droplet's IP | from the DigitalOcean control panel |
-| `203-0-113-10.sslip.io` | the IP with dots → dashes, plus `.sslip.io` | your hostname (see below) |
-| `you@example.com` | | for Let's Encrypt expiry emails |
+| Placeholder | What it is |
+| --- | --- |
+| `builder.mydomain.com` | your subdomain |
+| `203.0.113.10` | your VPS's public IPv4 address (from your provider's control panel) |
+| `you@example.com` | your email, for Let's Encrypt certificate expiry notices |
+| `your-github-username` | the GitHub account you'll connect after logging in |
 
-**Why sslip.io when you have no domain.** GitHub sign-in and the app's secure session cookies need HTTPS, and
-HTTPS certificates need a hostname. [sslip.io](https://sslip.io) is a free public DNS service where
-`203-0-113-10.sslip.io` resolves to `203.0.113.10`, so you get a working hostname with no setup. When you buy a domain
-later, point it at the droplet and repeat steps 9, 12 and 13 with the new name.
+Commands run on **your computer** are marked as such. Everything else runs on the VPS.
 
-Commands marked `$` run as your normal user with `sudo`. Commands in `mongosh` blocks run inside the MongoDB shell.
+How users get in: they **create an account** (name, email, password) on the site, **log in**, then **connect GitHub**
+from the dashboard. The GitHub connection is saved with their account.
 
 ---
 
-## 1. Connect and update
+## 1. Create the VPS
 
-From your computer:
+In your provider's control panel (DigitalOcean: **Create → Droplets**):
+
+- **Image:** Ubuntu 24.04 (LTS) x64
+- **Size:** at least **2 GB RAM**. 1 GB works only with the swap file from step 5.
+- **Authentication:** SSH key. Add your computer's public key. If you don't have one, run
+  `ssh-keygen -t ed25519` on your computer and paste the contents of `~/.ssh/id_ed25519.pub`.
+
+Note the public IPv4 address once it's created.
+
+## 2. Point the subdomain at the VPS
+
+Wherever `mydomain.com`'s DNS is managed (your registrar, Cloudflare, DigitalOcean **Networking → Domains**, …),
+add one record:
+
+| Type | Name / Host | Value | TTL |
+| --- | --- | --- | --- |
+| `A` | `builder` | `203.0.113.10` | 300 (or the lowest offered) |
+
+If you use Cloudflare, set the record to **DNS only** (grey cloud) for now. Certbot in step 13 needs to reach the
+server directly.
+
+Check it from **your computer**. It can take a few minutes to a few hours:
+
+```bash
+nslookup builder.mydomain.com        # should answer 203.0.113.10
+```
+
+Carry on with the next steps while it spreads. It only has to work by step 13.
+
+## 3. First login and updates
+
+From **your computer**:
 
 ```bash
 ssh root@203.0.113.10
 ```
 
-On the droplet:
+On the VPS:
 
 ```bash
 apt update && apt upgrade -y
+timedatectl set-timezone UTC
 ```
 
-## 2. Create a non-root user
+If it asks about restarting services or a newer kernel, accept the defaults. Run `reboot` afterwards if it says a restart
+is required, then SSH in again.
+
+## 4. Create a user for the app
 
 ```bash
-adduser twinstack                     # choose a password
+adduser twinstack                       # choose a password, other questions can stay empty
 usermod -aG sudo twinstack
-rsync --archive --chown=twinstack:twinstack ~/.ssh /home/twinstack   # reuse your SSH key
+rsync --archive --chown=twinstack:twinstack ~/.ssh /home/twinstack
 exit
 ```
 
-Log back in as that user. Every later step runs as `twinstack`:
+From **your computer**, log in as that user. Every later step runs as `twinstack`:
 
 ```bash
 ssh twinstack@203.0.113.10
 ```
 
-## 3. Firewall
+## 5. Firewall and swap
 
 ```bash
 sudo ufw allow OpenSSH
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
-sudo ufw enable
+sudo ufw --force enable
 sudo ufw status
 ```
 
-Ports 3000, 4000 and 27017 stay closed. Only Nginx is public.
+Only SSH, HTTP and HTTPS are open. The app's ports (3000, 4000) and MongoDB (27017) stay private.
 
-## 4. Swap (droplets with 2 GB RAM or less)
-
-`next build` can run out of memory without it.
+Swap stops `npm run build` running out of memory on small servers:
 
 ```bash
 sudo fallocate -l 2G /swapfile
@@ -77,55 +110,47 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 free -h
 ```
 
-## 5. Check what the MERN image already has
-
-```bash
-node -v; npm -v; git --version; mongod --version; pm2 -v; nginx -v
-lsb_release -cs        # jammy = 22.04, noble = 24.04
-```
-
-Install only what's missing or too old. Node must be **20.12 or newer**.
-
-### Node.js 22 (if missing or older than 20.12)
+## 6. Install Node.js, git, Nginx, Certbot and PM2
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs git
-node -v
-```
-
-### PM2, Nginx and Certbot
-
-```bash
+sudo apt install -y nodejs git nginx certbot python3-certbot-nginx
 sudo npm install -g pm2
-sudo apt install -y nginx certbot python3-certbot-nginx
+
+node -v       # v22.x (anything 20.12 or newer works)
+git --version
+nginx -v
+pm2 -v
 ```
 
-## 6. MongoDB
+`git` is required at runtime too: the site manager uses it to clone and push users' sites.
 
-### Install MongoDB 8.0 (skip if `mongod --version` already worked)
+## 7. Install MongoDB 8.0
 
 ```bash
 sudo apt install -y gnupg curl
 curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | \
   sudo gpg -o /usr/share/keyrings/mongodb-server-8.0.gpg --dearmor
-echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/8.0 multiverse" | \
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" | \
   sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
 sudo apt update
 sudo apt install -y mongodb-org
 sudo systemctl enable --now mongod
-sudo systemctl status mongod --no-pager
+sudo systemctl status mongod --no-pager     # "active (running)"
 ```
 
-### Create users
+### Create the database users
 
-Generate two passwords first. Hex passwords avoid characters that would need escaping in the connection string.
+Generate two passwords and save them in your password manager. Hex passwords avoid characters that would need escaping
+in the connection string.
 
 ```bash
-openssl rand -hex 24     # admin password, save it
-openssl rand -hex 24     # app password, save it
+openssl rand -hex 24     # ADMIN_PASSWORD
+openssl rand -hex 24     # APP_PASSWORD
 mongosh
 ```
+
+In `mongosh`, paste each password when `passwordPrompt()` asks:
 
 ```js
 use admin
@@ -136,13 +161,13 @@ db.createUser({ user: "twinstack", pwd: passwordPrompt(), roles: [{ role: "readW
 exit
 ```
 
-### Turn on authentication and keep it on localhost
+### Require passwords and keep MongoDB private
 
 ```bash
 sudo nano /etc/mongod.conf
 ```
 
-Make sure these sections look like this:
+Make these two sections look like this. `net` is already there; add `security` if it's missing or commented out:
 
 ```yaml
 net:
@@ -153,59 +178,66 @@ security:
   authorization: enabled
 ```
 
+Save (Ctrl+O, Enter) and exit (Ctrl+X), then:
+
 ```bash
 sudo systemctl restart mongod
 mongosh "mongodb://twinstack:APP_PASSWORD@127.0.0.1:27017/twinstack?authSource=twinstack" --eval "db.runCommand({ ping: 1 })"
 ```
 
-The last command should print `{ ok: 1 }`.
+It should print `{ ok: 1 }`.
 
-## 7. Create the production GitHub OAuth App
+## 8. Create the GitHub OAuth App
 
-On GitHub, go to **Settings → Developer settings → OAuth Apps → New OAuth App**:
+This is what the dashboard's **Connect GitHub** button uses. On GitHub, go to **Settings → Developer settings → OAuth Apps
+→ New OAuth App**:
 
 | Field | Value |
 | --- | --- |
-| Homepage URL | `https://203-0-113-10.sslip.io` |
-| Authorization callback URL | `https://203-0-113-10.sslip.io/auth/github/callback` |
+| Application name | Twinstack Builder |
+| Homepage URL | `https://builder.mydomain.com` |
+| Authorization callback URL | `https://builder.mydomain.com/auth/github/callback` |
 
-Create it, then **Generate a new client secret**. Keep the Client ID and secret for step 10.
-Use a separate app from the one you use locally, because each app has one callback URL.
+Click **Register application**, then **Generate a new client secret**. Copy the **Client ID** and the **Client secret**
+now; the secret is shown only once. Keep this app separate from the one you use on `localhost`, because each app has one
+callback URL.
 
-## 8. Get the code
+## 9. Get the code onto the VPS
 
-Push your latest local changes to GitHub first. The droplet can only deploy what's on GitHub.
+First, on **your computer**: commit and push your latest changes to GitHub. The server can only deploy what's there.
+
+Then on the VPS:
 
 ```bash
 sudo mkdir -p /opt/twinstack /var/lib/twinstack/workspaces
 sudo chown -R twinstack:twinstack /opt/twinstack /var/lib/twinstack
 ```
 
-The repository is private, so give the droplet read access with a deploy key:
+The repository is private, so give the server read-only access with a deploy key:
 
 ```bash
-ssh-keygen -t ed25519 -C "twinstack-droplet" -f ~/.ssh/id_ed25519 -N ""
+ssh-keygen -t ed25519 -C "builder.mydomain.com" -f ~/.ssh/id_ed25519 -N ""
 cat ~/.ssh/id_ed25519.pub
 ```
 
-On GitHub, open **DemoProjectDjango/twinstack-web → Settings → Deploy keys → Add deploy key**, paste the key, and
-leave write access off. Then:
+On GitHub, open **DemoProjectDjango/twinstack-web → Settings → Deploy keys → Add deploy key**. Paste the key, title it
+`builder.mydomain.com`, and leave **Allow write access** off. Then:
 
 ```bash
-ssh -T git@github.com               # answer "yes"; it says you've authenticated
+ssh -T git@github.com                    # type "yes"; it replies that you've authenticated
 git clone git@github.com:DemoProjectDjango/twinstack-web.git /opt/twinstack/web
 ```
 
-The site manager also needs `git` itself (step 5) to clone users' sites.
+## 10. Configure
 
-## 9. Configure
-
-Generate the two secrets:
+Generate two secrets:
 
 ```bash
 openssl rand -hex 32     # JWT_SECRET
-openssl rand -hex 32     # DATA_ENCRYPTION_KEY, back this one up somewhere safe
+openssl rand -hex 32     # DATA_ENCRYPTION_KEY: also save a copy somewhere safe
 ```
+
+Create the API's settings file:
 
 ```bash
 nano /opt/twinstack/web/server/.env
@@ -215,61 +247,77 @@ nano /opt/twinstack/web/server/.env
 NODE_ENV=production
 HOST=127.0.0.1
 PORT=4000
-CLIENT_URL=https://203-0-113-10.sslip.io
+CLIENT_URL=https://builder.mydomain.com
 
-GITHUB_CLIENT_ID=<from step 7>
-GITHUB_CLIENT_SECRET=<from step 7>
-JWT_SECRET=<first secret>
+# From step 8
+GITHUB_CLIENT_ID=paste-client-id
+GITHUB_CLIENT_SECRET=paste-client-secret
 
+# From above
+JWT_SECRET=paste-first-secret
+DATA_ENCRYPTION_KEY=paste-second-secret
+
+# From step 7
 MONGODB_URI=mongodb://twinstack:APP_PASSWORD@127.0.0.1:27017/twinstack?authSource=twinstack
 MONGODB_DB=twinstack
-DATA_ENCRYPTION_KEY=<second secret>
 
 SITE_TEMPLATE_REPO=DemoProjectDjango/twinstack-site
-# Required in production: nobody can open sites otherwise. Comma-separated GitHub usernames.
+# GitHub usernames (comma-separated) allowed to open sites. Required in production, or nobody can.
 ALLOWED_GITHUB_LOGINS=your-github-username
 WORKSPACES_DIR=/var/lib/twinstack/workspaces
 ```
+
+Lock it down and create the web app's settings file:
 
 ```bash
 chmod 600 /opt/twinstack/web/server/.env
 echo "API_URL=http://127.0.0.1:4000" > /opt/twinstack/web/client/.env.local
 ```
 
-**Never change `DATA_ENCRYPTION_KEY` after users have saved API keys.** Their stored keys can't be decrypted without it,
-and they would have to enter them again. Changing `JWT_SECRET` only signs everyone out.
+What the secrets do:
 
-## 10. Install and build
+- `JWT_SECRET` encrypts login cookies. Changing it only logs everyone out.
+- `DATA_ENCRYPTION_KEY` encrypts each user's GitHub token and Anthropic key in MongoDB. **Never change or lose it.**
+  Without it, users would have to reconnect GitHub and re-enter their keys.
+
+## 11. Install and build
 
 ```bash
 cd /opt/twinstack/web
 npm install          # also installs client/ and server/
-npm run build        # builds the Next.js client; API_URL is read here
+npm run build        # builds the Next.js app; it reads API_URL here
 ```
 
-## 11. Start with PM2
+## 12. Start the app with PM2
 
 ```bash
 cd /opt/twinstack/web
 pm2 start ecosystem.config.cjs
-pm2 status                          # both apps "online"
-pm2 logs twinstack-api --lines 20   # expect "Connected to MongoDB" and "API listening"
-pm2 save
-pm2 startup systemd                 # prints a sudo command: copy and run it
+pm2 status                            # twinstack-api and twinstack-web both "online"
+pm2 logs twinstack-api --lines 20     # "Connected to MongoDB (twinstack)" and "API listening on http://127.0.0.1:4000"
+curl http://127.0.0.1:3000/api/health # {"ok":true}
 ```
 
-After `pm2 startup`, the apps come back by themselves when the droplet reboots.
-
-## 12. Nginx
+Make it start again after a reboot:
 
 ```bash
-sudo nano /etc/nginx/sites-available/twinstack
+pm2 save
+pm2 startup systemd
+```
+
+`pm2 startup` prints a command beginning with `sudo env PATH=...`. Copy it, run it, then run `pm2 save` again.
+
+## 13. Nginx and HTTPS
+
+```bash
+sudo nano /etc/nginx/sites-available/builder
 ```
 
 ```nginx
 server {
     listen 80;
-    server_name 203-0-113-10.sslip.io;
+    listen [::]:80;
+    server_name builder.mydomain.com;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -277,7 +325,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        # Duplicating a large repository can take several minutes.
+        # Copying a large repository can take several minutes.
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
     }
@@ -285,35 +333,43 @@ server {
 ```
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/twinstack /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/builder /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t
+sudo nginx -t                       # "syntax is ok" and "test is successful"
 sudo systemctl reload nginx
 ```
 
-## 13. HTTPS
+Check that DNS from step 2 is working (`nslookup builder.mydomain.com` shows your IP), then get the certificate:
 
 ```bash
-sudo certbot --nginx -d 203-0-113-10.sslip.io --redirect --agree-tos -m you@example.com
-sudo certbot renew --dry-run        # checks automatic renewal
+sudo certbot --nginx -d builder.mydomain.com --redirect --agree-tos -m you@example.com --no-eff-email
+sudo certbot renew --dry-run        # confirms automatic renewal works
 ```
 
-Certbot updates the Nginx config and sets up automatic renewal. sslip.io is shared by many people, so Let's Encrypt
-sometimes rate-limits it. If certbot reports a rate limit, wait an hour and retry, or use the equivalent
-`203.0.113.10.nip.io` name. If you switch names, update `CLIENT_URL`, the OAuth App URLs and the Nginx `server_name` to
-match.
+Certbot adds HTTPS to the Nginx config and redirects `http://` to `https://`. Renewal happens automatically.
 
-## 14. Check it works
+If you use Cloudflare, you can turn its proxy (orange cloud) back on now. Set **SSL/TLS** to **Full (strict)**.
+
+## 14. Open the site
 
 ```bash
-curl https://203-0-113-10.sslip.io/api/health     # {"ok":true}
+curl https://builder.mydomain.com/api/health     # {"ok":true}
 ```
 
-Open `https://203-0-113-10.sslip.io` and sign in with GitHub. The dashboard should list the site template.
+In your browser:
+
+1. Go to `https://builder.mydomain.com` and click **Create an account**.
+2. On the dashboard, click **Connect GitHub** and approve the permissions. You come back to the dashboard connected.
+3. Your site template appears under **Site repositories**. **Duplicate** it, then click **Manage site** on your copy.
+
+If **Manage site** says "Site management isn't enabled for your account", the GitHub username you connected isn't in
+`ALLOWED_GITHUB_LOGINS` (step 10). Fix it, then run `pm2 restart twinstack-api`.
 
 ---
 
-## Updating to a new version
+## Deploying updates
+
+On **your computer**, push the changes to GitHub. Then on the VPS:
 
 ```bash
 cd /opt/twinstack/web
@@ -331,46 +387,54 @@ mongodump --uri="mongodb://twinstack:APP_PASSWORD@127.0.0.1:27017/twinstack?auth
   --archive=$HOME/backups/twinstack-$(date +%F).gz --gzip
 ```
 
-To run it every night at 03:00, run `crontab -e` and add the same command prefixed with `0 3 * * *`. Also copy
-`server/.env` somewhere safe: without `DATA_ENCRYPTION_KEY`, a database backup can't decrypt users' keys.
+To back up every night at 03:00 and keep 14 days, run `crontab -e` and add:
 
-Uncommitted work in the site manager lives in `/var/lib/twinstack/workspaces`. Committed work is safe on GitHub.
+```cron
+0 3 * * * mongodump --uri="mongodb://twinstack:APP_PASSWORD@127.0.0.1:27017/twinstack?authSource=twinstack" --archive=$HOME/backups/twinstack-$(date +\%F).gz --gzip && find $HOME/backups -name 'twinstack-*.gz' -mtime +14 -delete
+```
+
+Copy the backups off the server regularly. Keep `server/.env` backed up separately: a database backup can't decrypt
+users' GitHub tokens and Anthropic keys without its `DATA_ENCRYPTION_KEY`.
+
+Restore with:
+
+```bash
+mongorestore --uri="mongodb://twinstack:APP_PASSWORD@127.0.0.1:27017/twinstack?authSource=twinstack" --archive=FILE.gz --gzip --drop
+```
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
+| Browser can't reach the site at all | `nslookup builder.mydomain.com` shows your IP, `sudo ufw status` allows 80/443, `sudo systemctl status nginx` |
 | 502 Bad Gateway | `pm2 status`, then `pm2 logs`. One of the apps isn't running. |
-| API exits with "Missing required environment variable" | That variable is missing from `server/.env`. |
-| API exits with a MongoDB error | `sudo systemctl status mongod`, and the user and password in `MONGODB_URI` (test with the step 6 `mongosh` command). |
-| GitHub says "redirect_uri is not associated with this application" | The OAuth App callback URL must exactly match `CLIENT_URL` + `/auth/github/callback`. |
-| Sign-in returns to the homepage still signed out | The site isn't on HTTPS, so the browser drops the secure cookie. Finish step 13. |
-| "Site management isn't enabled for your account" | Add the GitHub username to `ALLOWED_GITHUB_LOGINS`, then `pm2 restart twinstack-api`. |
-| `npm run build` is killed | Out of memory: add swap (step 4). |
+| API stops with "Missing required environment variable" | That variable is missing from `server/.env` |
+| API stops with a MongoDB error | `sudo systemctl status mongod`, and test the user and password with the `mongosh` command from step 7 |
+| Certbot fails | DNS isn't pointing at the server yet, port 80 is blocked, or the Cloudflare proxy is on |
+| GitHub says "redirect_uri is not associated with this application" | The OAuth App's callback must be exactly `https://builder.mydomain.com/auth/github/callback`, matching `CLIENT_URL` |
+| After logging in you're sent back to the login page | The site isn't on HTTPS yet, so the browser drops the secure cookie. Finish step 13. |
+| "Too many failed attempts" | 10 wrong passwords for that email in 15 minutes. Wait, or `pm2 restart twinstack-api`. |
+| `npm run build` is killed | Out of memory: add the swap file (step 5) |
 
-## Local development after this change
+Useful commands:
 
-The API now needs MongoDB at startup. Two options:
+```bash
+pm2 logs                      # live logs from both apps (Ctrl+C to stop)
+pm2 restart twinstack-api     # after editing server/.env
+sudo tail -f /var/log/nginx/error.log
+```
 
-- **Install MongoDB Community Server on your computer**, then use `MONGODB_URI=mongodb://127.0.0.1:27017` and
-  `MONGODB_DB=twinstack_dev` in your local `server/.env`.
-- **Use the droplet's MongoDB through an SSH tunnel.** Create a separate user for a `twinstack_dev` database so
-  development data stays apart from production:
+## Running it on your computer
 
-  ```js
-  // mongosh as admin on the droplet
-  use twinstack_dev
-  db.createUser({ user: "dev", pwd: passwordPrompt(), roles: [{ role: "readWrite", db: "twinstack_dev" }] })
-  ```
+The API needs MongoDB at startup. Install
+[MongoDB Community Server](https://www.mongodb.com/try/download/community) on your computer. Then, in your local
+`server/.env`:
 
-  ```bash
-  # on your computer, keep this running while you develop
-  ssh -N -L 27018:127.0.0.1:27017 twinstack@203.0.113.10
-  ```
+```ini
+MONGODB_URI=mongodb://127.0.0.1:27017
+MONGODB_DB=twinstack_dev
+DATA_ENCRYPTION_KEY=<a different 64-hex value from production>
+```
 
-  ```ini
-  MONGODB_URI=mongodb://dev:DEV_PASSWORD@127.0.0.1:27018/twinstack_dev?authSource=twinstack_dev
-  MONGODB_DB=twinstack_dev
-  ```
-
-In either case, also add `DATA_ENCRYPTION_KEY` to your local `server/.env`.
+Use your separate localhost GitHub OAuth App, with callback `http://localhost:3000/auth/github/callback`. Then run
+`npm run dev`.

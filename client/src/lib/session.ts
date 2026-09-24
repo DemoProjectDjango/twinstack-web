@@ -2,13 +2,21 @@ import "server-only";
 import { cookies } from "next/headers";
 import { cache } from "react";
 
-export type User = {
+export type GithubAccount = {
   id: number;
   login: string;
   name: string | null;
   email: string | null;
   avatarUrl: string;
   profileUrl: string;
+};
+
+/** An email + password account; GitHub is connected to it separately. */
+export type User = {
+  id: string;
+  email: string;
+  name: string;
+  github: GithubAccount | null;
 };
 
 const apiUrl = process.env.API_URL ?? "http://localhost:4000";

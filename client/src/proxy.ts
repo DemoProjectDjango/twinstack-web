@@ -5,7 +5,9 @@ import type { NextRequest } from "next/server";
 // page loads the user. This just avoids rendering protected pages for guests.
 export function proxy(request: NextRequest) {
   if (!request.cookies.has("session")) {
-    return NextResponse.redirect(new URL("/", request.url));
+    const login = new URL("/login", request.url);
+    login.searchParams.set("next", request.nextUrl.pathname);
+    return NextResponse.redirect(login);
   }
   return NextResponse.next();
 }

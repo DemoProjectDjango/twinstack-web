@@ -65,7 +65,7 @@ export function ErrorText({ error }: { error: unknown }) {
       {message}{" "}
       {error instanceof ApiError && error.reauth && (
         <a href="/auth/github" className="font-medium underline">
-          Sign in again
+          Reconnect GitHub
         </a>
       )}
       {error instanceof ApiError && error.needsAnthropicKey && (

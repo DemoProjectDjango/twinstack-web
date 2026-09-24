@@ -1,7 +1,7 @@
 import { config } from "./config.js";
-import { setSession } from "./session.js";
+import { saveGithubToken } from "./db.js";
 
-/** Thrown when the stored GitHub token can't be used or refreshed; the user must sign in again. */
+/** Thrown when the stored GitHub token can't be used or refreshed; the user must reconnect GitHub. */
 export class ReauthRequiredError extends Error {}
 
 const TOKEN_URL = "https://github.com/login/oauth/access_token";
@@ -39,11 +39,12 @@ export function exchangeCode(code) {
 }
 
 /**
- * Returns a usable access token for the current session, refreshing it (and
- * re-issuing the session cookie) when it is about to expire.
+ * Returns a usable access token for the signed-in account (loaded by
+ * requireAuth), refreshing and saving it when it is about to expire.
  */
-export async function getAccessToken(req, res) {
-  const { github } = req.session;
+export async function getAccessToken(req) {
+  const github = req.githubAuth;
+  if (!github) throw new ReauthRequiredError("GitHub is not connected");
   if (!github.expiresAt || github.expiresAt - REFRESH_MARGIN_MS > Date.now()) {
     return github.accessToken;
   }
@@ -60,8 +61,8 @@ export async function getAccessToken(req, res) {
   }
   // Keep the known scopes if the refresh response doesn't list them.
   if (!refreshed.scopes.length) refreshed.scopes = github.scopes ?? [];
-  req.session = { ...req.session, github: refreshed };
-  await setSession(res, req.session);
+  await saveGithubToken(req.user.id, refreshed);
+  req.githubAuth = refreshed;
   return refreshed.accessToken;
 }
 

@@ -10,7 +10,9 @@ export async function generateMetadata({ params }: PageProps<"/sites/[owner]/[re
 
 export default async function SitePage({ params }: PageProps<"/sites/[owner]/[repo]">) {
   const [user, { owner, repo }] = await Promise.all([getUser(), params]);
-  if (!user) redirect("/");
+  if (!user) redirect(`/login?next=${encodeURIComponent(`/sites/${owner}/${repo}`)}`);
+  // Sites live on GitHub; the dashboard is where it gets connected.
+  if (!user.github) redirect("/dashboard");
 
   return <SiteManager owner={owner} repo={repo} />;
 }

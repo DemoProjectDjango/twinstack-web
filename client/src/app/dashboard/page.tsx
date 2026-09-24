@@ -2,14 +2,16 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AnthropicKey } from "@/components/AnthropicKey";
+import { GithubConnection } from "@/components/GithubConnection";
 import { RepoList } from "@/components/RepoList";
 import { getUser } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Dashboard · Twinstack" };
 
-export default async function DashboardPage() {
-  const user = await getUser();
-  if (!user) redirect("/");
+export default async function DashboardPage({ searchParams }: PageProps<"/dashboard">) {
+  const [user, params] = await Promise.all([getUser(), searchParams]);
+  if (!user) redirect("/login?next=/dashboard");
+  const githubError = typeof params.github_error === "string" ? params.github_error : undefined;
 
   return (
     <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-12">
@@ -20,26 +22,24 @@ export default async function DashboardPage() {
         </Link>
       </header>
 
-      <section className="mt-8 flex items-center gap-4 rounded-lg border border-zinc-200 p-6 dark:border-zinc-800">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={user.avatarUrl} alt="" width={64} height={64} className="size-16 rounded-full" />
-        <div className="min-w-0">
-          <p className="truncate text-lg font-medium">{user.name ?? user.login}</p>
-          <a
-            href={user.profileUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-sm text-zinc-500 hover:underline"
-          >
-            @{user.login}
-          </a>
-          {user.email && <p className="truncate text-sm text-zinc-500">{user.email}</p>}
-        </div>
+      <section className="mt-8 rounded-lg border border-zinc-200 p-6 dark:border-zinc-800">
+        <h2 className="text-lg font-semibold">Account</h2>
+        <p className="mt-1 truncate font-medium">{user.name}</p>
+        <p className="truncate text-sm text-zinc-500">{user.email}</p>
       </section>
+
+      <GithubConnection github={user.github} error={githubError} justConnected={params.github === "connected"} />
 
       <AnthropicKey />
 
-      <RepoList />
+      {user.github ? (
+        <RepoList />
+      ) : (
+        <section id="repositories" className="mt-10">
+          <h2 className="text-lg font-semibold">Site repositories</h2>
+          <p className="mt-1 text-sm text-zinc-500">Connect GitHub above to see the TwinStack site template and your copies of it.</p>
+        </section>
+      )}
     </main>
   );
 }

@@ -7,7 +7,7 @@ import { authRouter } from "./routes/auth.js";
 import { previewRouter } from "./routes/preview.js";
 import { settingsRouter } from "./routes/settings.js";
 import { jobsRouter, workspacesRouter } from "./routes/workspaces.js";
-import { requireAuth } from "./session.js";
+import { requireAuth, requireGithub } from "./session.js";
 import { ReauthRequiredError, getAccessToken, listRepos } from "./github.js";
 import { DuplicateError, MissingScopeError, duplicateRepo, isValidRepoName } from "./duplicate.js";
 
@@ -26,7 +26,7 @@ app.get("/api/me", requireAuth, (req, res) => {
   res.json({ user: req.user });
 });
 
-app.get("/api/repos", requireAuth, async (req, res) => {
+app.get("/api/repos", requireAuth, requireGithub, async (req, res) => {
   try {
     const accessToken = await getAccessToken(req, res);
     // Only the site template and copies of it are shown.
@@ -40,7 +40,7 @@ app.get("/api/repos", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/repos/:owner/:repo/duplicate", requireAuth, async (req, res) => {
+app.post("/api/repos/:owner/:repo/duplicate", requireAuth, requireGithub, async (req, res) => {
   // JSON-only: plain HTML forms from other sites can't send this content type.
   if (!req.is("application/json")) return res.status(415).json({ error: "Expected JSON" });
 
@@ -54,10 +54,10 @@ app.post("/api/repos/:owner/:repo/duplicate", requireAuth, async (req, res) => {
   }
 
   // Sessions from before `workflow` was requested can't push repos containing Actions workflows.
-  if (!req.session.github.scopes?.includes("workflow")) {
+  if (!req.githubAuth.scopes?.includes("workflow")) {
     return res.status(401).json({
       error: "reauth_required",
-      message: "Duplicating needs one more GitHub permission (workflow files).",
+      message: "Duplicating needs one more GitHub permission (workflow files). Reconnect GitHub.",
     });
   }
 
@@ -65,7 +65,7 @@ app.post("/api/repos/:owner/:repo/duplicate", requireAuth, async (req, res) => {
     const accessToken = await getAccessToken(req, res);
     const repo = await duplicateRepo({
       accessToken,
-      userLogin: req.user.login,
+      userLogin: req.user.github.login,
       owner: req.params.owner,
       repo: req.params.repo,
       newName: name,

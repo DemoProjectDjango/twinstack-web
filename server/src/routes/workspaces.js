@@ -6,7 +6,7 @@ import { isTemplate } from "../sites.js";
 import { MissingScopeError } from "../duplicate.js";
 import { ReauthRequiredError, getAccessToken } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
-import { requireAuth } from "../session.js";
+import { requireAuth, requireGithub } from "../session.js";
 import { getOverview, readDataFile, readSchedule, writeDataFile, writeSchedule } from "../site-files.js";
 import {
   WorkspaceError,
@@ -22,9 +22,9 @@ import {
   workspaceKey,
 } from "../workspace.js";
 
-/** Opening a workspace runs the repo's own code on this server, so it's opt-in per login. */
+/** Opening a workspace runs the repo's own code on this server, so it's opt-in per GitHub login. */
 function requireAllowed(req, res, next) {
-  const login = req.user.login.toLowerCase();
+  const login = req.user.github.login.toLowerCase();
   const allowed = config.allowedLogins.length ? config.allowedLogins.includes(login) : !config.isProduction;
   if (allowed) return next();
   res.status(403).json({ error: "Site management isn't enabled for your account." });
@@ -67,7 +67,7 @@ const templateError = () =>
 /* ------------------------------------------------------------- workspaces */
 
 export const workspacesRouter = Router();
-workspacesRouter.use(requireAuth, requireAllowed, requireJson);
+workspacesRouter.use(requireAuth, requireGithub, requireAllowed, requireJson);
 
 workspacesRouter.post(
   "/:owner/:repo/open",
@@ -114,7 +114,7 @@ workspacesRouter.post(
     if (mode !== "pr" && mode !== "direct") throw new WorkspaceError("Choose how to publish the changes.", 400);
     if (branch !== undefined && typeof branch !== "string") throw new WorkspaceError("Invalid branch name.", 400);
     const accessToken = await getAccessToken(req, res);
-    const result = await commitAndPush({ key, accessToken, user: req.user, message: message.trim(), mode, branch });
+    const result = await commitAndPush({ key, accessToken, user: req.user.github, message: message.trim(), mode, branch });
     res.json({ ...result, status: await getStatus(key) });
   }),
 );

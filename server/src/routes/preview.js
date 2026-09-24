@@ -38,7 +38,8 @@ function resolveFile(dist, relative) {
 previewRouter.get("/:userId/:owner/:repo/:signature{/*path}", async (req, res) => {
   const { userId, owner, repo, signature } = req.params;
   try {
-    if (!/^\d+$/.test(userId)) throw new WorkspaceError("Not found", 404);
+    // Account ids are MongoDB ObjectIds (24 hex characters).
+    if (!/^[0-9a-f]{24}$/.test(userId)) throw new WorkspaceError("Not found", 404);
     assertRepoRef(owner, repo);
   } catch {
     return res.status(404).send("Not found");

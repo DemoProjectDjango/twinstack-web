@@ -99,7 +99,7 @@ export function DuplicateRepo({ repo, onDuplicated }: Props) {
           {status.message}{" "}
           {status.reauth && (
             <a href="/auth/github" className="font-medium underline">
-              Sign in again
+              Reconnect GitHub
             </a>
           )}
         </p>

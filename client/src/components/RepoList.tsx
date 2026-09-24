@@ -38,8 +38,7 @@ export function RepoList() {
 
   useEffect(() => {
     let cancelled = false;
-    // Fetched from the browser (not a server component) so that a refreshed
-    // session cookie set by the API actually reaches the browser.
+    // Fetched from the browser so the dashboard renders while GitHub responds.
     fetch("/api/repos")
       .then(async (res) => {
         if (cancelled) return;
@@ -117,7 +116,7 @@ export function RepoList() {
             <p className="text-sm">
               Your GitHub access has expired or needs new permissions.{" "}
               <a href="/auth/github" className="font-medium underline">
-                Sign in again
+                Reconnect GitHub
               </a>
             </p>
           ) : (

@@ -1,15 +1,9 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { GitHubIcon } from "@/components/GitHubIcon";
 import { getUser } from "@/lib/session";
 
-const errorMessages: Record<string, string> = {
-  access_denied: "You cancelled the GitHub sign-in.",
-  invalid_state: "Your sign-in session expired. Please try again.",
-};
-
 const STEPS = [
-  { id: "get-access", title: "Get access", text: "Sign in with GitHub and add your Anthropic key." },
+  { id: "get-access", title: "Get access", text: "Create an account, connect GitHub, add your Anthropic key." },
   { id: "copy", title: "Copy the site", text: "Duplicate twinstack-site into your account." },
   { id: "work", title: "Work on it", text: "Pages, navigation, Claude edits and previews." },
   { id: "publish", title: "Publish", text: "Review the changes and open a pull request." },
@@ -27,8 +21,8 @@ const TABS = [
 
 const HELP = [
   {
-    q: "It says my GitHub access has expired, or asks me to sign in again",
-    a: "Click Sign in again. GitHub access can expire, and older sign-ins may lack a permission the app now needs. Your Anthropic key is kept.",
+    q: "It says my GitHub access has expired, or asks me to reconnect GitHub",
+    a: "Click Reconnect GitHub. GitHub access can expire, and an older connection may lack a permission the app now needs. Your account and Anthropic key are kept.",
   },
   {
     q: "A repository I expect is missing from the dashboard",
@@ -36,7 +30,7 @@ const HELP = [
   },
   {
     q: "“Site management isn't enabled for your account”",
-    a: "Opening a site runs its build scripts on the server, so only approved GitHub accounts can use the site manager. Ask the administrator to add your GitHub username.",
+    a: "Opening a site runs its build scripts on the server, so only approved GitHub accounts can use the site manager. Ask the administrator to add the GitHub username you connected.",
   },
   {
     q: "“This isn't a TwinStack site repository”",
@@ -56,9 +50,8 @@ const HELP = [
   },
 ];
 
-export default async function Home({ searchParams }: PageProps<"/">) {
-  const [user, { error }] = await Promise.all([getUser(), searchParams]);
-  const errorCode = typeof error === "string" ? error : undefined;
+export default async function Home() {
+  const user = await getUser();
 
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24">
@@ -70,29 +63,29 @@ export default async function Home({ searchParams }: PageProps<"/">) {
           No terminal needed.
         </p>
 
-        {errorCode && (
-          <p role="alert" className="mx-auto mt-6 max-w-sm rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
-            {errorMessages[errorCode] ?? "Sign-in failed. Please try again."}
-          </p>
-        )}
-
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           {user ? (
             <Link
               href="/dashboard"
               className="inline-flex items-center justify-center rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-90"
             >
-              Continue as {user.login}
+              Go to your dashboard
             </Link>
           ) : (
-            // Plain <a>: this is a full-page navigation to the Express OAuth route.
-            <a
-              href="/auth/github"
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-90"
-            >
-              <GitHubIcon className="size-4" />
-              Sign in with GitHub
-            </a>
+            <>
+              <Link
+                href="/register"
+                className="inline-flex items-center justify-center rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-90"
+              >
+                Create an account
+              </Link>
+              <Link
+                href="/login"
+                className="inline-flex items-center justify-center rounded-md border border-zinc-300 px-5 py-2.5 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+              >
+                Log in
+              </Link>
+            </>
           )}
           <a
             href="#guide"
@@ -129,15 +122,28 @@ export default async function Home({ searchParams }: PageProps<"/">) {
       <Step id="get-access" number={1} title="Get access">
         <ol className="list-decimal space-y-3 pl-5">
           <li>
-            <strong>Sign in with GitHub.</strong> GitHub asks you to approve four permissions: read your profile, read your email
-            address, access your repositories (public and private, read and write) and update GitHub Actions workflows. The app
-            needs repository access to list, copy and push your repositories. It needs the workflow permission because the site
-            includes a deploy workflow, and GitHub refuses pushes that contain workflow files without it.
+            <strong>
+              <Link href="/register" className="underline">
+                Create an account
+              </Link>
+            </strong>{" "}
+            with your name, email and a password of at least 8 characters, or{" "}
+            <Link href="/login" className="underline">
+              log in
+            </Link>{" "}
+            if you already have one.
+          </li>
+          <li>
+            <strong>Connect GitHub</strong> from the dashboard. GitHub asks you to approve four permissions: read your profile,
+            read your email address, access your repositories (public and private, read and write) and update GitHub Actions
+            workflows. The app needs repository access to list, copy and push your repositories. It needs the workflow permission
+            because the site includes a deploy workflow, and GitHub refuses pushes that contain workflow files without it. The
+            connection stays with your account, so you only do this once. You can disconnect it from the dashboard at any time.
           </li>
           <li>
             <strong>Check that you can use the site manager.</strong> Opening a site runs its build scripts on the server, so it&apos;s
             limited to approved GitHub accounts. If you see &ldquo;Site management isn&apos;t enabled for your account&rdquo;, ask
-            the administrator to add your GitHub username.
+            the administrator to add the GitHub username you connected.
           </li>
           <li>
             <strong>Add your Anthropic API key</strong> on the{" "}
@@ -256,9 +262,9 @@ export default async function Home({ searchParams }: PageProps<"/">) {
             Go to your dashboard →
           </Link>
         ) : (
-          <a href="/auth/github" className="text-sm font-medium underline">
-            Sign in with GitHub to start →
-          </a>
+          <Link href="/register" className="text-sm font-medium underline">
+            Create an account to start →
+          </Link>
         )}
       </div>
     </main>
