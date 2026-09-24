@@ -1,4 +1,4 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
 import { config } from "../config.js";
 import { getAnthropicKey } from "../db.js";
@@ -7,7 +7,20 @@ import { MissingScopeError } from "../duplicate.js";
 import { ReauthRequiredError, getAccessToken } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
 import { requireAuth, requireGithub } from "../session.js";
-import { getOverview, readDataFile, readSchedule, writeDataFile, writeSchedule } from "../site-files.js";
+import {
+  applyProposal,
+  clearProposal,
+  getOverview,
+  listImages,
+  readDataFile,
+  readImage,
+  readProposal,
+  readSchedule,
+  saveUpload,
+  writeDataFile,
+  writeSchedule,
+} from "../site-files.js";
+import { getStaticInfo, saveStaticInfo } from "../static-info.js";
 import {
   WorkspaceError,
   acquire,
@@ -151,6 +164,12 @@ workspacesRouter.post(
     }
 
     const release = acquire(key, command.label);
+    try {
+      await command.prepare?.(key, input);
+    } catch (err) {
+      release();
+      throw err;
+    }
     const job = startJob({
       key,
       userId: req.user.id,
@@ -174,6 +193,65 @@ workspacesRouter.get(
 workspacesRouter.put(
   "/:owner/:repo/files/:name",
   handle(async (req, res) => res.json(await writeDataFile(keyFor(req), req.params.name, req.body?.content))),
+);
+
+/* Claude edit previews: the full proposed page, applied as-is or after the user edits it. */
+
+workspacesRouter.get(
+  "/:owner/:repo/proposal",
+  handle(async (req, res) => res.json({ proposal: await readProposal(keyFor(req)) })),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/proposal/apply",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const applied = await applyProposal(key, req.body?.content);
+    res.json({ ...applied, status: await getStatus(key) });
+  }),
+);
+
+workspacesRouter.delete(
+  "/:owner/:repo/proposal",
+  handle(async (req, res) => {
+    await clearProposal(keyFor(req));
+    res.json({ proposal: null });
+  }),
+);
+
+/* Images Claude can see and place in a page. */
+
+workspacesRouter.get(
+  "/:owner/:repo/images",
+  handle(async (req, res) => res.json({ images: await listImages(keyFor(req)) })),
+);
+
+workspacesRouter.get(
+  "/:owner/:repo/images/file",
+  handle(async (req, res) => {
+    const { file, type } = await readImage(keyFor(req), req.query.path);
+    // Raster images only (no SVG), and never rendered as anything else.
+    res.set({ "Content-Security-Policy": "default-src 'none'; sandbox", "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" });
+    res.type(type).sendFile(file);
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/uploads",
+  express.json({ limit: "8mb" }),
+  handle(async (req, res) => res.status(201).json(await saveUpload(keyFor(req), req.body ?? {}))),
+);
+
+/* Static information: site-wide facts in site.config.json and content/data/. */
+
+workspacesRouter.get(
+  "/:owner/:repo/static-info",
+  handle(async (req, res) => res.json(await getStaticInfo(keyFor(req)))),
+);
+
+workspacesRouter.put(
+  "/:owner/:repo/static-info/:section",
+  handle(async (req, res) => res.json(await saveStaticInfo(keyFor(req), req.params.section, req.body?.data))),
 );
 
 workspacesRouter.get(

@@ -15,7 +15,10 @@ const app = express();
 
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
-app.use(express.json());
+// Default 100kb JSON bodies everywhere except image uploads, which parse their own (up to 8mb).
+const json = express.json();
+const UPLOAD_PATH = /^\/api\/workspaces\/[^/]+\/[^/]+\/uploads$/;
+app.use((req, res, next) => (UPLOAD_PATH.test(req.path) ? next() : json(req, res, next)));
 app.use(cookieParser());
 
 app.get("/api/health", (req, res) => {

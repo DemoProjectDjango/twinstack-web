@@ -11,6 +11,7 @@ import { NavPanel } from "./NavPanel";
 import { PagesPanel } from "./PagesPanel";
 import { SchedulePanel } from "./SchedulePanel";
 import { SiteContext, type SiteContextValue } from "./site-context";
+import { StaticInfoPanel } from "./StaticInfoPanel";
 import { TreePanel } from "./TreePanel";
 import { Badge, Button, ErrorText, Notice } from "./ui";
 
@@ -18,6 +19,7 @@ const TABS = [
   { id: "build", label: "Build & preview" },
   { id: "pages", label: "Pages" },
   { id: "navigation", label: "Navigation" },
+  { id: "info", label: "Site info" },
   { id: "edit", label: "Edit with Claude" },
   { id: "tree", label: "Site tree" },
   { id: "schedule", label: "Schedule" },
@@ -254,6 +256,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
             {tab === "build" && <BuildPanel />}
             {tab === "pages" && <PagesPanel />}
             {tab === "navigation" && <NavPanel />}
+            {tab === "info" && <StaticInfoPanel />}
             {tab === "edit" && <EditPanel key={editTarget ?? ""} initialFile={editTarget} />}
             {tab === "tree" && <TreePanel />}
             {tab === "schedule" && <SchedulePanel />}

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { IMAGE_PATH, PROPOSAL_FILE, clearProposal } from "./site-files.js";
 import { WorkspaceError, markInstalled } from "./workspace.js";
 
 // Every command the site manager can run, mapped to the same scripts the
@@ -50,6 +51,37 @@ function text(input, name, label, { max = 200, multiline = false, optional = fal
 }
 
 const flag = (input, name) => input?.[name] === true;
+
+const MARKDOWN_PAGE = /^content\/[\w./-]+\.md$/;
+const MAX_IMAGES = 6;
+
+/** Images for a Claude edit: https URLs, or image files under assets/img/ in the repo. */
+function images(input) {
+  const list = input?.images ?? [];
+  if (!Array.isArray(list) || list.length > MAX_IMAGES) {
+    throw new WorkspaceError(`Attach at most ${MAX_IMAGES} images.`, 400);
+  }
+  return list.map((entry) => {
+    if (typeof entry !== "string" || !entry.trim()) throw new WorkspaceError("Invalid image.", 400);
+    const value = entry.trim();
+    if (/^https?:\/\//i.test(value)) {
+      let url;
+      try {
+        url = new URL(value);
+      } catch {
+        throw new WorkspaceError(`"${value}" isn't a valid URL.`, 400);
+      }
+      if (value.length > 2000 || !["http:", "https:"].includes(url.protocol)) {
+        throw new WorkspaceError(`"${value}" isn't a usable image URL.`, 400);
+      }
+      return url.href;
+    }
+    if (!IMAGE_PATH.test(value) || value.split("/").includes("..")) {
+      throw new WorkspaceError(`"${value}" must be an image under assets/img/ or an http(s) URL.`, 400);
+    }
+    return value;
+  });
+}
 
 export const COMMANDS = {
   install: {
@@ -127,22 +159,21 @@ export const COMMANDS = {
 
   "page-edit": {
     label: "Edit with Claude",
-    // Even the dry-run asks Claude for the proposed file.
+    // Even the preview asks Claude for the proposed file.
     needsKey: () => true,
     steps: (input) => {
-      const args = [
-        text(input, "page", "Page", { max: 300 }),
-        text(input, "instruction", "Instruction", { max: 4000, multiline: true }),
-      ];
-      if (flag(input, "dryRun")) args.push("--dry-run");
+      const page = text(input, "page", "Page", { max: 300 });
+      if (!MARKDOWN_PAGE.test(page) || page.split("/").includes("..")) {
+        throw new WorkspaceError("Pick a page: a .md file under content/.", 400);
+      }
+      const args = [page, text(input, "instruction", "Instruction", { max: 4000, multiline: true })];
+      for (const image of images(input)) args.push(`--image=${image}`);
+      // The preview is saved where the web UI reads it back (inside .git, so it's never a change).
+      if (flag(input, "dryRun")) args.push("--dry-run", `--proposal-out=${PROPOSAL_FILE}`);
       return [script("edit-page.js", args)];
     },
-  },
-
-  "page-edit-queue": {
-    label: "Run queued Claude edits",
-    needsKey: () => true,
-    steps: (input) => [script("edit-page.js", flag(input, "dryRun") ? ["--dry-run"] : [], 30 * MINUTE)],
+    // A stale proposal must never be shown as this preview's result.
+    prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
   },
 
   scaffold: {
@@ -182,6 +213,10 @@ export function jobEnv(anthropicKey) {
   env.GIT_TERMINAL_PROMPT = "0";
   env.NO_COLOR = "1";
   env.npm_config_update_notifier = "false";
-  if (anthropicKey) env.ANTHROPIC_API_KEY = anthropicKey;
+  if (anthropicKey) {
+    env.ANTHROPIC_API_KEY = anthropicKey;
+    // Lets the server route Claude calls through a proxy (or a mock in tests).
+    if (process.env.ANTHROPIC_BASE_URL) env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
+  }
   return env;
 }

@@ -22,7 +22,7 @@ export type SiteContextValue = {
   /** Opens the Claude edit tab with this file selected. */
   editFile: (file: string) => void;
   /** Switches to another tab, e.g. from a hint that points there. */
-  showTab: (tab: "build" | "pages" | "navigation" | "edit" | "tree" | "schedule" | "changes") => void;
+  showTab: (tab: "build" | "pages" | "navigation" | "info" | "edit" | "tree" | "schedule" | "changes") => void;
 };
 
 export const SiteContext = createContext<SiteContextValue | null>(null);

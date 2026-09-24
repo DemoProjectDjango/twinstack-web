@@ -81,7 +81,8 @@ has `site.config.json` and `scripts/build.js`, it runs the site's `npm run` comm
 | Build & preview | `check`, `build --drafts` (shown in an iframe), `npm ci`, `changelog` |
 | Pages | `new <type> "Title" [--draft] [--slug=]` |
 | Navigation | `nav:add`, `nav:remove` |
-| Edit with Claude | `page:edit` (single edit and the `page-commands.json` queue, each with a preview) |
+| Site info | edits `site.config.json` (name, taglines, contact, social) and `content/data/*.json` (company facts, FAQ, testimonials, homepage sections, redirects) in forms |
+| Edit with Claude | `page:edit` on one `.md` page, with optional images (uploaded into `assets/img/uploads/`, picked from `assets/img/`, or URLs). **Preview change** shows the complete proposed file, which can be edited and then applied without calling Claude again. |
 | Site tree | edits `scripts/site-tree.md`, then `scaffold` / `scaffold:preview` / `--force` |
 | Schedule | edits the job list in `scripts/scaffold-schedule.md`, then `scaffold:schedule` / preview |
 | Changes | diff, discard, commit, push |

@@ -38,6 +38,8 @@ export type SitePage = { file: string; slug: string; title: string; draft: boole
 
 export type Overview = {
   site: { name: string; url: string; model: string | null };
+  /** pageEditImages: the copy's edit-page.js supports --image and --proposal-out. */
+  features: { pageEditImages: boolean };
   collections: { name: string; dir: string; label: string; pages: SitePage[] }[];
   navigation: {
     items: { label: string; url: string; collection: string | null; limit: number | null }[];
@@ -61,6 +63,25 @@ export type ScheduleJob = {
 };
 
 export type FileDiff = Change & { diff: string };
+
+/** Claude's complete proposed page from a "Preview change" run. */
+export type Proposal = {
+  file: string;
+  instruction: string;
+  images: string[];
+  content: string;
+  problems: string[];
+  createdAt: string | null;
+};
+
+export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+
+export type StaticSection = { id: string; label: string; file: string; description: string; data: Json };
+
+/** URL of an image under assets/img/ in the workspace, for thumbnails. */
+export function workspaceImageUrl(owner: string, repo: string, path: string) {
+  return workspacePath(owner, repo, `/images/file?path=${encodeURIComponent(path)}`);
+}
 
 export class ApiError extends Error {
   constructor(
