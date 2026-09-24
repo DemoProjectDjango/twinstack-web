@@ -185,6 +185,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     setStatus,
     refresh,
     editFile,
+    showTab: setTab,
   };
 
   return (

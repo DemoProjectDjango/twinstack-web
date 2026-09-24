@@ -1,5 +1,6 @@
 import "server-only";
 import { cookies } from "next/headers";
+import { cache } from "react";
 
 export type User = {
   id: number;
@@ -14,8 +15,11 @@ const apiUrl = process.env.API_URL ?? "http://localhost:4000";
 
 export const SESSION_COOKIE = "session";
 
-/** Resolves the current user by asking the Express API to verify the session cookie. */
-export async function getUser(): Promise<User | null> {
+/**
+ * Resolves the current user by asking the Express API to verify the session cookie.
+ * Cached per request, so the navbar and the page share one API call.
+ */
+export const getUser = cache(async (): Promise<User | null> => {
   const session = (await cookies()).get(SESSION_COOKIE);
   if (!session) return null;
 
@@ -30,4 +34,4 @@ export async function getUser(): Promise<User | null> {
   } catch {
     return null;
   }
-}
+});

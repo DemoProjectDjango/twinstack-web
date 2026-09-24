@@ -1,6 +1,8 @@
 import express from "express";
 import cookieParser from "cookie-parser";
 import { config } from "./config.js";
+import { connectDb, recordSiteCopy } from "./db.js";
+import { isTemplate, withSiteRoles } from "./sites.js";
 import { authRouter } from "./routes/auth.js";
 import { previewRouter } from "./routes/preview.js";
 import { settingsRouter } from "./routes/settings.js";
@@ -27,7 +29,8 @@ app.get("/api/me", requireAuth, (req, res) => {
 app.get("/api/repos", requireAuth, async (req, res) => {
   try {
     const accessToken = await getAccessToken(req, res);
-    res.json({ repos: await listRepos(accessToken) });
+    // Only the site template and copies of it are shown.
+    res.json({ repos: await withSiteRoles(await listRepos(accessToken)) });
   } catch (err) {
     if (err instanceof ReauthRequiredError) {
       return res.status(401).json({ error: "reauth_required" });
@@ -40,6 +43,10 @@ app.get("/api/repos", requireAuth, async (req, res) => {
 app.post("/api/repos/:owner/:repo/duplicate", requireAuth, async (req, res) => {
   // JSON-only: plain HTML forms from other sites can't send this content type.
   if (!req.is("application/json")) return res.status(415).json({ error: "Expected JSON" });
+
+  if (!isTemplate(`${req.params.owner}/${req.params.repo}`)) {
+    return res.status(403).json({ error: "Only the TwinStack site template can be duplicated." });
+  }
 
   const { name, private: isPrivate = true } = req.body ?? {};
   if (!isValidRepoName(name)) {
@@ -64,7 +71,9 @@ app.post("/api/repos/:owner/:repo/duplicate", requireAuth, async (req, res) => {
       newName: name,
       isPrivate: Boolean(isPrivate),
     });
-    res.status(201).json({ repo });
+    // Recorded by repo id, so the copy stays manageable even if it's renamed later.
+    await recordSiteCopy({ userId: req.user.id, repo, source: config.siteTemplate });
+    res.status(201).json({ repo: { ...repo, role: "copy" } });
   } catch (err) {
     if (err instanceof ReauthRequiredError) {
       return res.status(401).json({ error: "reauth_required" });
@@ -95,6 +104,10 @@ app.use((req, res) => {
   res.status(404).json({ error: "Not found" });
 });
 
-app.listen(config.port, () => {
-  console.log(`API listening on http://localhost:${config.port}`);
+// Fail fast: without the database nothing that needs sign-in works.
+await connectDb();
+console.log(`Connected to MongoDB (${config.mongo.dbName})`);
+
+app.listen(config.port, config.host, () => {
+  console.log(`API listening on http://${config.host ?? "localhost"}:${config.port}`);
 });

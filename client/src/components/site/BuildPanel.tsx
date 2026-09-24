@@ -4,7 +4,7 @@ import { useSite } from "./site-context";
 import { Button, Notice, Section } from "./ui";
 
 export function BuildPanel() {
-  const { status, busy, run, version } = useSite();
+  const { status, busy, run, version, showTab } = useSite();
   const needsInstall = status.needsInstall;
 
   return (
@@ -54,6 +54,19 @@ export function BuildPanel() {
               className="h-[36rem] w-full rounded-md border border-zinc-200 bg-white dark:border-zinc-800"
             />
           </>
+        ) : status.build === "empty" ? (
+          <Notice tone="warning">
+            The last build has no pages, so there&apos;s no homepage to show. This site doesn&apos;t have any content files yet.
+            Create them from the{" "}
+            <button type="button" onClick={() => showTab("tree")} className="font-medium underline">
+              Site tree
+            </button>{" "}
+            tab (Scaffold missing pages), or add one on the{" "}
+            <button type="button" onClick={() => showTab("pages")} className="font-medium underline">
+              Pages
+            </button>{" "}
+            tab, then build again.
+          </Notice>
         ) : (
           <p className="text-sm text-zinc-500">Nothing built yet. Run a build to see the site here.</p>
         )}

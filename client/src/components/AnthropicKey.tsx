@@ -5,7 +5,7 @@ import { api } from "@/lib/site-api";
 
 type Settings = { anthropicKey: string | null };
 
-/** The user's own Anthropic API key, kept only in their encrypted session cookie. */
+/** The user's own Anthropic API key, stored encrypted on the server (the browser only sees a masked hint). */
 export function AnthropicKey() {
   const [saved, setSaved] = useState<string | null | undefined>(undefined);
   const [key, setKey] = useState("");
@@ -37,7 +37,8 @@ export function AnthropicKey() {
       <h2 className="text-lg font-semibold">Anthropic API key</h2>
       <p className="mt-1 text-sm text-zinc-500">
         Used for Claude commands in the site manager and billed to your Anthropic account. It&apos;s checked with Anthropic, then
-        stored only in your encrypted session cookie on this browser. Signing out removes it.
+        stored encrypted on the server for your account, so it works on any device you sign in from. Only the masked value
+        is ever shown again. Remove it any time.
       </p>
 
       {saved === undefined ? (

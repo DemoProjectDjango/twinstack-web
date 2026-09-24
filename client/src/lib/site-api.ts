@@ -18,6 +18,8 @@ export type WorkspaceStatus = {
   needsInstall: boolean;
   busy: string | null;
   activeJob: { id: string; command: string; label: string } | null;
+  /** "empty" means the site built but has no homepage yet (no pages). */
+  build: "none" | "empty" | "ready";
   previewUrl: string | null;
 };
 

@@ -10,7 +10,8 @@
   "dependencies": {
     "cookie-parser": "^1.4.7",
     "express": "^5.2.1",
-    "jose": "^6.2.12"
+    "jose": "^6.2.12",
+    "mongodb": "^6.21.0"
   },
   "private": true
 }

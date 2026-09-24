@@ -18,6 +18,8 @@ export type Repo = {
   stars: number;
   updatedAt: string;
   permission: "admin" | "write" | "read";
+  /** The API only returns the site template and copies of it. */
+  role: "template" | "copy";
 };
 
 type Filter = "all" | "private" | "public";
@@ -31,7 +33,7 @@ const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
 export function RepoList() {
   const [state, setState] = useState<State>({ status: "loading" });
-  const [filter, setFilter] = useState<Filter>("private");
+  const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -74,9 +76,12 @@ export function RepoList() {
   }, [repos, filter, query]);
 
   return (
-    <section className="mt-10">
+    <section id="repositories" className="mt-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Repositories</h2>
+        <div>
+          <h2 className="text-lg font-semibold">Site repositories</h2>
+          <p className="text-sm text-zinc-500">The TwinStack site template and your copies of it.</p>
+        </div>
         <div className="flex rounded-md border border-zinc-300 p-0.5 text-sm dark:border-zinc-700">
           {(["private", "public", "all"] as const).map((f) => (
             <button
@@ -121,7 +126,11 @@ export function RepoList() {
 
         {state.status === "ready" && visible.length === 0 && (
           <p className="text-sm text-zinc-500">
-            {query ? "No repositories match that filter." : `No ${filter === "all" ? "" : filter + " "}repositories.`}
+            {query
+              ? "No repositories match that filter."
+              : filter === "all"
+                ? "You don't have access to the TwinStack site template or any copies of it. Ask its owner to add you."
+                : `No ${filter} site repositories.`}
           </p>
         )}
 
@@ -136,16 +145,10 @@ export function RepoList() {
                   <Badge>{repo.private ? "Private" : "Public"}</Badge>
                   {repo.fork && <Badge>Fork</Badge>}
                   {repo.archived && <Badge>Archived</Badge>}
+                  {repo.role === "template" && <Badge>Template</Badge>}
                   <div className="ml-auto flex items-center gap-2 has-[form]:ml-0 has-[form]:basis-full has-[p]:ml-0 has-[p]:basis-full">
-                    {repo.permission !== "read" && !repo.archived && (
-                      <Link
-                        href={`/sites/${repo.owner}/${repo.name}`}
-                        className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
-                      >
-                        Manage site
-                      </Link>
-                    )}
-                    <DuplicateRepo repo={repo} onDuplicated={addRepo} />
+                    <ManageSite repo={repo} />
+                    {repo.role === "template" && <DuplicateRepo repo={repo} onDuplicated={addRepo} />}
                   </div>
                 </div>
                 {repo.description && <p className="mt-1 text-sm text-zinc-500">{repo.description}</p>}
@@ -161,6 +164,33 @@ export function RepoList() {
         )}
       </div>
     </section>
+  );
+}
+
+const actionClass = "rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium dark:border-zinc-700";
+
+/** Copies are managed here; the template never is (changes belong in a copy). */
+function ManageSite({ repo }: { repo: Repo }) {
+  const reason =
+    repo.role === "template"
+      ? "This is the site template. Duplicate it, then manage your copy."
+      : repo.permission === "read"
+        ? "You need write access to manage this site."
+        : repo.archived
+          ? "Archived repositories can't be changed."
+          : null;
+
+  if (reason) {
+    return (
+      <button type="button" disabled title={reason} aria-label={`Manage site (unavailable: ${reason})`} className={`${actionClass} cursor-not-allowed opacity-50`}>
+        Manage site
+      </button>
+    );
+  }
+  return (
+    <Link href={`/sites/${repo.owner}/${repo.name}`} className={`${actionClass} hover:bg-zinc-100 dark:hover:bg-zinc-900`}>
+      Manage site
+    </Link>
   );
 }
 

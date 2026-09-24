@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Next.js 16 (App Router, React 19, Tailwind 4) frontend in `client/` and an Express 5 API in `server/` (plain ESM JavaScript, no build step). Users sign in with GitHub OAuth, see every repo they can access, can duplicate a repo (full history) into their own account, and can manage a twinstack-site repo (run its build, content and Claude commands, then commit and open a PR) from the browser. There is no database: all session state lives in an encrypted cookie.
+A Next.js 16 (App Router, React 19, Tailwind 4) frontend in `client/` and an Express 5 API in `server/` (plain ESM JavaScript, no build step). Users sign in with GitHub OAuth, see every repo they can access, can duplicate a repo (full history) into their own account, and can manage a twinstack-site repo (run its build, content and Claude commands, then commit and open a PR) from the browser. The session lives in an encrypted cookie. MongoDB (`server/src/db.js`, required at startup) stores users, their encrypted Anthropic keys, and which repos are copies of the site template. Deployment to a droplet is covered in `DEPLOY.md`, and `ecosystem.config.cjs` is the PM2 config.
 
 **Before writing any code in `client/`, read `client/AGENTS.md`.** This Next.js version has breaking changes from what you may know; consult `client/node_modules/next/dist/docs/`. For example, route protection lives in `client/src/proxy.ts` (exporting `proxy`), not `middleware.ts`.
 
@@ -43,7 +43,8 @@ There are no tests. Env setup: copy `server/.env.example` → `server/.env` (`GI
 - `server/src/jobs.js` runs commands in memory. The client polls `GET /api/jobs/:id?since=<offset>` (not SSE, so it works through the Next rewrite proxy). Jobs are lost on restart.
 - `server/src/site-files.js` reads site data (collections, pages, nav) by parsing files. **Never import repo code into the server process.**
 - `server/src/routes/preview.js` serves `dist/` under a signed URL with a CSP sandbox header, and rewrites root-relative `href`/`src`/`url()` into the preview prefix. The client iframe is sandboxed without `allow-same-origin`, so keep both.
-- The user's Anthropic key lives only in the session cookie as `anthropicKey`, managed by `routes/settings.js`. Re-login carries it over in `routes/auth.js`, and any code that rewrites the session must spread `req.session` to keep it.
+- The user's Anthropic key is in MongoDB (`users.anthropicKey`). It's AES-256-GCM encrypted under `DATA_ENCRYPTION_KEY`, with the user id as associated data. Read it with `getAnthropicKey()` only at the moment a Claude command starts, and never send it to the browser (use `getAnthropicKeyHint()`).
+- Site scope (`server/src/sites.js`): `/api/repos` returns only the template (`SITE_TEMPLATE_REPO`) and copies of it, each with a `role`. Duplicating is allowed only from the template. Workspaces refuse the template (in `keyFor` and `openWorkspace`) and anything that isn't a copy. A copy is a `siteCopies` record (by repo id) or a repo named `twinstack-site` / `twinstack-site-*`.
 - Client: `components/site/SiteManager.tsx` owns status, the job and polling, and exposes them via `useSite()` (`site-context.tsx`). Each tab is a `*Panel.tsx`. Panels reload their data whenever `version` bumps, which happens after every command and git operation.
 
 **Mutating routes require `Content-Type: application/json`** (415 otherwise). This is the CSRF defence together with the `SameSite=Lax` cookie, so keep it on new POST routes.

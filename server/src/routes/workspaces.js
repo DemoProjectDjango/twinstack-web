@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
 import { config } from "../config.js";
+import { getAnthropicKey } from "../db.js";
+import { isTemplate } from "../sites.js";
 import { MissingScopeError } from "../duplicate.js";
 import { ReauthRequiredError, getAccessToken } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
@@ -54,8 +56,13 @@ function handle(fn) {
 
 function keyFor(req) {
   assertRepoRef(req.params.owner, req.params.repo);
+  // Also blocks a workspace for the template that was opened before this rule existed.
+  if (isTemplate(`${req.params.owner}/${req.params.repo}`)) throw templateError();
   return workspaceKey(req.user.id, req.params.owner, req.params.repo);
 }
+
+const templateError = () =>
+  new WorkspaceError("This is the site template. Duplicate it, then manage your copy.", 403);
 
 /* ------------------------------------------------------------- workspaces */
 
@@ -65,6 +72,7 @@ workspacesRouter.use(requireAuth, requireAllowed, requireJson);
 workspacesRouter.post(
   "/:owner/:repo/open",
   handle(async (req, res) => {
+    keyFor(req);
     const accessToken = await getAccessToken(req, res);
     res.json(await openWorkspace({ accessToken, userId: req.user.id, owner: req.params.owner, repo: req.params.repo }));
   }),
@@ -134,7 +142,8 @@ workspacesRouter.post(
     const input = req.body?.input ?? {};
     const steps = command.steps(input);
     const needsKey = command.needsKey?.(input) ?? false;
-    if (needsKey && !req.session.anthropicKey) {
+    const anthropicKey = needsKey ? await getAnthropicKey(req.user.id) : null;
+    if (needsKey && !anthropicKey) {
       return res.status(400).json({
         error: "anthropic_key_required",
         message: "Add your Anthropic API key on the dashboard to run Claude commands.",
@@ -149,7 +158,7 @@ workspacesRouter.post(
       label: command.label,
       steps,
       cwd: workspaceDir(key),
-      env: jobEnv(needsKey ? req.session.anthropicKey : null),
+      env: jobEnv(anthropicKey),
       release,
       onSuccess: command.onSuccess && (() => command.onSuccess(key)),
     });

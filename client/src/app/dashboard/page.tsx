@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AnthropicKey } from "@/components/AnthropicKey";
 import { RepoList } from "@/components/RepoList";
@@ -12,16 +13,11 @@ export default async function DashboardPage() {
 
   return (
     <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-12">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-        <form action="/auth/logout" method="post">
-          <button
-            type="submit"
-            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
-          >
-            Sign out
-          </button>
-        </form>
+        <Link href="/#guide" className="text-sm text-zinc-500 hover:underline">
+          How this works
+        </Link>
       </header>
 
       <section className="mt-8 flex items-center gap-4 rounded-lg border border-zinc-200 p-6 dark:border-zinc-800">

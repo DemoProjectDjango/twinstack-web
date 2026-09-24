@@ -22,8 +22,25 @@ server/   Express API (port 4000) — owns the OAuth flow and sessions
    refreshes it and re-issues the cookie.
 5. "Sign out" posts to `/auth/logout`, which clears the cookie.
 
-Everything lives in the encrypted cookie, so **no database is needed**. Add MongoDB when you need to
-persist app data or share state across devices.
+The session (including the GitHub token) lives only in the encrypted cookie.
+
+### MongoDB
+
+The API connects at startup and won't run without it (`server/src/db.js`):
+
+| Collection | `_id` | Holds |
+| --- | --- | --- |
+| `users` | GitHub user id | Profile (login, name, email, avatar), `createdAt`, `lastLoginAt`, `loginCount`, updated on every sign-in. Also `anthropicKey`: the user's key encrypted with AES-256-GCM under `DATA_ENCRYPTION_KEY`, bound to the user id, plus a masked `hint`. |
+| `siteCopies` | GitHub repo id | Repos duplicated from the site template, so they stay recognised as copies even after a rename. |
+
+### Which repositories users see
+
+Only the site template (`SITE_TEMPLATE_REPO`, default `DemoProjectDjango/twinstack-site`) and copies of it
+appear on the dashboard (`server/src/sites.js`). A repo counts as a copy if it was duplicated through the app, or
+if it's named like the template (`twinstack-site`, `twinstack-site-*`).
+
+- The **template** can only be duplicated. Its **Manage site** button is disabled, and the API refuses to open it.
+- **Copies** can only be managed, not duplicated.
 
 ### Scopes
 
@@ -37,12 +54,13 @@ access). Users can request access from <https://github.com/settings/connections/
 
 ### Duplicating a repository
 
-Each repo on the dashboard has a **Duplicate** button. It calls
+The site template has a **Duplicate** button. It calls
 `POST /api/repos/:owner/:repo/duplicate` with `{ name, private }`, and Express:
 
 1. creates the new repo in the user's account (`POST /user/repos`),
 2. `git clone --bare`s the source into a temp dir and pushes every branch and tag (full history),
-3. sets the new repo's default branch to match the source, then deletes the temp dir.
+3. sets the new repo's default branch to match the source, then deletes the temp dir,
+4. records the new repo in `siteCopies`.
 
 If a push fails after the repo was created, retrying with the same name reuses that repo as long as it
 is still empty. A non-empty repo is never overwritten.
@@ -52,9 +70,8 @@ host needs `git` installed. Git LFS objects, issues, PRs, wikis and settings are
 
 ### Site manager
 
-Writable repos on the dashboard have a **Manage site** button (`/sites/:owner/:repo`). For a
-twinstack-site repo (one with `site.config.json` and `scripts/build.js`) it runs the site's `npm run`
-commands from a web page:
+Copies of the site template have a **Manage site** button (`/sites/:owner/:repo`). For a copy that
+has `site.config.json` and `scripts/build.js`, it runs the site's `npm run` commands from a web page:
 
 | Tab | Site command |
 | --- | --- |
@@ -75,7 +92,7 @@ How it works:
   The GitHub token and server secrets are never passed. `ANTHROPIC_API_KEY` is passed only to the
   Claude commands.
 - Claude commands use **the user's own Anthropic key**. It's entered on the dashboard, checked with
-  Anthropic, and stored only in the encrypted session cookie.
+  Anthropic, and stored encrypted in MongoDB. The browser only ever gets the masked hint back.
 - By default, publishing creates a branch (`twinstack/<date>-<time>`), pushes it and opens a pull
   request into the default branch. Later commits on that branch update the same PR. Pushing directly
   to the current branch is an option.
@@ -92,7 +109,8 @@ How it works:
    - Authorization callback URL: `http://localhost:3000/auth/github/callback`
 2. Configure env files:
    ```sh
-   cp server/.env.example server/.env        # fill in GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, JWT_SECRET
+   cp server/.env.example server/.env        # fill in GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, JWT_SECRET,
+                                             # MONGODB_URI, DATA_ENCRYPTION_KEY (MongoDB must be running)
    cp client/.env.example client/.env.local
    ```
 3. Install and run (requires Node 20.12+):
@@ -104,6 +122,9 @@ How it works:
 Open <http://localhost:3000>.
 
 ## Production notes
+
+For a step-by-step DigitalOcean droplet setup (MongoDB, PM2, Nginx, HTTPS without a domain), see
+[DEPLOY.md](DEPLOY.md).
 
 - Set `NODE_ENV=production` on the server so cookies get the `Secure` flag (requires HTTPS).
 - Set `CLIENT_URL` (server) to the public site URL, and `API_URL` (client) to where Express is

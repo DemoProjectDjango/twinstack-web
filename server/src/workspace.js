@@ -8,6 +8,7 @@ import { config } from "./config.js";
 import { GIT_TIMEOUT_MS, MissingScopeError, OWNER_PATTERN, gitEnv, isValidRepoName, summarizeGitError } from "./duplicate.js";
 import { githubFetch } from "./github.js";
 import { activeJobFor } from "./jobs.js";
+import { isSiteCopy, isTemplate } from "./sites.js";
 
 // A workspace is a persistent clone of one site repo, per user, on this
 // server. Commands run against it; nothing reaches GitHub until the user
@@ -134,6 +135,14 @@ export async function openWorkspace({ accessToken, userId, owner, repo }) {
   if (!info.permissions?.push) {
     throw new WorkspaceError("You need write access to this repository to manage it.", 403);
   }
+  // Checked on GitHub's canonical name too, in case the URL used an old name that redirects.
+  const repoRef = { id: info.id, fullName: info.full_name, name: info.name };
+  if (isTemplate(repoRef.fullName)) {
+    throw new WorkspaceError("This is the site template. Duplicate it, then manage your copy.", 403);
+  }
+  if (!(await isSiteCopy(repoRef))) {
+    throw new WorkspaceError(`Only copies of ${config.siteTemplate} can be managed here.`, 403);
+  }
 
   for (const file of SITE_MARKERS) {
     const marker = await githubFetch(
@@ -243,7 +252,9 @@ export async function getStatus(key) {
     needsInstall: install,
     busy: busy.get(key) ?? null,
     activeJob: activeJobFor(key),
-    previewUrl: existsSync(path.join(dir, "dist")) ? previewPath(key) : null,
+    // "empty": built, but no homepage (the site has no pages yet), so there's nothing to show.
+    build: existsSync(path.join(dir, "dist", "index.html")) ? "ready" : existsSync(path.join(dir, "dist")) ? "empty" : "none",
+    previewUrl: existsSync(path.join(dir, "dist", "index.html")) ? previewPath(key) : null,
   };
 }
 

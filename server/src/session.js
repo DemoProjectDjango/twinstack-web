@@ -20,9 +20,7 @@ async function decryptSession(token) {
       contentEncryptionAlgorithms: ["A256GCM"],
     });
     if (!payload.user || !payload.github) return null;
-    // The user's own Anthropic key rides in the same encrypted cookie; there is
-    // no server-side store for it.
-    return { user: payload.user, github: payload.github, anthropicKey: payload.anthropicKey ?? null };
+    return { user: payload.user, github: payload.github };
   } catch {
     return null;
   }
@@ -31,7 +29,7 @@ async function decryptSession(token) {
 export function cookieOptions(maxAgeSeconds) {
   return {
     httpOnly: true,
-    secure: config.isProduction,
+    secure: config.cookieSecure,
     // "lax" lets the cookie ride along on the top-level redirect back from GitHub.
     sameSite: "lax",
     path: "/",
@@ -45,7 +43,7 @@ export async function readSession(req) {
   return token ? decryptSession(token) : null;
 }
 
-/** Writes `{ user, github, anthropicKey? }` to the session cookie. */
+/** Writes `{ user, github }` to the session cookie. */
 export async function setSession(res, session) {
   const token = await encryptSession(session);
   res.cookie(config.sessionCookie, token, cookieOptions(config.sessionMaxAgeSeconds));
