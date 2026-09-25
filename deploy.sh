@@ -7,6 +7,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+self=$(basename "$0")   # this script, relative to the folder we just moved into
 
 full=false
 pull=true
@@ -35,6 +36,9 @@ fi
 if $pull; then
   step "Pulling from GitHub"
   git pull --ff-only
+  # Bash keeps running the copy of this script it started with, so run the one that just arrived.
+  # It re-takes the lock: reopening fd 9 closes the only handle holding it.
+  if $full; then exec bash "$self" --no-pull --full; else exec bash "$self" --no-pull; fi
 fi
 new=$(git rev-parse HEAD)
 
