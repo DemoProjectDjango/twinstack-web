@@ -22,7 +22,7 @@ app.use((req, res, next) => (UPLOAD_PATH.test(req.path) ? next() : json(req, res
 app.use(cookieParser());
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, msg: "API is running" });
 });
 
 app.get("/api/me", requireAuth, (req, res) => {
