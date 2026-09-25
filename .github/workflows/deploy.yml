@@ -32,17 +32,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # Secrets pasted from a Windows browser can carry CRLF line endings and stray spaces,
+      # which break the key and every known_hosts line, so they're stripped here.
       - name: Set up SSH
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          LOGIN: ${{ secrets.DEPLOY_USER }}
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" | tr -d '\r' | sed 's/^[[:space:]]*//; /^$/d' > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          echo "DEPLOY_HOST=$(printf '%s' "$HOST" | tr -d '[:space:]')" >> "$GITHUB_ENV"
+          echo "DEPLOY_LOGIN=$(printf '%s' "$LOGIN" | tr -d '[:space:]')" >> "$GITHUB_ENV"
+          echo "Host keys accepted (from DEPLOY_KNOWN_HOSTS):"
+          ssh-keygen -lf ~/.ssh/known_hosts
       - name: Run deploy.sh on the droplet
-        env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
-          USER: ${{ secrets.DEPLOY_USER }}
-        run: ssh -o BatchMode=yes "$USER@$HOST" 'bash /opt/twinstack/web/deploy.sh'
+        run: ssh -o BatchMode=yes "$DEPLOY_LOGIN@$DEPLOY_HOST" 'bash /opt/twinstack/web/deploy.sh'
+      # Host keys are public, so printing them is safe. Compare with the list above.
+      - name: Show the droplet's host keys
+        if: failure()
+        run: |
+          echo "Host keys the droplet actually offers:"
+          ssh-keyscan -T 15 "$DEPLOY_HOST" 2>/dev/null | ssh-keygen -lf - || echo "Couldn't reach $DEPLOY_HOST on port 22."
