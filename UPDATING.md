@@ -140,7 +140,9 @@ cd /opt/twinstack/web
 bash deploy.sh
 ```
 
-The script pulls from GitHub, lists the new commits, and then does only what those commits need:
+The script pulls from GitHub and compares with the last commit that **finished** deploying (recorded in
+`.git/twinstack-deployed`), so changes from a failed deploy or a manual `git pull` are never skipped. It lists those
+commits, then does only what they need:
 
 | Files changed | What the script does |
 | --- | --- |

@@ -32,12 +32,21 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   exit 1
 fi
 
-old=$(git rev-parse HEAD)
 if $pull; then
   step "Pulling from GitHub"
   git pull --ff-only
 fi
 new=$(git rev-parse HEAD)
+
+# What's running is the last commit that finished a deploy, not whatever was checked out before this pull:
+# a failed deploy or a manual `git pull` moves the checkout without rebuilding anything.
+state="$(git rev-parse --git-dir)/twinstack-deployed"
+old=$(cat "$state" 2>/dev/null || true)
+if [ -z "$old" ] || ! git cat-file -e "$old^{commit}" 2>/dev/null; then
+  if ! $full; then echo "No record of a finished deploy here, so deploying everything."; fi
+  full=true
+  old=$new
+fi
 
 if [ "$old" = "$new" ] && ! $full; then
   echo "Already up to date at $(git log -1 --format='%h %s'). Use --full to rebuild anyway."
@@ -46,7 +55,7 @@ fi
 
 files=""
 if [ "$old" != "$new" ]; then
-  step "New commits"
+  step "Changes since the last deploy ($(git rev-parse --short "$old"))"
   git log --oneline "$old..$new"
   files=$(git diff --name-only "$old" "$new")
 fi
@@ -113,6 +122,8 @@ check() {
 step "Checking health"
 check "API" http://127.0.0.1:4000/api/health twinstack-api
 check "Web app" http://127.0.0.1:3000/api/health twinstack-web
+
+echo "$new" > "$state"
 
 echo
 echo "Deployed $(git log -1 --format='%h %s')."
