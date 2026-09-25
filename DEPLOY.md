@@ -456,8 +456,8 @@ If **Manage site** says "Site management isn't enabled for your account", the Gi
 
 ## Deploying updates
 
-See [UPDATING.md](UPDATING.md). In short: push to GitHub from your computer, then on the droplet run
-`cd /opt/twinstack/web && bash deploy.sh`.
+See [UPDATING.md](UPDATING.md). Once its one-time GitHub Actions setup is done, every push to `master` deploys
+automatically. To deploy by hand, run `cd /opt/twinstack/web && bash deploy.sh` on the droplet.
 
 ## Backups
 

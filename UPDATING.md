@@ -6,11 +6,76 @@ How to get a code change from your computer onto the droplet, so that `https://b
 The flow is always the same:
 
 ```
-your computer:  edit → test → commit → git push
-droplet:        bash deploy.sh
+your computer:   edit → test → commit → git push
+GitHub Actions:  lint + build → SSH into the droplet → bash deploy.sh      (automatic)
 ```
 
 GitHub sits in the middle. The droplet only deploys what's on GitHub, so never edit code directly on the server.
+
+Automatic deploys need a one-time setup (section 0). Until it's done, a push only updates GitHub and you have to run
+`deploy.sh` on the droplet yourself (section 4).
+
+---
+
+## 0. One-time setup: deploy automatically on every push
+
+The workflow in `.github/workflows/deploy.yml` runs on every push to `master`. It lints and builds the web app on
+GitHub first, so broken code stops there. Then it logs in to the droplet over SSH and runs `deploy.sh`. It needs an
+SSH key that GitHub can use.
+
+### 0.1 Create a key just for GitHub Actions
+
+On the droplet, as the `twinstack` user:
+
+```bash
+ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/github_actions -N ""
+```
+
+Allow it to log in, but **only to run the deploy**. It can't open a shell or do anything else, so a leaked key can
+only redeploy what's already on GitHub:
+
+```bash
+echo "command=\"bash /opt/twinstack/web/deploy.sh\",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty $(cat ~/.ssh/github_actions.pub)" >> ~/.ssh/authorized_keys
+```
+
+Print the private key for the next step:
+
+```bash
+cat ~/.ssh/github_actions
+```
+
+### 0.2 Add the secrets to GitHub
+
+First get the droplet's host key, so GitHub can check it's talking to your server. On **your computer**, using the
+droplet's **IP address**:
+
+```bash
+ssh-keyscan -t ed25519 203.0.113.10
+```
+
+On GitHub, open **DemoProjectDjango/twinstack-web → Settings → Secrets and variables → Actions → New repository
+secret** and add four secrets:
+
+| Name | Value |
+| --- | --- |
+| `DEPLOY_HOST` | the droplet's **IP address**, e.g. `203.0.113.10`. Not `builder.mydomain.com`: behind the Cloudflare proxy that name doesn't reach the server over SSH. |
+| `DEPLOY_USER` | `twinstack` |
+| `DEPLOY_SSH_KEY` | the whole output of `cat ~/.ssh/github_actions`, including the `-----BEGIN` and `-----END` lines |
+| `DEPLOY_KNOWN_HOSTS` | the whole line printed by `ssh-keyscan` (starts with the IP, then `ssh-ed25519 AAAA…`) |
+
+Then remove the private key from the droplet; GitHub has it now:
+
+```bash
+rm ~/.ssh/github_actions
+```
+
+### 0.3 Test it
+
+On GitHub, open the **Actions** tab → **Deploy** → **Run workflow**. Both jobs, `check` and `deploy`, should turn
+green, and the `deploy` log ends with `Deployed <commit> …` or `Already up to date`.
+
+From now on, `git push` is all you need. If a deploy fails, GitHub emails you, and the **Actions** tab shows which step
+failed and why.
 
 ---
 
@@ -44,9 +109,10 @@ git push                         # to master
 
 ## 3. Check whether the droplet needs anything first
 
-Most changes need nothing extra. Before you deploy, check this list:
+Most changes need nothing extra. Before you deploy, check this list. With automatic deploys, do these **before you
+push**, because the push starts the deploy:
 
-| Your change | Do this on the droplet **before** step 4 |
+| Your change | Do this on the droplet **before** it deploys |
 | --- | --- |
 | Adds a new **required** variable to `server/src/config.js` | Add it to `/opt/twinstack/web/server/.env`, or the API won't start. Also add it to `server/.env.example`. |
 | Adds an optional server variable | Add it to `server/.env` if you want a value other than the default. |
@@ -58,7 +124,10 @@ edit), because jobs live only in memory. Uncommitted edits in users' site worksp
 
 ## 4. Deploy
 
-From **your computer**:
+With automatic deploys set up (section 0), the push in step 2 already started the deploy. Follow it in the GitHub
+**Actions** tab; the `deploy` job's log shows the same output as running the script by hand. Nothing else to do here.
+
+To deploy by hand (before section 0 is set up, or when GitHub Actions is down), from **your computer**:
 
 ```bash
 ssh twinstack@203.0.113.10
@@ -201,6 +270,10 @@ If it says a restart is required, run `sudo reboot`. PM2 brings both apps back b
 | `Not possible to fast-forward` | The droplet's history differs from GitHub, usually after a force-push. If GitHub is correct, run `git fetch && git reset --hard origin/master && bash deploy.sh --no-pull --full`. |
 | `Permission denied (publickey)` on pull | The droplet's deploy key was removed from the GitHub repo. Add `~/.ssh/id_ed25519.pub` again (DEPLOY.md step 9). |
 | `Another deploy is already running` | Wait for it to finish. Only one deploy runs at a time. |
+| Actions: `check` job fails | Lint or the build failed on GitHub, and nothing was deployed. Run the same two commands from step 1 on your computer, fix, and push again. |
+| Actions: `Permission denied (publickey)` in the `deploy` job | `DEPLOY_SSH_KEY` is incomplete (it needs the BEGIN and END lines), or the `command=…` line is missing from `~/.ssh/authorized_keys` on the droplet (section 0.1). |
+| Actions: `Host key verification failed` | `DEPLOY_KNOWN_HOSTS` is missing or wrong, or the droplet was rebuilt. Run `ssh-keyscan` again (section 0.2) and update the secret. |
+| Actions: the `deploy` job times out connecting | `DEPLOY_HOST` must be the droplet's IP, not a domain behind Cloudflare. |
 | The build fails | The web app is probably down now. Fix the code on your computer and push again, or roll back (section 6). |
 | `npm ci` fails with a lockfile error | `package.json` and `package-lock.json` don't match. Run `npm install` in that folder on your computer, commit the lockfile, and push. |
 | `API isn't answering` | `pm2 logs twinstack-api --lines 50`. Usually a missing variable in `server/.env` (section 3) or MongoDB being down (`sudo systemctl status mongod`). |
