@@ -1,0 +1,2 @@
+# deploy.sh runs on Linux; a CRLF checkout would break it.
+*.sh text eol=lf

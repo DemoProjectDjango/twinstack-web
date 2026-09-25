@@ -1,55 +1,85 @@
-# Deploying to builder.mydomain.com
+# Deploying to a DigitalOcean droplet
 
-This guide takes a **brand-new Ubuntu 24.04 VPS** to a working Twinstack Web at `https://builder.mydomain.com`.
+This guide takes a **brand-new Ubuntu 24.04 droplet** to a working Twinstack Web:
+
+- **Frontend (Next.js):** `https://builder.mydomain.com`
+- **Backend (Express API):** `https://api.mydomain.com`
+- **MongoDB:** on the same droplet, reachable only from the droplet itself
+
 Everything runs on that one server:
 
 ```
-browser ──HTTPS──> Nginx :443 ──> Next.js 127.0.0.1:3000 ──> Express 127.0.0.1:4000 ──> MongoDB 127.0.0.1:27017
+builder.mydomain.com ──HTTPS──> Nginx ──> Next.js 127.0.0.1:3000 ──┐
+                                                                   ├──> Express 127.0.0.1:4000 ──> MongoDB 127.0.0.1:27017
+api.mydomain.com ──────HTTPS──> Nginx ─────────────────────────────┘
 ```
+
+How the two domains work together:
+
+- Users only use **`builder.mydomain.com`**. The web app sends its `/auth/*` and `/api/*` requests to Express
+  over the droplet's private `127.0.0.1:4000` (set by `API_URL`). The login cookie therefore belongs to
+  `builder.mydomain.com`, and the GitHub OAuth callback points there too.
+- **`api.mydomain.com`** gives direct public access to the same Express process, for health checks, monitoring
+  or future clients. Opening it in a browser won't sign you in, because the login cookie belongs to `builder`.
 
 Replace these placeholders everywhere below:
 
 | Placeholder | What it is |
 | --- | --- |
-| `builder.mydomain.com` | your subdomain |
-| `203.0.113.10` | your VPS's public IPv4 address (from your provider's control panel) |
+| `mydomain.com` | your domain |
+| `builder.mydomain.com` | the frontend subdomain |
+| `api.mydomain.com` | the API subdomain |
+| `203.0.113.10` | your droplet's public IPv4 address (shown on the droplet's page in DigitalOcean) |
 | `you@example.com` | your email, for Let's Encrypt certificate expiry notices |
 | `your-github-username` | the GitHub account you'll connect after logging in |
 
-Commands run on **your computer** are marked as such. Everything else runs on the VPS.
+Commands run on **your computer** are marked as such. Everything else runs on the droplet.
+
+Once the site is live, follow [UPDATING.md](UPDATING.md) to ship code changes.
 
 How users get in: they **create an account** (name, email, password) on the site, **log in**, then **connect GitHub**
 from the dashboard. The GitHub connection is saved with their account.
 
 ---
 
-## 1. Create the VPS
+## 1. Create the droplet
 
-In your provider's control panel (DigitalOcean: **Create → Droplets**):
+In DigitalOcean, go to **Create → Droplets**:
 
+- **Region:** the one closest to your users.
 - **Image:** Ubuntu 24.04 (LTS) x64
-- **Size:** at least **2 GB RAM**. 1 GB works only with the swap file from step 5.
-- **Authentication:** SSH key. Add your computer's public key. If you don't have one, run
-  `ssh-keygen -t ed25519` on your computer and paste the contents of `~/.ssh/id_ed25519.pub`.
+- **Size:** Basic, Regular, at least **2 GB RAM / 1 vCPU**. 1 GB works only with the swap file from step 5.
+  `next build` and the site manager's commands (`npm ci`, site builds) need the memory.
+- **Authentication:** SSH key. Click **New SSH Key** and paste your computer's public key. If you don't have one,
+  run `ssh-keygen -t ed25519` on your computer and paste the contents of `~/.ssh/id_ed25519.pub`
+  (on Windows: `C:\Users\<you>\.ssh\id_ed25519.pub`).
+- **Backups:** optional. Weekly droplet backups (an extra 20% of the droplet price) are a safety net on top of the
+  MongoDB backups below.
+- **Hostname:** for example `twinstack`.
 
-Note the public IPv4 address once it's created.
+Click **Create Droplet** and copy its public IPv4 address from the droplet's page.
 
-## 2. Point the subdomain at the VPS
+## 2. Point both subdomains at the droplet
 
-Wherever `mydomain.com`'s DNS is managed (your registrar, Cloudflare, DigitalOcean **Networking → Domains**, …),
-add one record:
+Wherever `mydomain.com`'s DNS is managed (your registrar, Cloudflare, or DigitalOcean **Networking → Domains**),
+add two records:
 
 | Type | Name / Host | Value | TTL |
 | --- | --- | --- | --- |
 | `A` | `builder` | `203.0.113.10` | 300 (or the lowest offered) |
+| `A` | `api` | `203.0.113.10` | 300 (or the lowest offered) |
 
-If you use Cloudflare, set the record to **DNS only** (grey cloud) for now. Certbot in step 13 needs to reach the
+DNS in DigitalOcean only works if the domain's nameservers at your registrar are `ns1.digitalocean.com`,
+`ns2.digitalocean.com` and `ns3.digitalocean.com`. If your registrar still manages DNS, add the records there.
+
+If you use Cloudflare, set both records to **DNS only** (grey cloud) for now. Certbot in step 13 needs to reach the
 server directly.
 
 Check it from **your computer**. It can take a few minutes to a few hours:
 
 ```bash
 nslookup builder.mydomain.com        # should answer 203.0.113.10
+nslookup api.mydomain.com            # should answer 203.0.113.10
 ```
 
 Carry on with the next steps while it spreads. It only has to work by step 13.
@@ -62,7 +92,7 @@ From **your computer**:
 ssh root@203.0.113.10
 ```
 
-On the VPS:
+On the droplet:
 
 ```bash
 apt update && apt upgrade -y
@@ -202,11 +232,12 @@ Click **Register application**, then **Generate a new client secret**. Copy the 
 now; the secret is shown only once. Keep this app separate from the one you use on `localhost`, because each app has one
 callback URL.
 
-## 9. Get the code onto the VPS
+## 9. Get the code onto the droplet
 
-First, on **your computer**: commit and push your latest changes to GitHub. The server can only deploy what's there.
+First, on **your computer**: commit and push your latest changes to GitHub, including `deploy.sh` and
+`.gitattributes`. The server can only deploy what's there.
 
-Then on the VPS:
+Then on the droplet:
 
 ```bash
 sudo mkdir -p /opt/twinstack /var/lib/twinstack/workspaces
@@ -236,6 +267,9 @@ Generate two secrets:
 openssl rand -hex 32     # JWT_SECRET
 openssl rand -hex 32     # DATA_ENCRYPTION_KEY: also save a copy somewhere safe
 ```
+
+Always generate fresh values here. Never copy `DATA_ENCRYPTION_KEY` from `server/.env.example` or from your local
+`.env`: the example file is committed to the repository, so that value isn't secret.
 
 Create the API's settings file:
 
@@ -274,31 +308,44 @@ chmod 600 /opt/twinstack/web/server/.env
 echo "API_URL=http://127.0.0.1:4000" > /opt/twinstack/web/client/.env.local
 ```
 
+Keep `API_URL` on `http://127.0.0.1:4000`, not `https://api.mydomain.com`. The web app then reaches Express directly
+on the droplet, without a round trip through the internet and Nginx. `CLIENT_URL` stays `https://builder.mydomain.com`
+because that's where users sign in and where GitHub sends them back.
+
 What the secrets do:
 
 - `JWT_SECRET` encrypts login cookies. Changing it only logs everyone out.
 - `DATA_ENCRYPTION_KEY` encrypts each user's GitHub token and Anthropic key in MongoDB. **Never change or lose it.**
   Without it, users would have to reconnect GitHub and re-enter their keys.
 
-## 11. Install and build
+## 11. Install, build and start
+
+The repository's `deploy.sh` is the same script you'll use for every update (see [UPDATING.md](UPDATING.md)). For
+the first run, tell it to install and build everything:
 
 ```bash
 cd /opt/twinstack/web
-npm install          # also installs client/ and server/
-npm run build        # builds the Next.js app; it reads API_URL here
+bash deploy.sh --no-pull --full
 ```
 
-## 12. Start the app with PM2
+The script:
+
+1. runs `npm ci` in `server/` and `client/`, installing the exact versions from the lockfiles,
+2. builds the Next.js app (`API_URL` from `client/.env.local` is read at this point),
+3. starts `twinstack-api` and `twinstack-web` with PM2 from `ecosystem.config.cjs`,
+4. waits until both answer `{"ok":true}` on their health check.
+
+It ends with `Deployed <commit> …`. If the API health check fails, run `pm2 logs twinstack-api --lines 50`. The usual
+causes are a missing variable in `server/.env` or a wrong MongoDB password.
+
+## 12. Keep the app running after a reboot
 
 ```bash
-cd /opt/twinstack/web
-pm2 start ecosystem.config.cjs
 pm2 status                            # twinstack-api and twinstack-web both "online"
 pm2 logs twinstack-api --lines 20     # "Connected to MongoDB (twinstack)" and "API listening on http://127.0.0.1:4000"
-curl http://127.0.0.1:3000/api/health # {"ok":true}
 ```
 
-Make it start again after a reboot:
+Make PM2 start again after a reboot:
 
 ```bash
 pm2 save
@@ -308,6 +355,10 @@ pm2 startup systemd
 `pm2 startup` prints a command beginning with `sudo env PATH=...`. Copy it, run it, then run `pm2 save` again.
 
 ## 13. Nginx and HTTPS
+
+Nginx gets one config file per subdomain.
+
+### Frontend: builder.mydomain.com → Next.js
 
 ```bash
 sudo nano /etc/nginx/sites-available/builder
@@ -335,28 +386,61 @@ server {
 }
 ```
 
+### Backend: api.mydomain.com → Express
+
+```bash
+sudo nano /etc/nginx/sites-available/api
+```
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.mydomain.com;
+
+    client_max_body_size 10m;
+
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+}
+```
+
+### Enable both and get certificates
+
 ```bash
 sudo ln -s /etc/nginx/sites-available/builder /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/api /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t                       # "syntax is ok" and "test is successful"
 sudo systemctl reload nginx
 ```
 
-Check that DNS from step 2 is working (`nslookup builder.mydomain.com` shows your IP), then get the certificate:
+Check that DNS from step 2 is working (both `nslookup` commands show your IP), then get one certificate covering
+both names:
 
 ```bash
-sudo certbot --nginx -d builder.mydomain.com --redirect --agree-tos -m you@example.com --no-eff-email
+sudo certbot --nginx -d builder.mydomain.com -d api.mydomain.com --redirect --agree-tos -m you@example.com --no-eff-email
 sudo certbot renew --dry-run        # confirms automatic renewal works
 ```
 
-Certbot adds HTTPS to the Nginx config and redirects `http://` to `https://`. Renewal happens automatically.
+Certbot adds HTTPS to both Nginx files and redirects `http://` to `https://`. Renewal happens automatically.
 
 If you use Cloudflare, you can turn its proxy (orange cloud) back on now. Set **SSL/TLS** to **Full (strict)**.
 
 ## 14. Open the site
 
+From **your computer**:
+
 ```bash
-curl https://builder.mydomain.com/api/health     # {"ok":true}
+curl https://builder.mydomain.com/api/health     # {"ok":true}  (through Next.js)
+curl https://api.mydomain.com/api/health         # {"ok":true}  (Express directly)
 ```
 
 In your browser:
@@ -372,15 +456,8 @@ If **Manage site** says "Site management isn't enabled for your account", the Gi
 
 ## Deploying updates
 
-On **your computer**, push the changes to GitHub. Then on the VPS:
-
-```bash
-cd /opt/twinstack/web
-git pull
-npm install
-npm run build
-pm2 restart all
-```
+See [UPDATING.md](UPDATING.md). In short: push to GitHub from your computer, then on the droplet run
+`cd /opt/twinstack/web && bash deploy.sh`.
 
 ## Backups
 
@@ -410,6 +487,8 @@ mongorestore --uri="mongodb://twinstack:APP_PASSWORD@127.0.0.1:27017/twinstack?a
 | Symptom | Check |
 | --- | --- |
 | Browser can't reach the site at all | `nslookup builder.mydomain.com` shows your IP, `sudo ufw status` allows 80/443, `sudo systemctl status nginx` |
+| `builder` works but `api.mydomain.com` doesn't | The `api` DNS record exists, `/etc/nginx/sites-enabled/api` exists, and the certificate covers it (`sudo certbot certificates`) |
+| `https://api.mydomain.com/api/me` says "Not authenticated" in the browser | Expected. The login cookie belongs to `builder.mydomain.com`. Signed-in users use the API through `builder`. |
 | 502 Bad Gateway | `pm2 status`, then `pm2 logs`. One of the apps isn't running. |
 | API stops with "Missing required environment variable" | That variable is missing from `server/.env` |
 | API stops with a MongoDB error | `sudo systemctl status mongod`, and test the user and password with the `mongosh` command from step 7 |
@@ -417,7 +496,7 @@ mongorestore --uri="mongodb://twinstack:APP_PASSWORD@127.0.0.1:27017/twinstack?a
 | GitHub says "redirect_uri is not associated with this application" | The OAuth App's callback must be exactly `https://builder.mydomain.com/auth/github/callback`, matching `CLIENT_URL` |
 | After logging in you're sent back to the login page | The site isn't on HTTPS yet, so the browser drops the secure cookie. Finish step 13. |
 | "Too many failed attempts" | 10 wrong passwords for that email in 15 minutes. Wait, or `pm2 restart twinstack-api`. |
-| `npm run build` is killed | Out of memory: add the swap file (step 5) |
+| The build in `deploy.sh` is killed | Out of memory: add the swap file (step 5) |
 
 Useful commands:
 

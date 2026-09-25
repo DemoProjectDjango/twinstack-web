@@ -128,7 +128,7 @@ Open <http://localhost:3000>.
 ## Production notes
 
 For a step-by-step setup on a new Ubuntu VPS with your own subdomain (DNS, MongoDB, PM2, Nginx, HTTPS), see
-[DEPLOY.md](DEPLOY.md).
+[DEPLOY.md](DEPLOY.md). To ship code changes to the live server afterwards, see [UPDATING.md](UPDATING.md).
 
 - Set `NODE_ENV=production` on the server so cookies get the `Secure` flag (requires HTTPS).
 - Set `CLIENT_URL` (server) to the public site URL, and `API_URL` (client) to where Express is
