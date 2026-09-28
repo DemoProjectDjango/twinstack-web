@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, workspacePath, type Publishing, type WorkspaceStatus } from "@/lib/site-api";
+import { DomainSettings } from "./DomainSettings";
 import { useSite } from "./site-context";
 import { Button, ErrorText } from "./ui";
 
@@ -159,6 +160,16 @@ export function PublishBar() {
         </p>
       )}
       <ErrorText error={error} />
+      {publishing.enabled && publishing.canConfigure && (
+        <DomainSettings
+          publishing={publishing}
+          onChange={(next) => {
+            setPublishing(next);
+            // A domain change starts a redeploy: watch it closely.
+            changedAt.current = Date.now();
+          }}
+        />
+      )}
     </div>
   );
 }

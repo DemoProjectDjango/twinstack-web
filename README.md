@@ -108,6 +108,34 @@ How it works:
   giving someone access to it on GitHub is what lets them build sites here, and a public template
   lets anyone in. Container isolation is not implemented yet.
 
+### Publishing and custom domains
+
+Every copy publishes itself with GitHub Pages: each push to its default branch runs the copy's deploy
+workflow, and the site goes live at `https://<owner>.github.io/<repo>/`. The **Live site** bar at the top of
+the site manager shows the link and the latest deploy.
+
+To use your own domain, open **Custom domain** in that bar, enter it (`www.example.com` or `example.com`)
+and click **Connect domain**. The app saves it in the repo's Pages settings and rebuilds the site for it. Then,
+at the domain's DNS provider (the registrar, such as GoDaddy or Namecheap, or a DNS host such as Cloudflare):
+
+1. Delete any existing `A`, `AAAA` or `CNAME` record for that name, such as a parking page. Leave `MX` and
+   `TXT` records (email) alone.
+2. Add the records the bar shows:
+   - A subdomain (`www.example.com`, `shop.example.com`): one `CNAME` record, name `www` (the part before
+     the domain), pointing to `<owner>.github.io`.
+   - A bare domain (`example.com`): four `A` records at `@` pointing to `185.199.108.153`,
+     `185.199.109.153`, `185.199.110.153` and `185.199.111.153` (optionally four `AAAA` records for IPv6:
+     `2606:50c0:8000::153` to `2606:50c0:8003::153`), plus a `CNAME` for `www` pointing to
+     `<owner>.github.io`.
+3. On Cloudflare, set the records to **DNS only** (grey cloud) until GitHub has issued the certificate. If the
+   domain has CAA records, allow `letsencrypt.org`.
+4. Wait for DNS to update (usually within an hour, up to 48 hours) and use **Check DNS** to see what GitHub
+   sees. Once the certificate is ready (minutes to 24 hours), tick **Enforce HTTPS**.
+
+Verifying the domain under your GitHub account's Settings → Pages → Verified domains stops anyone else from
+attaching it to their own Pages site. Pages for a private repository, with or without a domain, needs a paid
+GitHub plan.
+
 ## Setup
 
 1. Create a GitHub OAuth App at <https://github.com/settings/developers>:

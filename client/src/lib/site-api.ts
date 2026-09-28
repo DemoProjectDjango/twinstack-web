@@ -70,9 +70,30 @@ export type ScheduleJob = {
 
 export type FileDiff = Change & { diff: string };
 
+/** One host in GitHub's DNS check for a custom domain. */
+export type DomainHealth = {
+  host: string;
+  isApex: boolean;
+  resolves: boolean;
+  pointsToGithub: boolean;
+  httpsEligible: boolean;
+  proxied: boolean;
+  caaError: string | null;
+};
+
+/** GitHub's DNS check. `pending` while GitHub is still working it out. */
+export type DomainCheck = { pending: boolean; domain?: DomainHealth | null; altDomain?: DomainHealth | null };
+
 /** GitHub Pages for a site copy, and its latest deploy on the default branch. */
 export type Publishing = {
   defaultBranch: string;
+  /** "<owner>.github.io": where a custom domain's CNAME record points. */
+  pagesHost: string;
+  /** The custom domain set in Pages, or null for the github.io address. */
+  domain: string | null;
+  httpsEnforced: boolean;
+  /** GitHub's certificate for the custom domain ("new", "approved", "issued", "errored"…), or null. */
+  certificate: string | null;
   private: boolean;
   /** The user is an admin of the repo, so they can turn Pages on. */
   canConfigure: boolean;

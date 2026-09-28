@@ -45,6 +45,12 @@ export async function getPublishing(accessToken, fullName) {
   const run = runs.res.ok ? runs.body?.workflow_runs?.[0] : null;
   return {
     defaultBranch: branch,
+    // What a custom domain's CNAME record points at.
+    pagesHost: `${(repo.body.owner?.login ?? fullName.split("/")[0]).toLowerCase()}.github.io`,
+    domain: pages.res.ok ? (pages.body.cname ?? null) : null,
+    httpsEnforced: pages.res.ok ? Boolean(pages.body.https_enforced) : false,
+    // GitHub's certificate for the custom domain: "new", "authorization_pending", "approved", "issued", "errored"…
+    certificate: pages.res.ok ? (pages.body.https_certificate?.state ?? null) : null,
     private: repo.body.private,
     canConfigure: Boolean(repo.body.permissions?.admin),
     enabled: pages.res.ok,
@@ -75,6 +81,73 @@ export async function enablePages(accessToken, fullName) {
   if (!result.res.ok) {
     throw new WorkspaceError(githubMessage(result.body, `GitHub refused to turn on Pages (${result.res.status}).`), 422);
   }
+}
+
+/** A bare host name ("www.example.com"), from whatever the user typed; throws if it isn't one. */
+export function normalizeDomain(input) {
+  if (typeof input !== "string") throw new WorkspaceError("Enter a domain.", 400);
+  const host = input.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/\.$/, "");
+  const label = /^(?!-)[a-z0-9-]{1,63}(?<!-)$/;
+  const labels = host.split(".");
+  if (host.length > 253 || labels.length < 2 || !labels.every((l) => label.test(l)) || /^\d+$/.test(labels.at(-1))) {
+    throw new WorkspaceError(`"${input.trim()}" isn't a domain name like www.example.com.`, 400);
+  }
+  if (host.endsWith(".github.io")) throw new WorkspaceError("That's a github.io address, not a custom domain.", 400);
+  return host;
+}
+
+/**
+ * Sets the Pages custom domain (null removes it), then redeploys so the site
+ * is built for its new address: the workflow reads the domain back from Pages.
+ */
+export async function setDomain(accessToken, fullName, domain) {
+  const result = await json(`/repos/${fullName}/pages`, accessToken, { method: "PUT", body: { cname: domain } });
+  if (!result.res.ok) {
+    throw new WorkspaceError(githubMessage(result.body, `GitHub refused the domain (${result.res.status}).`), 422);
+  }
+  const after = await getPublishing(accessToken, fullName);
+  let redeployed = false;
+  if (after.workflowReady) {
+    await startDeploy(accessToken, fullName, after.defaultBranch);
+    redeployed = true;
+  }
+  return { ...after, redeployed };
+}
+
+/** Turns "Enforce HTTPS" on or off. GitHub refuses until the domain's certificate exists. */
+export async function setHttps(accessToken, fullName, enforced) {
+  const result = await json(`/repos/${fullName}/pages`, accessToken, {
+    method: "PUT",
+    body: { https_enforced: Boolean(enforced) },
+  });
+  if (!result.res.ok) {
+    throw new WorkspaceError(githubMessage(result.body, `GitHub refused to change HTTPS (${result.res.status}).`), 422);
+  }
+  return getPublishing(accessToken, fullName);
+}
+
+/**
+ * GitHub's DNS check for the custom domain. `pending` while GitHub is still
+ * working it out (it answers 202 at first; ask again a few seconds later).
+ */
+export async function checkDomain(accessToken, fullName) {
+  const result = await json(`/repos/${fullName}/pages/health`, accessToken);
+  if (result.res.status === 202) return { pending: true };
+  if (!result.res.ok) {
+    throw new WorkspaceError(githubMessage(result.body, `GitHub couldn't check the domain (${result.res.status}).`), 422);
+  }
+  const summary = (d) =>
+    d && {
+      host: d.host,
+      isApex: Boolean(d.is_apex_domain),
+      resolves: Boolean(d.dns_resolves),
+      pointsToGithub: Boolean(d.is_pointed_to_github_pages_server),
+      httpsEligible: Boolean(d.is_https_eligible),
+      // Cloudflare's orange-cloud proxy hides GitHub's servers and blocks the certificate.
+      proxied: Boolean(d.is_proxied || d.is_cloudflare_ip),
+      caaError: d.caa_error ?? null,
+    };
+  return { pending: false, domain: summary(result.body?.domain), altDomain: summary(result.body?.alt_domain) };
 }
 
 /** Runs the deploy workflow on the default branch now. */

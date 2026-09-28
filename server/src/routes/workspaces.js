@@ -6,7 +6,16 @@ import { isTemplate } from "../sites.js";
 import { MissingScopeError } from "../duplicate.js";
 import { ReauthRequiredError, getAccessToken, readRepoFile } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
-import { PUBLISHING_FILES, enablePages, getPublishing, startDeploy } from "../publishing.js";
+import {
+  PUBLISHING_FILES,
+  checkDomain,
+  enablePages,
+  getPublishing,
+  normalizeDomain,
+  setDomain,
+  setHttps,
+  startDeploy,
+} from "../publishing.js";
 import { requireAuth, requireGithub } from "../session.js";
 import {
   applyProposal,
@@ -265,6 +274,35 @@ workspacesRouter.post(
     }
     await startDeploy(accessToken, repoName(req), before.defaultBranch);
     res.json(before);
+  }),
+);
+
+/* A custom domain for the published site: set or remove it, HTTPS, and GitHub's DNS check. */
+
+workspacesRouter.put(
+  "/:owner/:repo/publishing/domain",
+  handle(async (req, res) => {
+    keyFor(req);
+    const raw = req.body?.domain;
+    const domain = raw === null || raw === "" ? null : normalizeDomain(raw);
+    res.json(await setDomain(await getAccessToken(req, res), repoName(req), domain));
+  }),
+);
+
+workspacesRouter.put(
+  "/:owner/:repo/publishing/https",
+  handle(async (req, res) => {
+    keyFor(req);
+    if (typeof req.body?.enforced !== "boolean") throw new WorkspaceError("Say whether to enforce HTTPS.", 400);
+    res.json(await setHttps(await getAccessToken(req, res), repoName(req), req.body.enforced));
+  }),
+);
+
+workspacesRouter.get(
+  "/:owner/:repo/publishing/domain-check",
+  handle(async (req, res) => {
+    keyFor(req);
+    res.json(await checkDomain(await getAccessToken(req, res), repoName(req)));
   }),
 );
 
