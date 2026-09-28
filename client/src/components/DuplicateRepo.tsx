@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useId, useState } from "react";
 import type { Repo } from "./RepoList";
 
@@ -17,9 +18,10 @@ type Status =
 export function DuplicateRepo({ repo, onDuplicated }: Props) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(`${repo.name}-copy`);
-  const [isPrivate, setIsPrivate] = useState(true);
+  const [isPrivate, setIsPrivate] = useState(false);
   const [status, setStatus] = useState<Status>({ state: "idle" });
   const nameId = useId();
+  const router = useRouter();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -43,6 +45,8 @@ export function DuplicateRepo({ repo, onDuplicated }: Props) {
       }
       setStatus({ state: "done", repo: data.repo });
       onDuplicated(data.repo);
+      // Straight on to managing the new copy.
+      router.push(`/sites/${encodeURIComponent(data.repo.owner)}/${encodeURIComponent(data.repo.name)}`);
     } catch {
       setStatus({ state: "error", message: "Network error. The copy may still finish; refresh to check." });
     }
@@ -67,6 +71,7 @@ export function DuplicateRepo({ repo, onDuplicated }: Props) {
         <a href={status.repo.htmlUrl} target="_blank" rel="noreferrer" className="font-medium underline">
           {status.repo.fullName}
         </a>
+        . Opening the site manager…
       </p>
     );
   }
