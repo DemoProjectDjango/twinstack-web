@@ -107,6 +107,11 @@ export function findUserByEmail(email) {
   return users().findOne({ email });
 }
 
+/** The account whose connected GitHub login is this one (any case), or null. */
+export function findUserByGithubLogin(login) {
+  return users().findOne({ "github.login": login }, { collation: { locale: "en", strength: 2 } });
+}
+
 export async function findUserById(id) {
   const _id = objectId(id);
   return _id ? users().findOne({ _id }) : null;

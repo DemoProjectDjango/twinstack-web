@@ -295,10 +295,8 @@ DATA_ENCRYPTION_KEY=paste-second-secret
 MONGODB_URI=mongodb://twinstack:APP_PASSWORD@127.0.0.1:27017/twinstack?authSource=twinstack
 MONGODB_DB=twinstack
 
+# Keep this repo private: anyone who can read it can duplicate it and build sites here.
 SITE_TEMPLATE_REPO=DemoProjectDjango/twinstack-site
-# Anyone who can read the private template repo may open sites. Optionally list extra
-# GitHub usernames (comma-separated) here.
-ALLOWED_GITHUB_LOGINS=
 WORKSPACES_DIR=/var/lib/twinstack/workspaces
 ```
 
@@ -450,9 +448,10 @@ In your browser:
 2. On the dashboard, click **Connect GitHub** and approve the permissions. You come back to the dashboard connected.
 3. Your site template appears under **Site repositories**. **Duplicate** it, then click **Manage site** on your copy.
 
-If **Manage site** says "Site management is for people with access to the … repository", the GitHub account you
-connected can't read the private template. Add it as a collaborator on the template repository on GitHub and reload
-after a minute. (Or add the username to `ALLOWED_GITHUB_LOGINS` in step 10 and run `pm2 restart twinstack-api`.)
+If **Manage site** says "Only sites duplicated from … in this app can be managed here", that repo wasn't made with the
+**Duplicate** button. Duplicate the template instead, or record an existing copy on the server with
+`cd /opt/twinstack/web && npm --prefix server run record-copies -- <owner/repo>` (its owner must have connected
+GitHub in the app).
 
 ---
 

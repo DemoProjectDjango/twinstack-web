@@ -39,8 +39,9 @@ The API connects at startup and won't run without it (`server/src/db.js`):
 ### Which repositories users see
 
 Only the site template (`SITE_TEMPLATE_REPO`, default `DemoProjectDjango/twinstack-site`) and copies of it
-appear on the dashboard (`server/src/sites.js`). A repo counts as a copy if it was duplicated through the app, or
-if it's named like the template (`twinstack-site`, `twinstack-site-*`).
+appear on the dashboard (`server/src/sites.js`). A repo counts as a copy only if it was duplicated through the app,
+which records it by repo id (so renaming it is fine). Copies made before that record existed can be recorded with
+`npm --prefix server run record-copies -- <owner/repo> …`.
 
 - The **template** can only be duplicated. Its **Manage site** button is disabled, and the API refuses to open it.
 - **Copies** can only be managed, not duplicated.
@@ -102,11 +103,10 @@ How it works:
   to the current branch is an option.
 - The preview is served from a signed URL (`/api/preview/...`) into an iframe sandboxed to an
   opaque origin, so the site's scripts can't call this app's API as the user.
-- Opening a site runs that repo's code on the server, and any GitHub account can name a repo like a
-  copy. So the site manager is only for GitHub accounts that can read the private template
-  (`SITE_TEMPLATE_REPO`): add someone as a collaborator on the template to let them in. Anyone in
-  `ALLOWED_GITHUB_LOGINS` is let in too. In development an empty list lets everyone in. If the
-  template is public, only the list counts. Container isolation is not implemented yet.
+- Opening a site runs that repo's code on the server. Only copies duplicated through the app can be
+  opened, and duplicating needs read access to the template on GitHub. So keep the template private:
+  giving someone access to it on GitHub is what lets them build sites here, and a public template
+  lets anyone in. Container isolation is not implemented yet.
 
 ## Setup
 

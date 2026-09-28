@@ -29,8 +29,8 @@ const HELP = [
     a: "Check the Private / Public / All filter. For an organisation's repository, the organisation has to allow this app under Settings → Third-party access. You can request that from your GitHub application settings.",
   },
   {
-    q: "“Site management is for people with access to the … repository”",
-    a: "Opening a site runs its build scripts on the server, so the site manager is only for GitHub accounts that can read the private site template. Ask the template's owner to add the GitHub account you connected as a collaborator on it, then reload the page. It can take up to a minute to take effect.",
+    q: "“Only sites duplicated from … in this app can be managed here”",
+    a: "The site manager only opens copies made with the Duplicate button on the dashboard. Duplicate the site template to get one. If you can't see the template, ask its owner to give your GitHub account access to it.",
   },
   {
     q: "“This isn't a TwinStack site repository”",
@@ -141,9 +141,8 @@ export default async function Home() {
             connection stays with your account, so you only do this once. You can disconnect it from the dashboard at any time.
           </li>
           <li>
-            <strong>Check that you can use the site manager.</strong> Opening a site runs its build scripts on the server, so it&apos;s
-            limited to approved GitHub accounts. If you see &ldquo;Site management isn&apos;t enabled for your account&rdquo;, ask
-            the administrator to add the GitHub username you connected.
+            <strong>Check that you can see the site template.</strong> It&apos;s a private repository, so it only appears on your
+            dashboard once its owner has given the GitHub account you connected access to it.
           </li>
           <li>
             <strong>Add your Anthropic API key</strong> on the{" "}

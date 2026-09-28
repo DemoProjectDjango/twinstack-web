@@ -141,7 +141,7 @@ export async function openWorkspace({ accessToken, userId, owner, repo }) {
     throw new WorkspaceError("This is the site template. Duplicate it, then manage your copy.", 403);
   }
   if (!(await isSiteCopy(repoRef))) {
-    throw new WorkspaceError(`Only copies of ${config.siteTemplate} can be managed here.`, 403);
+    throw new WorkspaceError(`Only sites duplicated from ${config.siteTemplate} in this app can be managed here.`, 403);
   }
 
   for (const file of SITE_MARKERS) {
