@@ -70,6 +70,27 @@ export type ScheduleJob = {
 
 export type FileDiff = Change & { diff: string };
 
+/** GitHub Pages for a site copy, and its latest deploy on the default branch. */
+export type Publishing = {
+  defaultBranch: string;
+  private: boolean;
+  /** The user is an admin of the repo, so they can turn Pages on. */
+  canConfigure: boolean;
+  enabled: boolean;
+  /** Pages builds with the repo's deploy workflow (not by publishing a branch as-is). */
+  usesActions: boolean;
+  url: string | null;
+  /** The pushed deploy.yml publishes under /<repo>; older copies need the template's files. */
+  workflowReady: boolean;
+  run: {
+    status: string;
+    conclusion: string | null;
+    url: string;
+    commit: string | null;
+    createdAt: string;
+  } | null;
+};
+
 /** Claude's complete proposed page from a preview run. */
 export type Proposal = {
   file: string;

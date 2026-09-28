@@ -237,6 +237,29 @@ export async function installMdEdit(key, files) {
   }
 }
 
+/**
+ * Replaces files in the copy with the template's versions (`files`: { path:
+ * content }), as uncommitted changes the user reviews and publishes on the
+ * Changes tab. Returns the paths whose content changed.
+ */
+export async function updateFromTemplate(key, files, label) {
+  const dir = workspaceDir(key);
+  const release = acquire(key, label);
+  try {
+    const written = [];
+    for (const [file, content] of Object.entries(files)) {
+      const target = inside(dir, file);
+      if ((await readText(target)) === content) continue;
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, content);
+      written.push(file);
+    }
+    return { written };
+  } finally {
+    release();
+  }
+}
+
 /* ------------------------------------------------------ Claude proposals */
 
 // A "Preview change" run saves Claude's complete proposed file here (inside

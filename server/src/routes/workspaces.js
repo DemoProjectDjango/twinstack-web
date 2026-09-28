@@ -6,6 +6,7 @@ import { isTemplate } from "../sites.js";
 import { MissingScopeError } from "../duplicate.js";
 import { ReauthRequiredError, getAccessToken, readRepoFile } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
+import { PUBLISHING_FILES, enablePages, getPublishing, startDeploy } from "../publishing.js";
 import { requireAuth, requireGithub } from "../session.js";
 import {
   applyProposal,
@@ -21,6 +22,7 @@ import {
   readSchedule,
   savePage,
   saveUpload,
+  updateFromTemplate,
   writeDataFile,
   writeSchedule,
 } from "../site-files.js";
@@ -226,6 +228,62 @@ workspacesRouter.post(
       files[file] = content;
     }
     const result = await installMdEdit(key, files);
+    res.json({ ...result, status: await getStatus(key) });
+  }),
+);
+
+/* Publishing with GitHub Pages: the copy's deploy workflow publishes every push to its default branch. */
+
+const repoName = (req) => `${req.params.owner}/${req.params.repo}`;
+
+workspacesRouter.get(
+  "/:owner/:repo/publishing",
+  handle(async (req, res) => {
+    keyFor(req);
+    res.json(await getPublishing(await getAccessToken(req, res), repoName(req)));
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/publishing/enable",
+  handle(async (req, res) => {
+    keyFor(req);
+    const accessToken = await getAccessToken(req, res);
+    await enablePages(accessToken, repoName(req));
+    res.json(await getPublishing(accessToken, repoName(req)));
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/publishing/deploy",
+  handle(async (req, res) => {
+    keyFor(req);
+    const accessToken = await getAccessToken(req, res);
+    const before = await getPublishing(accessToken, repoName(req));
+    if (!before.workflowReady) {
+      throw new WorkspaceError("Update the publishing files and push them first, or the site's links will break.", 409);
+    }
+    await startDeploy(accessToken, repoName(req), before.defaultBranch);
+    res.json(before);
+  }),
+);
+
+/* Brings the template's publishing files into a copy made before it could publish under /<repo>. */
+
+workspacesRouter.post(
+  "/:owner/:repo/install/publishing",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const accessToken = await getAccessToken(req, res);
+    const files = {};
+    for (const file of PUBLISHING_FILES) {
+      const content = await readRepoFile(accessToken, config.siteTemplate, file);
+      if (content === null || (file.endsWith("deploy.yml") && !content.includes("BASE_PATH"))) {
+        throw new WorkspaceError(`The template (${config.siteTemplate}) doesn't have the new ${file} yet. Push it to GitHub first.`, 409);
+      }
+      files[file] = content;
+    }
+    const result = await updateFromTemplate(key, files, "updating the publishing files");
     res.json({ ...result, status: await getStatus(key) });
   }),
 );

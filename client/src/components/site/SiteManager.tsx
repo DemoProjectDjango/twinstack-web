@@ -6,6 +6,7 @@ import { api, workspacePath, type EditMode, type Job, type Overview, type Worksp
 import { BuildPanel } from "./BuildPanel";
 import { ChangesPanel } from "./ChangesPanel";
 import { EditPanel } from "./EditPanel";
+import { PublishBar } from "./PublishBar";
 import { JobLog } from "./JobLog";
 import { NavPanel } from "./NavPanel";
 import { PagesPanel } from "./PagesPanel";
@@ -227,6 +228,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     <SiteContext.Provider value={context}>
       <Shell owner={owner} repo={repo} status={status}>
         <div className="mt-6 space-y-3">
+          <PublishBar />
           {!hasKey && (
             <Notice>
               Claude commands (Edit with Claude, running scheduled jobs) need your Anthropic API key.{" "}

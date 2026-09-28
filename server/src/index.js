@@ -10,6 +10,7 @@ import { jobsRouter, workspacesRouter } from "./routes/workspaces.js";
 import { requireAuth, requireGithub } from "./session.js";
 import { ReauthRequiredError, getAccessToken, listRepos } from "./github.js";
 import { DuplicateError, MissingScopeError, duplicateRepo, isValidRepoName } from "./duplicate.js";
+import { enablePages } from "./publishing.js";
 
 const app = express();
 
@@ -76,6 +77,12 @@ app.post("/api/repos/:owner/:repo/duplicate", requireAuth, requireGithub, async 
     });
     // Recorded by repo id, so the copy stays manageable even if it's renamed later.
     await recordSiteCopy({ userId: req.user.id, repo, source: config.siteTemplate });
+    // So the push above, and every later one to the default branch, deploys the
+    // site. If GitHub refuses (a private repo on a plan without Pages, say), the
+    // site manager shows why and offers to try again.
+    await enablePages(accessToken, repo.fullName).catch((err) =>
+      console.warn(`Couldn't turn on Pages for ${repo.fullName}: ${err.message}`),
+    );
     res.status(201).json({ repo: { ...repo, role: "copy" } });
   } catch (err) {
     if (err instanceof ReauthRequiredError) {
