@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { api, workspacePath, type Job, type Overview, type WorkspaceStatus } from "@/lib/site-api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, workspacePath, type EditMode, type Job, type Overview, type WorkspaceStatus } from "@/lib/site-api";
 import { BuildPanel } from "./BuildPanel";
 import { ChangesPanel } from "./ChangesPanel";
 import { EditPanel } from "./EditPanel";
@@ -44,7 +44,10 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   const [runError, setRunError] = useState<unknown>(null);
   const [version, setVersion] = useState(0);
   const [tab, setTab] = useState<Tab>("build");
-  const [editTarget, setEditTarget] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState<{ file: string; mode: EditMode } | null>(null);
+  // Once opened, the Claude tab stays mounted, so a hand-written draft survives visits to other tabs.
+  const [editOpened, setEditOpened] = useState(false);
+  const unsavedDraft = useRef(false);
   const [resetting, setResetting] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -137,10 +140,38 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     return () => clearTimeout(timer);
   }, [busyElsewhere, status, refresh]);
 
-  const editFile = useCallback((file: string) => {
-    setEditTarget(file);
-    setTab("edit");
+  const openTab = useCallback((next: Tab) => {
+    setTab(next);
+    if (next === "edit") setEditOpened(true);
   }, []);
+
+  const setUnsavedDraft = useCallback((unsaved: boolean) => {
+    unsavedDraft.current = unsaved;
+  }, []);
+
+  const confirmDiscardDraft = useCallback(
+    () => !unsavedDraft.current || confirm("Your draft has unsaved changes. Leave it without saving?"),
+    [],
+  );
+
+  // Closing or reloading the browser tab would lose the draft too.
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => {
+      if (unsavedDraft.current) e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
+
+  const editFile = useCallback(
+    (file: string, mode: EditMode = "edit") => {
+      if (!confirmDiscardDraft()) return;
+      unsavedDraft.current = false;
+      setEditTarget({ file, mode });
+      openTab("edit");
+    },
+    [confirmDiscardDraft, openTab],
+  );
 
   async function resetToDefault() {
     setResetting(true);
@@ -187,7 +218,9 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     setStatus,
     refresh,
     editFile,
-    showTab: setTab,
+    setUnsavedDraft,
+    confirmDiscardDraft,
+    showTab: openTab,
   };
 
   return (
@@ -233,7 +266,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
             <button
               key={t.id}
               type="button"
-              onClick={() => setTab(t.id)}
+              onClick={() => openTab(t.id)}
               aria-current={tab === t.id ? "page" : undefined}
               className={`-mb-px border-b-2 px-3 py-2 text-sm ${
                 tab === t.id
@@ -251,18 +284,27 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
           ))}
         </nav>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className={`mt-6 grid gap-6 ${tab === "edit" ? "" : "lg:grid-cols-[minmax(0,1fr)_22rem]"}`}>
           <div className="min-w-0 space-y-6">
             {tab === "build" && <BuildPanel />}
             {tab === "pages" && <PagesPanel />}
             {tab === "navigation" && <NavPanel />}
             {tab === "info" && <StaticInfoPanel />}
-            {tab === "edit" && <EditPanel key={editTarget ?? ""} initialFile={editTarget} />}
+            {editOpened && (
+              <div hidden={tab !== "edit"} className="space-y-6">
+                <EditPanel
+                  key={editTarget ? `${editTarget.mode}:${editTarget.file}` : ""}
+                  initialFile={editTarget?.file ?? null}
+                  initialMode={editTarget?.mode ?? null}
+                />
+              </div>
+            )}
             {tab === "tree" && <TreePanel />}
             {tab === "schedule" && <SchedulePanel />}
             {tab === "changes" && <ChangesPanel />}
           </div>
-          <JobLog />
+          {/* The Claude tab uses the full width for the editor and its live diff. */}
+          {tab !== "edit" && <JobLog />}
         </div>
       </Shell>
     </SiteContext.Provider>

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, workspacePath } from "@/lib/site-api";
+import { LiveDiff } from "./LiveDiff";
 import { useSite } from "./site-context";
 import { Button, ErrorText, Notice, Section, inputClass } from "./ui";
 
@@ -84,6 +85,11 @@ export function TreePanel() {
             className={`${inputClass} font-mono text-xs leading-relaxed`}
             disabled={busy || saving}
           />
+          {saved !== null && (
+            <div className="mt-3">
+              <LiveDiff before={saved} after={draft} label="Unsaved changes" />
+            </div>
+          )}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button disabled={!dirty || busy || saving} onClick={save}>
               {saving ? "Saving…" : "Save"}

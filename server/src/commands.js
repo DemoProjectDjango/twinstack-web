@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { IMAGE_PATH, PROPOSAL_FILE, clearProposal } from "./site-files.js";
+import { IMAGE_PATH, PROPOSAL_FILE, clearProposal, isEditableMarkdown } from "./site-files.js";
 import { WorkspaceError, markInstalled } from "./workspace.js";
 
 // Every command the site manager can run, mapped to the same scripts the
@@ -54,6 +54,22 @@ const flag = (input, name) => input?.[name] === true;
 
 const MARKDOWN_PAGE = /^content\/[\w./-]+\.md$/;
 const MAX_IMAGES = 6;
+
+function markdownPage(input) {
+  const page = text(input, "page", "Page", { max: 300 });
+  if (!MARKDOWN_PAGE.test(page) || page.split("/").includes("..")) {
+    throw new WorkspaceError("Pick a page: a .md file under content/.", 400);
+  }
+  return page;
+}
+
+/** --image flags, and for a preview the flags that save it where the web UI reads it back. */
+function claudeFlags(input) {
+  const args = images(input).map((image) => `--image=${image}`);
+  // Inside .git, so the preview is never a change.
+  if (flag(input, "dryRun")) args.push("--dry-run", `--proposal-out=${PROPOSAL_FILE}`);
+  return args;
+}
 
 /** Images for a Claude edit: https URLs, or image files under assets/img/ in the repo. */
 function images(input) {
@@ -162,17 +178,39 @@ export const COMMANDS = {
     // Even the preview asks Claude for the proposed file.
     needsKey: () => true,
     steps: (input) => {
-      const page = text(input, "page", "Page", { max: 300 });
-      if (!MARKDOWN_PAGE.test(page) || page.split("/").includes("..")) {
-        throw new WorkspaceError("Pick a page: a .md file under content/.", 400);
-      }
-      const args = [page, text(input, "instruction", "Instruction", { max: 4000, multiline: true })];
-      for (const image of images(input)) args.push(`--image=${image}`);
-      // The preview is saved where the web UI reads it back (inside .git, so it's never a change).
-      if (flag(input, "dryRun")) args.push("--dry-run", `--proposal-out=${PROPOSAL_FILE}`);
-      return [script("edit-page.js", args)];
+      const args = [markdownPage(input), text(input, "instruction", "Instruction", { max: 4000, multiline: true })];
+      return [script("edit-page.js", [...args, ...claudeFlags(input)])];
     },
     // A stale proposal must never be shown as this preview's result.
+    prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
+  },
+
+  // The user writes the page's draft by hand; Claude turns it into the finished page.
+  "page-generate": {
+    label: "Generate page with Claude",
+    needsKey: () => true,
+    steps: (input) => {
+      const args = [markdownPage(input), "--generate"];
+      const direction = text(input, "instruction", "Direction", { max: 4000, multiline: true, optional: true });
+      if (direction) args.push(direction);
+      return [script("edit-page.js", [...args, ...claudeFlags(input)])];
+    },
+    prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
+  },
+
+  // Markdown outside content/ (the site tree, the schedule, the docs), via the copy's scripts/edit-md.js.
+  "md-edit": {
+    label: "Edit markdown with Claude",
+    needsKey: () => true,
+    steps: (input) => {
+      const file = text(input, "file", "File", { max: 300 });
+      if (!isEditableMarkdown(file)) {
+        throw new WorkspaceError("Pick a markdown file outside content/, dist/ and node_modules/.", 400);
+      }
+      const args = [file, text(input, "instruction", "Instruction", { max: 4000, multiline: true })];
+      if (flag(input, "dryRun")) args.push("--dry-run", `--proposal-out=${PROPOSAL_FILE}`);
+      return [script("edit-md.js", args)];
+    },
     prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
   },
 

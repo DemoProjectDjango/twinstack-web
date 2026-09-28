@@ -38,8 +38,14 @@ export type SitePage = { file: string; slug: string; title: string; draft: boole
 
 export type Overview = {
   site: { name: string; url: string; model: string | null };
-  /** pageEditImages: the copy's edit-page.js supports --image and --proposal-out. */
-  features: { pageEditImages: boolean };
+  /**
+   * pageEditImages: the copy's edit-page.js supports --image and --proposal-out.
+   * pageGenerate: it supports --generate (turn a hand-written draft into the finished page).
+   * mdEdit: it has scripts/edit-md.js (edit markdown outside content/, listed in markdownFiles).
+   */
+  features: { pageEditImages: boolean; pageGenerate: boolean; mdEdit: boolean };
+  /** Markdown files outside content/ that the "md-edit" command may change. Empty without mdEdit. */
+  markdownFiles: string[];
   collections: { name: string; dir: string; label: string; pages: SitePage[] }[];
   navigation: {
     items: { label: string; url: string; collection: string | null; limit: number | null }[];
@@ -64,15 +70,31 @@ export type ScheduleJob = {
 
 export type FileDiff = Change & { diff: string };
 
-/** Claude's complete proposed page from a "Preview change" run. */
+/** Claude's complete proposed page from a preview run. */
 export type Proposal = {
   file: string;
+  /**
+   * "edit": a page changed by an instruction. "generate": written from the page's own draft.
+   * "markdown": a markdown file outside content/ changed by an instruction.
+   */
+  mode: "edit" | "generate" | "markdown";
+  /** The file as it is on disk now, to diff the proposal against. Null if it's gone. */
+  original: string | null;
   instruction: string;
   images: string[];
   content: string;
+  /** Checks that failed: the script wouldn't have written this version itself. */
   problems: string[];
+  /** Worth a look, but not blocking. */
+  warnings: string[];
   createdAt: string | null;
 };
+
+/** A page's markdown; `version` must come back with a save. */
+export type PageSource = { file: string; content: string; version: string };
+
+/** The two ways the Claude tab works on a page. */
+export type EditMode = "generate" | "edit";
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 

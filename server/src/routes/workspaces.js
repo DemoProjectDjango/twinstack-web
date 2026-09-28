@@ -4,18 +4,22 @@ import { config } from "../config.js";
 import { getAnthropicKey } from "../db.js";
 import { isTemplate } from "../sites.js";
 import { MissingScopeError } from "../duplicate.js";
-import { ReauthRequiredError, getAccessToken } from "../github.js";
+import { ReauthRequiredError, getAccessToken, readRepoFile } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
 import { requireAuth, requireGithub } from "../session.js";
 import {
   applyProposal,
   clearProposal,
+  MD_EDIT_FILES,
   getOverview,
+  installMdEdit,
   listImages,
   readDataFile,
   readImage,
+  readPage,
   readProposal,
   readSchedule,
+  savePage,
   saveUpload,
   writeDataFile,
   writeSchedule,
@@ -193,6 +197,43 @@ workspacesRouter.get(
 workspacesRouter.put(
   "/:owner/:repo/files/:name",
   handle(async (req, res) => res.json(await writeDataFile(keyFor(req), req.params.name, req.body?.content))),
+);
+
+/* A page's markdown, written by hand as the draft Claude turns into the finished page. */
+
+workspacesRouter.get(
+  "/:owner/:repo/pages/source",
+  handle(async (req, res) => res.json(await readPage(keyFor(req), req.query.file))),
+);
+
+workspacesRouter.put(
+  "/:owner/:repo/pages/source",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const { file, content, version } = req.body ?? {};
+    const page = await savePage(key, file, content, version);
+    res.json({ page, status: await getStatus(key) });
+  }),
+);
+
+/* Adds scripts/edit-md.js (markdown edits with Claude) to a copy made before it existed, from the template. */
+
+workspacesRouter.post(
+  "/:owner/:repo/install/md-edit",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const accessToken = await getAccessToken(req, res);
+    const files = {};
+    for (const file of MD_EDIT_FILES) {
+      const content = await readRepoFile(accessToken, config.siteTemplate, file);
+      if (content === null) {
+        throw new WorkspaceError(`The template (${config.siteTemplate}) doesn't have ${file} yet. Push it to GitHub first.`, 409);
+      }
+      files[file] = content;
+    }
+    const result = await installMdEdit(key, files);
+    res.json({ ...result, status: await getStatus(key) });
+  }),
 );
 
 /* Claude edit previews: the full proposed page, applied as-is or after the user edits it. */

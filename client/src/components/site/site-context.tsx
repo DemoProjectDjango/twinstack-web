@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
-import type { Job, Overview, WorkspaceStatus } from "@/lib/site-api";
+import type { EditMode, Job, Overview, WorkspaceStatus } from "@/lib/site-api";
 
 export type SiteContextValue = {
   owner: string;
@@ -19,8 +19,12 @@ export type SiteContextValue = {
   setStatus: (status: WorkspaceStatus) => void;
   /** Re-reads status and overview after a change made outside a command. */
   refresh: () => Promise<void>;
-  /** Opens the Claude edit tab with this file selected. */
-  editFile: (file: string) => void;
+  /** Opens the Claude tab with this file selected: "generate" writes from its draft, "edit" (the default) takes an instruction. */
+  editFile: (file: string, mode?: EditMode) => void;
+  /** The Claude tab's hand-written draft reports whether it has unsaved edits. */
+  setUnsavedDraft: (unsaved: boolean) => void;
+  /** True if there are no unsaved draft edits, or the user agrees to lose them. */
+  confirmDiscardDraft: () => boolean;
   /** Switches to another tab, e.g. from a hint that points there. */
   showTab: (tab: "build" | "pages" | "navigation" | "info" | "edit" | "tree" | "schedule" | "changes") => void;
 };

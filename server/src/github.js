@@ -121,3 +121,14 @@ export async function listRepos(accessToken) {
     permission: repo.permissions?.admin ? "admin" : repo.permissions?.push ? "write" : "read",
   }));
 }
+
+/** A text file from a repository's default branch, or null if it isn't there. */
+export async function readRepoFile(accessToken, fullName, filePath) {
+  const encoded = filePath.split("/").map(encodeURIComponent).join("/");
+  const res = await githubFetch(`/repos/${fullName}/contents/${encoded}`, accessToken);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`GitHub returned ${res.status} for ${fullName}/${filePath}`);
+  const file = await res.json();
+  if (file.type !== "file" || file.encoding !== "base64") throw new Error(`${fullName}/${filePath} isn't a readable file`);
+  return Buffer.from(file.content, "base64").toString("utf8");
+}

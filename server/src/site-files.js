@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -59,6 +60,32 @@ function frontmatter(text) {
   return fields;
 }
 
+// Markdown outside content/ that the site's scripts/edit-md.js may change:
+// scripts/site-tree.md, scripts/scaffold-schedule.md, the docs. Pages under
+// content/ go through edit-page.js; CHANGELOG.md is generated.
+const MARKDOWN_SKIPPED_DIRS = new Set(["content", "dist", "node_modules", "static"]);
+
+export function isEditableMarkdown(file) {
+  if (typeof file !== "string" || !/^[\w./-]+\.md$/.test(file) || file === "CHANGELOG.md") return false;
+  const parts = file.split("/");
+  return !MARKDOWN_SKIPPED_DIRS.has(parts[0]) && !parts.some((part) => part === "" || part.startsWith("."));
+}
+
+async function listMarkdown(dir, base = dir) {
+  const out = [];
+  for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith(".")) continue;
+    const full = path.join(dir, entry.name);
+    const relative = path.relative(base, full).split(path.sep).join("/");
+    if (entry.isDirectory()) {
+      if (!MARKDOWN_SKIPPED_DIRS.has(relative)) out.push(...(await listMarkdown(full, base)));
+    } else if (isEditableMarkdown(relative)) {
+      out.push(relative);
+    }
+  }
+  return out.sort();
+}
+
 async function listFiles(dir, extension, base = dir) {
   if (!existsSync(dir)) return [];
   const out = [];
@@ -108,12 +135,20 @@ export async function getOverview(key) {
     ...(await listFiles(path.join(dir, "templates/partials"), ".html")).map((f) => `templates/partials/${f}`),
   ];
 
-  // Copies made before edit-page.js learnt --image/--proposal-out can still run plain edits.
+  // Copies made before edit-page.js learnt --image/--proposal-out can still run
+  // plain edits, and ones before --generate can't turn a draft into a page.
   const editScript = (await readText(path.join(dir, "scripts/edit-page.js"))) ?? "";
+  // Copies made before scripts/edit-md.js existed can't edit other markdown.
+  const mdEdit = existsSync(path.join(dir, "scripts/edit-md.js"));
 
   return {
     site: { name: site.name, url: site.url, model: site.automation?.model ?? null },
-    features: { pageEditImages: editScript.includes("--proposal-out") },
+    features: {
+      pageEditImages: editScript.includes("--proposal-out"),
+      pageGenerate: editScript.includes("--generate"),
+      mdEdit,
+    },
+    markdownFiles: mdEdit ? await listMarkdown(dir) : [],
     collections,
     navigation: {
       items: (navigation?.header?.items ?? []).map((item) => ({
@@ -155,6 +190,53 @@ export async function writeDataFile(key, name, content) {
   return readDataFile(key, name);
 }
 
+/* ------------------------------------------------ installing edit-md.js */
+
+// Copies made before scripts/edit-md.js existed get it (and the one lib file
+// it adds) from the template. Existing files are never replaced.
+export const MD_EDIT_FILES = ["scripts/edit-md.js", "scripts/lib/schedule-jobs.js"];
+const MD_EDIT_NPM_SCRIPTS = {
+  "md:edit": "node --env-file-if-exists=.env scripts/edit-md.js",
+  "md:edit:preview": "node --env-file-if-exists=.env scripts/edit-md.js --dry-run",
+  "md:edit:list": "node scripts/edit-md.js --list",
+};
+
+/**
+ * Writes the MD_EDIT_FILES the copy is missing, from `files` ({ path: content }),
+ * and adds the md:edit npm scripts to package.json. Returns what changed.
+ */
+export async function installMdEdit(key, files) {
+  const dir = workspaceDir(key);
+  const release = acquire(key, "adding markdown editing");
+  try {
+    const written = [];
+    for (const file of MD_EDIT_FILES) {
+      const target = inside(dir, file);
+      if (existsSync(target)) continue;
+      if (typeof files[file] !== "string") throw new WorkspaceError(`${file} is missing from the template.`, 409);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, files[file]);
+      written.push(file);
+    }
+
+    const packagePath = path.join(dir, "package.json");
+    const packageText = await readText(packagePath);
+    if (packageText !== null) {
+      const pkg = JSON.parse(packageText);
+      const missing = Object.entries(MD_EDIT_NPM_SCRIPTS).filter(([name]) => !pkg.scripts?.[name]);
+      if (pkg.scripts && missing.length) {
+        Object.assign(pkg.scripts, Object.fromEntries(missing));
+        const eol = packageText.includes("\r\n") ? "\r\n" : "\n";
+        await fs.writeFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`.replace(/\n/g, eol));
+        written.push("package.json");
+      }
+    }
+    return { written };
+  } finally {
+    release();
+  }
+}
+
 /* ------------------------------------------------------ Claude proposals */
 
 // A "Preview change" run saves Claude's complete proposed file here (inside
@@ -167,19 +249,32 @@ export async function clearProposal(key) {
   await fs.rm(path.join(workspaceDir(key), PROPOSAL_FILE), { force: true });
 }
 
-/** The pending proposal, or null. */
+/** Whether a proposal of this mode may write this file. */
+function proposalAllowed(mode, file) {
+  return mode === "markdown" ? isEditableMarkdown(file) : MARKDOWN_PAGE.test(file) && !file.split("/").includes("..");
+}
+
+/** The pending proposal with the file's current text as `original` (null if it's gone), or null. */
 export async function readProposal(key) {
   const text = await readText(path.join(workspaceDir(key), PROPOSAL_FILE));
   if (!text) return null;
   try {
     const proposal = JSON.parse(text);
     if (typeof proposal.file !== "string" || typeof proposal.content !== "string") return null;
+    // Older copies write no mode: their proposals are always instruction edits.
+    const mode = ["generate", "markdown"].includes(proposal.mode) ? proposal.mode : "edit";
+    const original = proposalAllowed(mode, proposal.file)
+      ? await readText(inside(workspaceDir(key), proposal.file))
+      : null;
     return {
       file: proposal.file,
+      mode,
+      original,
       instruction: String(proposal.instruction ?? ""),
       images: Array.isArray(proposal.images) ? proposal.images.map(String) : [],
       content: proposal.content,
       problems: Array.isArray(proposal.problems) ? proposal.problems.map(String) : [],
+      warnings: Array.isArray(proposal.warnings) ? proposal.warnings.map(String) : [],
       createdAt: proposal.createdAt ?? null,
     };
   } catch {
@@ -196,8 +291,8 @@ export async function applyProposal(key, content) {
   try {
     const proposal = await readProposal(key);
     if (!proposal) throw new WorkspaceError("There's no preview to apply. Preview the change again.", 409);
-    if (!MARKDOWN_PAGE.test(proposal.file) || proposal.file.split("/").includes("..")) {
-      throw new WorkspaceError("The preview isn't for a page under content/.", 400);
+    if (!proposalAllowed(proposal.mode, proposal.file)) {
+      throw new WorkspaceError("The preview isn't for a file Claude may edit.", 400);
     }
     const dir = workspaceDir(key);
     const target = inside(dir, proposal.file);
@@ -209,6 +304,49 @@ export async function applyProposal(key, content) {
   } finally {
     release();
   }
+}
+
+/* ------------------------------------------------------------ page source */
+
+// The markdown of one page, for writing a draft by hand before Claude turns it
+// into the finished page. `version` is a hash of the content: a save must name
+// the version it was based on, so it can't silently replace a newer file (one
+// Claude wrote in the meantime, say).
+
+const contentVersion = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
+
+function pageFile(key, file) {
+  if (typeof file !== "string" || !MARKDOWN_PAGE.test(file) || file.split("/").includes("..")) {
+    throw new WorkspaceError("Pick a page: a .md file under content/.", 400);
+  }
+  return inside(workspaceDir(key), file);
+}
+
+export async function readPage(key, file) {
+  const content = await readText(pageFile(key, file));
+  if (content === null) throw new WorkspaceError(`${file} doesn't exist.`, 404);
+  return { file, content, version: contentVersion(content) };
+}
+
+export async function savePage(key, file, content, version) {
+  if (typeof content !== "string" || Buffer.byteLength(content) > MAX_FILE_BYTES) {
+    throw new WorkspaceError("The page content is missing or too large.", 400);
+  }
+  if (typeof version !== "string") throw new WorkspaceError("Reload the page, then save again.", 400);
+  const target = pageFile(key, file);
+  const release = acquire(key, `saving ${file}`);
+  try {
+    const current = await readText(target);
+    if (current === null) throw new WorkspaceError(`${file} no longer exists.`, 409);
+    if (contentVersion(current) !== version) {
+      throw new WorkspaceError(`${file} changed since you opened it. Copy your text, reload the page and save again.`, 409);
+    }
+    const normalised = content.replace(/\r\n/g, "\n");
+    await fs.writeFile(target, normalised.endsWith("\n") ? normalised : `${normalised}\n`);
+  } finally {
+    release();
+  }
+  return readPage(key, file);
 }
 
 /* ----------------------------------------------------------------- images */

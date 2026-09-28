@@ -13,7 +13,7 @@ const TABS = [
   ["Build & preview", "Build the site and check it for broken links, or build a preview that includes drafts.", "npm run check"],
   ["Pages", "Create a page, product, service, blog post or case study, and see every page in the site.", "npm run new"],
   ["Navigation", "Add or remove header links, including menus that list a collection automatically.", "nav:add, nav:remove"],
-  ["Edit with Claude", "Change one file from a plain-English instruction, or queue several edits. Preview first.", "page:edit"],
+  ["Edit with Claude", "Write a page's draft yourself (text, images, image URLs) and Claude turns it into the finished page, or change a page from a plain-English instruction. Preview first.", "page:generate, page:edit"],
   ["Site tree", "Edit the list of pages the site should have, then create the ones that are missing.", "scaffold"],
   ["Schedule", "Plan pages for a date: Claude writes them from your brief, or a finished file is moved into place.", "scaffold:schedule"],
   ["Changes", "See every changed file, discard what you don't want, and publish the rest.", "git"],

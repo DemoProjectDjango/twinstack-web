@@ -82,7 +82,7 @@ has `site.config.json` and `scripts/build.js`, it runs the site's `npm run` comm
 | Pages | `new <type> "Title" [--draft] [--slug=]` |
 | Navigation | `nav:add`, `nav:remove` |
 | Site info | edits `site.config.json` (name, taglines, contact, social) and `content/data/*.json` (company facts, FAQ, testimonials, homepage sections, redirects) in forms |
-| Edit with Claude | `page:edit` on one `.md` page, with optional images (uploaded into `assets/img/uploads/`, picked from `assets/img/`, or URLs). **Preview change** shows the complete proposed file, which can be edited and then applied without calling Claude again. |
+| Edit with Claude | **Write & generate**: write a page's `.md` yourself (rough copy, notes, images inserted at the cursor from uploads, `assets/img/` or URLs) and `page:generate` has Claude turn that draft into the finished page, keeping your facts and adding none. **Edit by instruction**: `page:edit` on one `.md` page, with optional images. Either way, the preview shows the complete proposed file with any problems or warnings, and it can be edited and then applied without calling Claude again. |
 | Site tree | edits `scripts/site-tree.md`, then `scaffold` / `scaffold:preview` / `--force` |
 | Schedule | edits the job list in `scripts/scaffold-schedule.md`, then `scaffold:schedule` / preview |
 | Changes | diff, discard, commit, push |

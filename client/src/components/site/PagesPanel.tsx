@@ -69,7 +69,10 @@ export function PagesPanel() {
         </form>
       </Section>
 
-      <Section title="Content" description="Every markdown file in each collection. Pick one to change it with Claude.">
+      <Section
+        title="Content"
+        description="Every markdown file in each collection. Write a page's draft yourself and let Claude finish it, or change a page with an instruction."
+      >
         {!overview && <p className="text-sm text-zinc-500">Loading…</p>}
         <div className="space-y-5">
           {overview?.collections.map((collection) => (
@@ -86,9 +89,14 @@ export function PagesPanel() {
                       <span className="text-sm font-medium">{page.title}</span>
                       {page.draft && <Badge>Draft</Badge>}
                       <span className="font-mono text-xs text-zinc-500">{page.file}</span>
-                      <Button variant="ghost" className="ml-auto px-2 py-1 text-xs" onClick={() => editFile(page.file)}>
-                        Edit with Claude
-                      </Button>
+                      <span className="ml-auto flex gap-1">
+                        <Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => editFile(page.file, "generate")}>
+                          Write &amp; generate
+                        </Button>
+                        <Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => editFile(page.file, "edit")}>
+                          Edit by instruction
+                        </Button>
+                      </span>
                     </li>
                   ))}
                 </ul>
