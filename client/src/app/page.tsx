@@ -29,8 +29,8 @@ const HELP = [
     a: "Check the Private / Public / All filter. For an organisation's repository, the organisation has to allow this app under Settings → Third-party access. You can request that from your GitHub application settings.",
   },
   {
-    q: "“Site management isn't enabled for your account”",
-    a: "Opening a site runs its build scripts on the server, so only approved GitHub accounts can use the site manager. Ask the administrator to add the GitHub username you connected.",
+    q: "“Site management is for people with access to the … repository”",
+    a: "Opening a site runs its build scripts on the server, so the site manager is only for GitHub accounts that can read the private site template. Ask the template's owner to add the GitHub account you connected as a collaborator on it, then reload the page. It can take up to a minute to take effect.",
   },
   {
     q: "“This isn't a TwinStack site repository”",

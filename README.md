@@ -102,9 +102,11 @@ How it works:
   to the current branch is an option.
 - The preview is served from a signed URL (`/api/preview/...`) into an iframe sandboxed to an
   opaque origin, so the site's scripts can't call this app's API as the user.
-- Opening a site runs that repo's code on the server. Set `ALLOWED_GITHUB_LOGINS` to decide who may
-  use it. When it's empty, everyone can in development and no one can in production. Container
-  isolation is not implemented yet.
+- Opening a site runs that repo's code on the server, and any GitHub account can name a repo like a
+  copy. So the site manager is only for GitHub accounts that can read the private template
+  (`SITE_TEMPLATE_REPO`): add someone as a collaborator on the template to let them in. Anyone in
+  `ALLOWED_GITHUB_LOGINS` is let in too. In development an empty list lets everyone in. If the
+  template is public, only the list counts. Container isolation is not implemented yet.
 
 ## Setup
 

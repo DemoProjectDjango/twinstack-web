@@ -4,7 +4,7 @@ import { config } from "../config.js";
 import { getAnthropicKey } from "../db.js";
 import { isTemplate } from "../sites.js";
 import { MissingScopeError } from "../duplicate.js";
-import { ReauthRequiredError, getAccessToken, readRepoFile } from "../github.js";
+import { ReauthRequiredError, getAccessToken, githubFetch, readRepoFile } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
 import { requireAuth, requireGithub } from "../session.js";
 import {
@@ -39,12 +39,50 @@ import {
   workspaceKey,
 } from "../workspace.js";
 
-/** Opening a workspace runs the repo's own code on this server, so it's opt-in per GitHub login. */
+// Opening a workspace runs the repo's own code on this server, and any GitHub
+// account can name a repo like a copy. So site management is limited to people
+// the template's owner already trusts: GitHub accounts that can read the
+// private template repository, plus anyone in ALLOWED_GITHUB_LOGINS. Adding a
+// collaborator to the template on GitHub is all it takes to let someone in.
+const TEMPLATE_ACCESS_TTL_MS = 10 * 60 * 1000;
+// A "no" is re-checked sooner, so someone just added on GitHub isn't kept waiting.
+const TEMPLATE_DENIED_TTL_MS = 60 * 1000;
+const templateAccess = new Map(); // login -> { allowed, until }
+let warnedPublicTemplate = false;
+
+async function canReadPrivateTemplate(login, accessToken) {
+  const cached = templateAccess.get(login);
+  if (cached && cached.until > Date.now()) return cached.allowed;
+
+  const res = await githubFetch(`/repos/${config.siteTemplate}`, accessToken);
+  if (!res.ok && res.status !== 403 && res.status !== 404) {
+    throw new Error(`GitHub GET ${config.siteTemplate} failed with ${res.status}`);
+  }
+  let allowed = false;
+  if (res.ok) {
+    // Everyone can read a public template, so reading it proves nothing.
+    allowed = (await res.json()).private === true;
+    if (!allowed && !warnedPublicTemplate) {
+      warnedPublicTemplate = true;
+      console.warn(`${config.siteTemplate} is public, so only ALLOWED_GITHUB_LOGINS may manage sites.`);
+    }
+  }
+  templateAccess.set(login, { allowed, until: Date.now() + (allowed ? TEMPLATE_ACCESS_TTL_MS : TEMPLATE_DENIED_TTL_MS) });
+  return allowed;
+}
+
 function requireAllowed(req, res, next) {
-  const login = req.user.github.login.toLowerCase();
-  const allowed = config.allowedLogins.length ? config.allowedLogins.includes(login) : !config.isProduction;
-  if (allowed) return next();
-  res.status(403).json({ error: "Site management isn't enabled for your account." });
+  return handle(async () => {
+    const login = req.user.github.login.toLowerCase();
+    const allowed =
+      config.allowedLogins.includes(login) ||
+      (!config.isProduction && !config.allowedLogins.length) ||
+      (await canReadPrivateTemplate(login, await getAccessToken(req, res)));
+    if (allowed) return next();
+    res.status(403).json({
+      error: `Site management is for people with access to the ${config.siteTemplate} repository. Ask its owner to add your GitHub account (${req.user.github.login}) to it, then reload.`,
+    });
+  })(req, res);
 }
 
 // JSON-only: plain HTML forms from other sites can't send this content type.

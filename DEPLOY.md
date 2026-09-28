@@ -296,8 +296,9 @@ MONGODB_URI=mongodb://twinstack:APP_PASSWORD@127.0.0.1:27017/twinstack?authSourc
 MONGODB_DB=twinstack
 
 SITE_TEMPLATE_REPO=DemoProjectDjango/twinstack-site
-# GitHub usernames (comma-separated) allowed to open sites. Required in production, or nobody can.
-ALLOWED_GITHUB_LOGINS=your-github-username
+# Anyone who can read the private template repo may open sites. Optionally list extra
+# GitHub usernames (comma-separated) here.
+ALLOWED_GITHUB_LOGINS=
 WORKSPACES_DIR=/var/lib/twinstack/workspaces
 ```
 
@@ -449,8 +450,9 @@ In your browser:
 2. On the dashboard, click **Connect GitHub** and approve the permissions. You come back to the dashboard connected.
 3. Your site template appears under **Site repositories**. **Duplicate** it, then click **Manage site** on your copy.
 
-If **Manage site** says "Site management isn't enabled for your account", the GitHub username you connected isn't in
-`ALLOWED_GITHUB_LOGINS` (step 10). Fix it, then run `pm2 restart twinstack-api`.
+If **Manage site** says "Site management is for people with access to the … repository", the GitHub account you
+connected can't read the private template. Add it as a collaborator on the template repository on GitHub and reload
+after a minute. (Or add the username to `ALLOWED_GITHUB_LOGINS` in step 10 and run `pm2 restart twinstack-api`.)
 
 ---
 
