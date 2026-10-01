@@ -99,6 +99,13 @@ async function readMeta(dir) {
   }
 }
 
+/** The GitHub repo id of the site in this workspace: the same for every user who manages it. */
+export async function siteIdFor(key) {
+  const meta = await readMeta(workspaceDir(key));
+  // Metadata written before the id was recorded; opening the site again adds it.
+  return meta.id ?? meta.fullName.toLowerCase();
+}
+
 async function lockfileHash(dir) {
   try {
     return createHash("sha256").update(await fs.readFile(path.join(dir, "package-lock.json"))).digest("hex");
@@ -188,6 +195,7 @@ async function syncWorkspace(key, info, accessToken) {
     await fs.writeFile(
       metaPath(dir),
       JSON.stringify({
+        id: info.id,
         owner: info.owner.login,
         name: info.name,
         fullName: info.full_name,

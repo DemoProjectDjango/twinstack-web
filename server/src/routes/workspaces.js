@@ -19,19 +19,26 @@ import {
 import { requireAuth, requireGithub } from "../session.js";
 import {
   applyProposal,
+  clearMemory,
   clearProposal,
+  collectWorkLog,
+  forgetMemoryLine,
   MD_EDIT_FILES,
   getOverview,
   installMdEdit,
   listImages,
   readDataFile,
   readImage,
+  readMemory,
   readPage,
   readProposal,
   readSchedule,
   savePage,
+  prepareWorkLog,
+  replaceMemoryLine,
   saveUpload,
   updateFromTemplate,
+  WORK_LOG_FOR_RUN,
   writeDataFile,
   writeSchedule,
 } from "../site-files.js";
@@ -173,8 +180,13 @@ workspacesRouter.post(
     }
 
     const release = acquire(key, command.label);
+    const env = jobEnv(anthropicKey);
+    let workLog = null;
     try {
       await command.prepare?.(key, input);
+      // Claude reads the site's latest work log before every run, merged or not.
+      if (command.claude) workLog = await prepareWorkLog(key);
+      if (workLog) env.TWINSTACK_WORK_LOG = WORK_LOG_FOR_RUN;
     } catch (err) {
       release();
       throw err;
@@ -186,8 +198,10 @@ workspacesRouter.post(
       label: command.label,
       steps,
       cwd: workspaceDir(key),
-      env: jobEnv(anthropicKey),
-      release,
+      env,
+      // Saved before the lock is released, so no later run rewrites the file first. A
+      // failed queue run may still have written (and logged) the edits before it failed.
+      release: workLog ? () => collectWorkLog(key, workLog).finally(release) : release,
       onSuccess: command.onSuccess && (() => command.onSuccess(key)),
     });
     res.status(202).json({ job });
@@ -339,6 +353,40 @@ workspacesRouter.post(
     const key = keyFor(req);
     const applied = await applyProposal(key, req.body?.content);
     res.json({ ...applied, status: await getStatus(key) });
+  }),
+);
+
+/* Claude's memory of earlier work: the work log every Claude command reads first. */
+
+workspacesRouter.get(
+  "/:owner/:repo/memory",
+  handle(async (req, res) => res.json(await readMemory(keyFor(req)))),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/memory/forget",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const memory = await forgetMemoryLine(key, req.body?.line);
+    res.json({ ...memory, status: await getStatus(key) });
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/memory/replace",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const memory = await replaceMemoryLine(key, req.body?.line, req.body?.replacement);
+    res.json({ ...memory, status: await getStatus(key) });
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/memory/clear",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const memory = await clearMemory(key);
+    res.json({ ...memory, status: await getStatus(key) });
   }),
 );
 

@@ -8,6 +8,7 @@ import { ChangesPanel } from "./ChangesPanel";
 import { EditPanel } from "./EditPanel";
 import { PublishBar } from "./PublishBar";
 import { JobLog } from "./JobLog";
+import { MemoryPanel } from "./MemoryPanel";
 import { NavPanel } from "./NavPanel";
 import { PagesPanel } from "./PagesPanel";
 import { SchedulePanel } from "./SchedulePanel";
@@ -22,6 +23,7 @@ const TABS = [
   { id: "navigation", label: "Navigation" },
   { id: "info", label: "Site info" },
   { id: "edit", label: "Edit with Claude" },
+  { id: "memory", label: "Claude memory" },
   { id: "tree", label: "Site tree" },
   { id: "schedule", label: "Schedule" },
   { id: "changes", label: "Changes" },
@@ -301,6 +303,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
                 />
               </div>
             )}
+            {tab === "memory" && <MemoryPanel />}
             {tab === "tree" && <TreePanel />}
             {tab === "schedule" && <SchedulePanel />}
             {tab === "changes" && <ChangesPanel />}

@@ -7,6 +7,10 @@ import { WorkspaceError, markInstalled } from "./workspace.js";
 // site's package.json runs. User input only ever becomes separate argv
 // entries for a fixed script (no shell), and values that could be read as a
 // flag are rejected.
+//
+// `claude: true` marks the commands that call Claude: the route hands each of
+// them the site's latest work log first (prepareWorkLog in site-files.js) and
+// saves what it logged afterwards.
 
 const NODE = process.execPath;
 const MINUTE = 60 * 1000;
@@ -175,6 +179,7 @@ export const COMMANDS = {
 
   "page-edit": {
     label: "Edit with Claude",
+    claude: true,
     // Even the preview asks Claude for the proposed file.
     needsKey: () => true,
     steps: (input) => {
@@ -188,6 +193,7 @@ export const COMMANDS = {
   // The user writes the page's draft by hand; Claude turns it into the finished page.
   "page-generate": {
     label: "Generate page with Claude",
+    claude: true,
     needsKey: () => true,
     steps: (input) => {
       const args = [markdownPage(input), "--generate"];
@@ -201,6 +207,7 @@ export const COMMANDS = {
   // Markdown outside content/ (the site tree, the schedule, the docs), via the copy's scripts/edit-md.js.
   "md-edit": {
     label: "Edit markdown with Claude",
+    claude: true,
     needsKey: () => true,
     steps: (input) => {
       const file = text(input, "file", "File", { max: 300 });
@@ -226,6 +233,7 @@ export const COMMANDS = {
 
   schedule: {
     label: "Run scheduled jobs",
+    claude: true,
     // The preview prints the prompts instead of calling Claude.
     needsKey: (input) => !flag(input, "dryRun"),
     steps: (input) => [script("scaffold-schedule.js", flag(input, "dryRun") ? ["--dry-run"] : [], 30 * MINUTE)],

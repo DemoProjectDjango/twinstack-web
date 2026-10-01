@@ -55,7 +55,8 @@ function runStep(job, { file, args, display, timeoutMs }, { cwd, env }) {
 
 /**
  * Starts `steps` in order, stopping at the first non-zero exit. `release` is
- * always called when the job ends; `onSuccess` runs before it's marked done.
+ * always called (and awaited, if it returns a promise) when the job ends;
+ * `onSuccess` runs before it's marked done.
  */
 export function startJob({ key, userId, command, label, steps, cwd, env, release, onSuccess }) {
   const job = {
@@ -87,7 +88,12 @@ export function startJob({ key, userId, command, label, steps, cwd, env, release
       append(job, `\n${err.message}\n`);
       exitCode = exitCode || 1;
     } finally {
-      release();
+      // May be async (saving the work log): the job only reads as finished once it's done.
+      try {
+        await release();
+      } catch (err) {
+        append(job, `\n${err.message}\n`);
+      }
       job.exitCode = exitCode;
       job.status = job.cancelled ? "cancelled" : exitCode === 0 ? "succeeded" : "failed";
       job.finishedAt = Date.now();

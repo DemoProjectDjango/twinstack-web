@@ -42,8 +42,9 @@ export type Overview = {
    * pageEditImages: the copy's edit-page.js supports --image and --proposal-out.
    * pageGenerate: it supports --generate (turn a hand-written draft into the finished page).
    * mdEdit: it has scripts/edit-md.js (edit markdown outside content/, listed in markdownFiles).
+   * memory: it has scripts/lib/knowledge.js (Claude reads knowledge/notes.md and the work log first).
    */
-  features: { pageEditImages: boolean; pageGenerate: boolean; mdEdit: boolean };
+  features: { pageEditImages: boolean; pageGenerate: boolean; mdEdit: boolean; memory: boolean };
   /** Markdown files outside content/ that the "md-edit" command may change. Empty without mdEdit. */
   markdownFiles: string[];
   collections: { name: string; dir: string; label: string; pages: SitePage[] }[];
@@ -131,6 +132,13 @@ export type Proposal = {
   warnings: string[];
   createdAt: string | null;
 };
+
+/**
+ * Claude's memory of earlier work: one line per kept change, oldest first
+ * ("- <date> · <command> · <file> · <instruction>"). Only the newest `sent`
+ * lines go to Claude. `available` is false for copies whose scripts predate it.
+ */
+export type Memory = { available: boolean; lines: string[]; sent: number };
 
 /** A page's markdown; `version` must come back with a save. */
 export type PageSource = { file: string; content: string; version: string };

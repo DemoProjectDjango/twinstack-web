@@ -2,7 +2,15 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { WorkspaceError, acquire, workspaceDir } from "./workspace.js";
+import {
+  addWorkLogLines,
+  clearWorkLog,
+  forgetWorkLogLines,
+  forgottenWorkLogLines,
+  recentWorkLogLines,
+  replaceWorkLogLine,
+} from "./db.js";
+import { WorkspaceError, acquire, siteIdFor, workspaceDir } from "./workspace.js";
 
 // Reads and writes the site's own data files. Everything here parses files
 // directly; repo code is never imported into the server process.
@@ -14,6 +22,8 @@ const JSON_BLOCK = /```json\r?\n([\s\S]*?)\r?\n```/g;
 /** Files the web UI may read and replace whole, with a validator for each. */
 const DATA_FILES = {
   "site-tree": { path: "scripts/site-tree.md", validate: () => {} },
+  // The owner's standing notes, which Claude reads before every request.
+  "knowledge-notes": { path: "knowledge/notes.md", validate: () => {} },
   "page-commands": {
     path: "scripts/page-commands.json",
     validate: (content) => {
@@ -147,6 +157,8 @@ export async function getOverview(key) {
       pageEditImages: editScript.includes("--proposal-out"),
       pageGenerate: editScript.includes("--generate"),
       mdEdit,
+      // Copies made before knowledge/ existed have no notes or work log for Claude.
+      memory: existsSync(path.join(dir, KNOWLEDGE_SCRIPT)),
     },
     markdownFiles: mdEdit ? await listMarkdown(dir) : [],
     collections,
@@ -305,6 +317,230 @@ export async function readProposal(key) {
   }
 }
 
+/* ------------------------------------------------------------- work log */
+
+// Copies with scripts/lib/knowledge.js send knowledge/notes.md and their work
+// log to Claude on every request, and log each change their scripts write
+// (keep the constants and the entry format here in step with that file).
+//
+// The committed knowledge/work-log.md only holds what's on the checked-out
+// branch: after a change goes out as a pull request and the workspace starts
+// fresh from the default branch, its line is gone until the PR merges. So the
+// log is also kept in the database, per site, and before every Claude run
+// prepareWorkLog() writes the latest of both to WORK_LOG_FOR_RUN (inside .git,
+// never a change) and the script reads it through TWINSTACK_WORK_LOG.
+// collectWorkLog() saves the lines the run added once it ends.
+const KNOWLEDGE_SCRIPT = "scripts/lib/knowledge.js";
+const WORK_LOG = "knowledge/work-log.md";
+const WORK_LOG_ARCHIVE = "knowledge/archive";
+export const WORK_LOG_FOR_RUN = ".git/twinstack-work-log.md";
+const LOG_ROTATE_AT = 60;
+const LOG_KEEP = 30;
+const MAX_INSTRUCTION_CHARS = 160;
+const WORK_LOG_HEADER = `# Work log
+
+Written automatically: one line per change Claude made to this site that was kept, oldest first. Claude reads this before every request so new work stays consistent with earlier work. Older lines move to knowledge/archive/. Standing decisions belong in knowledge/notes.md, not here.
+`;
+
+// A run's new lines are written by the copy's own script, so only well-formed
+// ones are kept, and only so many per run.
+const MAX_LINES_PER_RUN = 100;
+const MAX_LINE_CHARS = 600;
+const WELL_FORMED = /^- \d{4}-\d{2}-\d{2} · \S/;
+
+const isEntry = (line) => line.startsWith("- ");
+const entriesOf = (text) => (text ?? "").replace(/\r\n/g, "\n").split("\n").filter(isEntry);
+// Written entries start "- YYYY-MM-DD"; a hand-written line without a date sorts first.
+const entryDate = (line) => (WELL_FORMED.test(line) ? line.slice(2, 12) : "");
+
+/**
+ * Writes the site's latest work log for the Claude run about to start: the
+ * checked-out branch's lines (which include ones made from a terminal and
+ * pushed) together with the database's, newest LOG_ROTATE_AT of them. Returns
+ * what collectWorkLog() needs, or null for a copy without the knowledge files.
+ */
+export async function prepareWorkLog(key) {
+  const dir = workspaceDir(key);
+  if (!existsSync(path.join(dir, KNOWLEDGE_SCRIPT))) return null;
+  const siteId = await siteIdFor(key);
+  const lines = await mergedWorkLog(dir, siteId, LOG_ROTATE_AT);
+  await fs.writeFile(path.join(dir, WORK_LOG_FOR_RUN), `${WORK_LOG_HEADER}\n${lines.map((line) => `${line}\n`).join("")}`);
+  return { siteId, count: lines.length };
+}
+
+/**
+ * The site's memory as Claude gets it, oldest first, newest `limit` lines:
+ * the database's lines and the checked-out branch's committed ones, without
+ * any the user removed.
+ */
+async function mergedWorkLog(dir, siteId, limit) {
+  const [committed, forgotten] = await Promise.all([
+    readText(path.join(dir, WORK_LOG)).then(entriesOf),
+    forgottenWorkLogLines(siteId),
+  ]);
+  // More than are sent, so committed lines that are also stored are recognised as such.
+  const stored = await recentWorkLogLines(siteId, limit * 4);
+  const known = new Set(stored);
+
+  // The database has its lines in the order they happened. Lines only in the
+  // committed log (made from a terminal) are placed by date, after the
+  // database's lines from the same day: the sort is stable.
+  return [...new Set([...stored, ...committed.filter((line) => !known.has(line))])]
+    .filter((line) => !forgotten.has(line))
+    .sort((a, b) => (entryDate(a) < entryDate(b) ? -1 : entryDate(a) > entryDate(b) ? 1 : 0))
+    .slice(-limit);
+}
+
+/* ----------------------------------------------------- editing the memory */
+
+// The Claude memory tab lists the work log and lets the user change or remove
+// lines, or clear it. Each change is made in the database and in the
+// checked-out committed log (an ordinary uncommitted change), so runs from a
+// terminal agree once it's published. Removed lines are recorded as forgotten,
+// so another branch's committed copy can't bring them back.
+const MEMORY_LIST_LIMIT = 500;
+
+function requireMemory(dir) {
+  if (!existsSync(path.join(dir, KNOWLEDGE_SCRIPT))) {
+    throw new WorkspaceError("This site's scripts predate Claude's memory. Update them from the template first.", 409);
+  }
+}
+
+/** Whether the site has memory, and its lines (oldest first). */
+export async function readMemory(key) {
+  const dir = workspaceDir(key);
+  if (!existsSync(path.join(dir, KNOWLEDGE_SCRIPT))) return { available: false, lines: [], sent: LOG_ROTATE_AT };
+  return { available: true, lines: await mergedWorkLog(dir, await siteIdFor(key), MEMORY_LIST_LIMIT), sent: LOG_ROTATE_AT };
+}
+
+/** Applies `change` to the entry lines of the committed log, if there is one; the rest of the file stays as it is. */
+async function rewriteCommittedWorkLog(dir, change) {
+  const logPath = path.join(dir, WORK_LOG);
+  const text = await readText(logPath);
+  if (text === null) return;
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const next = lines.flatMap((line) => (isEntry(line) ? change(line) : [line]));
+  if (next.join("\n") !== lines.join("\n")) await fs.writeFile(logPath, next.join("\n"));
+}
+
+/** Runs a memory change under the workspace lock and returns the updated memory. */
+async function changeMemory(key, label, fn) {
+  const release = acquire(key, label);
+  try {
+    const dir = workspaceDir(key);
+    requireMemory(dir);
+    await fn(dir, await siteIdFor(key));
+  } finally {
+    release();
+  }
+  return readMemory(key);
+}
+
+function memoryLine(value, label) {
+  if (typeof value !== "string" || !value || value.length > MAX_LINE_CHARS || /[\r\n]/.test(value)) {
+    throw new WorkspaceError(`${label} must be one line of at most ${MAX_LINE_CHARS} characters.`, 400);
+  }
+  return value;
+}
+
+/** Removes one line from the memory. */
+export async function forgetMemoryLine(key, line) {
+  const target = memoryLine(line, "The line");
+  return changeMemory(key, "removing a memory line", async (dir, siteId) => {
+    await forgetWorkLogLines(siteId, [target]);
+    await rewriteCommittedWorkLog(dir, (entry) => (entry === target ? [] : [entry]));
+  });
+}
+
+/** Rewrites one line of the memory in place. */
+export async function replaceMemoryLine(key, line, replacement) {
+  const target = memoryLine(line, "The line");
+  const next = memoryLine(replacement, "The new line").trim();
+  if (!WELL_FORMED.test(next)) {
+    throw new WorkspaceError('A memory line must start with "- YYYY-MM-DD · ".', 400);
+  }
+  return changeMemory(key, "editing a memory line", async (dir, siteId) => {
+    if (!(await mergedWorkLog(dir, siteId, MEMORY_LIST_LIMIT)).includes(target)) {
+      throw new WorkspaceError("That line isn't in the memory any more. Reload and try again.", 409);
+    }
+    if (next === target) return;
+    await replaceWorkLogLine(siteId, target, next);
+    await rewriteCommittedWorkLog(dir, (entry) => [entry === target ? next : entry]);
+  });
+}
+
+/** Empties the memory: every stored line, and every committed one this branch has. */
+export async function clearMemory(key) {
+  return changeMemory(key, "clearing Claude's memory", async (dir, siteId) => {
+    const visible = await mergedWorkLog(dir, siteId, MEMORY_LIST_LIMIT);
+    const committed = entriesOf(await readText(path.join(dir, WORK_LOG)));
+    await clearWorkLog(siteId);
+    await forgetWorkLogLines(siteId, [...new Set([...visible, ...committed])]);
+    await rewriteCommittedWorkLog(dir, () => []);
+  });
+}
+
+/** Saves the lines the run appended to WORK_LOG_FOR_RUN. Never throws. */
+export async function collectWorkLog(key, prepared) {
+  if (!prepared) return;
+  try {
+    const lines = entriesOf(await readText(path.join(workspaceDir(key), WORK_LOG_FOR_RUN)))
+      .slice(prepared.count)
+      .filter((line) => WELL_FORMED.test(line) && line.length <= MAX_LINE_CHARS)
+      .slice(0, MAX_LINES_PER_RUN);
+    await addWorkLogLines(prepared.siteId, lines);
+  } catch (err) {
+    console.error(`Couldn't save the work log: ${err.message}`);
+  }
+}
+
+/** One log line: "- <date> · <command> · <file> · <instruction>". */
+function workLogEntry({ command, file, instruction }) {
+  let what = String(instruction || "").replace(/\s+/g, " ").trim();
+  if (what.length > MAX_INSTRUCTION_CHARS) what = `${what.slice(0, MAX_INSTRUCTION_CHARS - 1).trimEnd()}…`;
+  return `- ${new Date().toISOString().slice(0, 10)} · ${command} · ${file}${what ? ` · ${what}` : ""}`;
+}
+
+/** Appends a line to the copy's committed log, rotating it like knowledge.js does. Never throws. */
+async function appendCommittedWorkLog(dir, entry) {
+  try {
+    const logPath = path.join(dir, WORK_LOG);
+    const existing = (await readText(logPath))?.replace(/\r\n/g, "\n");
+    const text = existing ? existing.replace(/\n*$/, "\n") : `${WORK_LOG_HEADER}\n`;
+    await fs.mkdir(path.dirname(logPath), { recursive: true });
+    const lines = `${text}${entry}\n`.split("\n");
+
+    const entries = lines.filter(isEntry);
+    if (entries.length <= LOG_ROTATE_AT) {
+      await fs.writeFile(logPath, lines.join("\n"));
+      return;
+    }
+    // The oldest entries move to the archive, which is never sent to Claude.
+    const moving = entries.length - LOG_KEEP;
+    const archivePath = path.join(dir, WORK_LOG_ARCHIVE, `work-log-${entryDate(entry)}.md`);
+    const archive = (await readText(archivePath)) ?? "# Work log archive\n\nOlder lines from knowledge/work-log.md. Not sent to Claude.\n";
+    await fs.mkdir(path.dirname(archivePath), { recursive: true });
+    await fs.writeFile(archivePath, `${archive.replace(/\n*$/, "\n")}${entries.slice(0, moving).join("\n")}\n`);
+    let seen = 0;
+    await fs.writeFile(logPath, lines.filter((line) => !(isEntry(line) && seen++ < moving)).join("\n").replace(/\n*$/, "\n"));
+  } catch (err) {
+    console.error(`Couldn't update ${WORK_LOG}: ${err.message}`);
+  }
+}
+
+/** Logs a change applied from a preview: in the copy's committed log and in the database. Never throws. */
+async function logAppliedChange(key, change) {
+  const dir = workspaceDir(key);
+  if (!existsSync(path.join(dir, KNOWLEDGE_SCRIPT)) || change.file.startsWith("knowledge/")) return;
+  const entry = workLogEntry(change);
+  await appendCommittedWorkLog(dir, entry);
+  try {
+    await addWorkLogLines(await siteIdFor(key), [entry]);
+  } catch (err) {
+    console.error(`Couldn't save the work log: ${err.message}`);
+  }
+}
+
 /** Writes the proposal (or the user's edited version of it) to its page and clears it. */
 export async function applyProposal(key, content) {
   if (typeof content !== "string" || !content.trim() || Buffer.byteLength(content) > MAX_FILE_BYTES) {
@@ -323,6 +559,11 @@ export async function applyProposal(key, content) {
     const normalised = content.replace(/\r\n/g, "\n");
     await fs.writeFile(target, normalised.endsWith("\n") ? normalised : `${normalised}\n`);
     await clearProposal(key);
+    await logAppliedChange(key, {
+      command: { generate: "page:generate", markdown: "md:edit" }[proposal.mode] ?? "page:edit",
+      file: proposal.file,
+      instruction: proposal.instruction || (proposal.mode === "generate" ? "turned the draft into the finished page" : ""),
+    });
     return { file: proposal.file };
   } finally {
     release();

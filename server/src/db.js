@@ -8,6 +8,9 @@ import { config } from "./config.js";
 //               encrypted token) and the encrypted Anthropic API key
 //   siteCopies  one document per repo duplicated from the site template
 //               (_id = GitHub repo id, which survives renames)
+//   workLog     one document per line of a site's Claude work log
+//               (siteId = GitHub repo id)
+//   workLogForgotten  lines the user removed from a site's work log
 //
 // Account ids leave this module as 24-character hex strings.
 
@@ -23,6 +26,8 @@ export async function connectDb() {
     users().createIndex({ email: 1 }, { unique: true, partialFilterExpression: { email: { $type: "string" } } }),
     users().createIndex({ "github.id": 1 }, { unique: true, partialFilterExpression: { "github.id": { $type: "number" } } }),
     siteCopies().createIndex({ userId: 1 }),
+    workLog().createIndex({ siteId: 1, createdAt: -1 }),
+    workLogForgotten().createIndex({ siteId: 1, line: 1 }, { unique: true }),
   ]);
 }
 
@@ -32,6 +37,8 @@ export async function closeDb() {
 
 const users = () => db.collection("users");
 const siteCopies = () => db.collection("siteCopies");
+const workLog = () => db.collection("workLog");
+const workLogForgotten = () => db.collection("workLogForgotten");
 
 function objectId(id) {
   return ObjectId.isValid(id) ? new ObjectId(id) : null;
@@ -200,4 +207,60 @@ export async function findSiteCopyIds(repoIds) {
     .find({ _id: { $in: repoIds } }, { projection: { _id: 1 } })
     .toArray();
   return new Set(docs.map((doc) => doc._id));
+}
+
+/* --------------------------------------------------------------- work log */
+
+// Each site's Claude work log (the lines its scripts write to
+// knowledge/work-log.md), kept here as well so the next Claude run sees a
+// change as soon as it's made, not once its pull request has merged.
+// siteId is the GitHub repo id, shared by everyone who manages the site.
+//
+// Lines the user removes from the memory are recorded in workLogForgotten, so
+// a copy still in some branch's committed log can't bring them back.
+
+/** Saves new log lines, oldest first. A line written again is no longer forgotten. */
+export async function addWorkLogLines(siteId, lines) {
+  if (!lines.length) return;
+  const now = Date.now();
+  // Distinct timestamps keep lines written in one go in their order.
+  await workLog().insertMany(lines.map((line, i) => ({ siteId, line, createdAt: new Date(now + i) })));
+  await workLogForgotten().deleteMany({ siteId, line: { $in: lines } });
+}
+
+/** Removes these lines from the memory: stored copies are deleted, and committed copies are ignored from now on. */
+export async function forgetWorkLogLines(siteId, lines) {
+  if (!lines.length) return;
+  await workLog().deleteMany({ siteId, line: { $in: lines } });
+  await Promise.all(
+    lines.map((line) => workLogForgotten().updateOne({ siteId, line }, { $set: { siteId, line, forgottenAt: new Date() } }, { upsert: true })),
+  );
+}
+
+/** Removes every stored line of the site (the caller forgets the committed ones it can see). */
+export async function clearWorkLog(siteId) {
+  await workLog().deleteMany({ siteId });
+}
+
+/** Rewrites a line in place: it keeps its position, and the old wording is forgotten. */
+export async function replaceWorkLogLine(siteId, line, replacement) {
+  await workLog().updateMany({ siteId, line }, { $set: { line: replacement } });
+  await workLogForgotten().updateOne({ siteId, line }, { $set: { siteId, line, forgottenAt: new Date() } }, { upsert: true });
+  await workLogForgotten().deleteMany({ siteId, line: { $in: [replacement] } });
+}
+
+/** The lines removed from this site's memory. */
+export async function forgottenWorkLogLines(siteId) {
+  const docs = await workLogForgotten().find({ siteId }, { projection: { line: 1 } }).toArray();
+  return new Set(docs.map((doc) => doc.line));
+}
+
+/** The newest `limit` lines, oldest first. */
+export async function recentWorkLogLines(siteId, limit) {
+  const docs = await workLog()
+    .find({ siteId }, { projection: { line: 1 } })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
+  return docs.map((doc) => doc.line).reverse();
 }

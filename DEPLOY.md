@@ -47,7 +47,9 @@ from the dashboard. The GitHub connection is saved with their account.
 In DigitalOcean, go to **Create → Droplets**:
 
 - **Region:** the one closest to your users.
-- **Image:** Ubuntu 24.04 (LTS) x64
+- **Image:** Ubuntu 24.04 (LTS) x64, from the plain **OS** images. Don't use a Marketplace image such as the MERN
+  1-Click app: it runs Ubuntu 22.04 with MongoDB 6.0, Node 18 and a sample app already installed, and those clash with
+  steps 6 and 7.
 - **Size:** Basic, Regular, at least **2 GB RAM / 1 vCPU**. 1 GB works only with the swap file from step 5.
   `next build` and the site manager's commands (`npm ci`, site builds) need the memory.
 - **Authentication:** SSH key. Click **New SSH Key** and paste your computer's public key. If you don't have one,
@@ -161,7 +163,7 @@ pm2 -v
 sudo apt install -y gnupg curl
 curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | \
   sudo gpg -o /usr/share/keyrings/mongodb-server-8.0.gpg --dearmor
-echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" | \
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME")/mongodb-org/8.0 multiverse" | \
   sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
 sudo apt update
 sudo apt install -y mongodb-org
@@ -180,16 +182,20 @@ openssl rand -hex 24     # APP_PASSWORD
 mongosh
 ```
 
-In `mongosh`, paste each password when `passwordPrompt()` asks:
+In `mongosh`, replace `ADMIN_PASSWORD` and `APP_PASSWORD` with the two passwords (keep the quotes). Each command
+should print `{ ok: 1 }`. mongosh doesn't save commands containing passwords to its history.
 
 ```js
 use admin
-db.createUser({ user: "admin", pwd: passwordPrompt(), roles: ["userAdminAnyDatabase", "readWriteAnyDatabase"] })
+db.createUser({ user: "admin", pwd: "ADMIN_PASSWORD", roles: ["userAdminAnyDatabase", "readWriteAnyDatabase"] })
 
 use twinstack
-db.createUser({ user: "twinstack", pwd: passwordPrompt(), roles: [{ role: "readWrite", db: "twinstack" }] })
+db.createUser({ user: "twinstack", pwd: "APP_PASSWORD", roles: [{ role: "readWrite", db: "twinstack" }] })
 exit
 ```
+
+Don't use `passwordPrompt()` here. Pasting into it can send invisible characters, and MongoDB then refuses the
+password with `U_STRINGPREP_PROHIBITED_ERROR`.
 
 ### Require passwords and keep MongoDB private
 
@@ -487,6 +493,7 @@ mongorestore --uri="mongodb://twinstack:APP_PASSWORD@127.0.0.1:27017/twinstack?a
 
 | Symptom | Check |
 | --- | --- |
+| `apt` says "Could not get lock /var/lib/dpkg/lock-frontend" | Another `apt` is running, usually `unattended-upgrades` on a new droplet. `ps -fp <pid>` shows what it is. Wait for it to finish, since `apt` retries on its own. Don't kill it or delete the lock files. |
 | Browser can't reach the site at all | `nslookup builder.mydomain.com` shows your IP, `sudo ufw status` allows 80/443, `sudo systemctl status nginx` |
 | `builder` works but `api.mydomain.com` doesn't | The `api` DNS record exists, `/etc/nginx/sites-enabled/api` exists, and the certificate covers it (`sudo certbot certificates`) |
 | `https://api.mydomain.com/api/me` says "Not authenticated" in the browser | Expected. The login cookie belongs to `builder.mydomain.com`. Signed-in users use the API through `builder`. |

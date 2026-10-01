@@ -26,7 +26,7 @@ export type SiteContextValue = {
   /** True if there are no unsaved draft edits, or the user agrees to lose them. */
   confirmDiscardDraft: () => boolean;
   /** Switches to another tab, e.g. from a hint that points there. */
-  showTab: (tab: "build" | "pages" | "navigation" | "info" | "edit" | "tree" | "schedule" | "changes") => void;
+  showTab: (tab: "build" | "pages" | "navigation" | "info" | "edit" | "memory" | "tree" | "schedule" | "changes") => void;
 };
 
 export const SiteContext = createContext<SiteContextValue | null>(null);
