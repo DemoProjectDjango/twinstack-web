@@ -7,7 +7,7 @@ import { useSite } from "./site-context";
 import { Button, ErrorText, Notice, Section, inputClass } from "./ui";
 
 /** Claude commands whose preview this shows. */
-export const CLAUDE_PAGE_COMMANDS = ["page-edit", "page-generate", "md-edit"];
+export const CLAUDE_PAGE_COMMANDS = ["page-edit", "page-generate", "page-convert", "md-edit"];
 
 /**
  * The pending preview from either kind of Claude page run: the complete
@@ -78,6 +78,7 @@ export function ProposalReview() {
 
   const claudeJob = job && CLAUDE_PAGE_COMMANDS.includes(job.command) ? job : null;
   const generated = proposal?.mode === "generate";
+  const converted = proposal?.mode === "convert";
 
   return (
     <>
@@ -100,10 +101,14 @@ export function ProposalReview() {
 
       {proposal && (
         <Section
-          title={generated ? "Finished page" : proposal.mode === "markdown" ? "Proposed file" : "Proposed page"}
+          title={generated ? "Finished page" : converted ? "Converted page" : proposal.mode === "markdown" ? "Proposed file" : "Proposed page"}
           description={
             <>
-              {generated ? "Claude's finished version of your draft" : "Claude's complete new version"} of{" "}
+              {generated
+                ? "Claude's finished version of your draft of"
+                : converted
+                  ? `Claude's conversion of ${proposal.source ?? "the HTML page"} into`
+                  : "Claude's complete new version of"}{" "}
               <code className="font-mono">{proposal.file}</code>. Nothing is saved yet. Edit the text if you want, then apply it.
               Applying doesn&apos;t call Claude again.
             </>
@@ -112,7 +117,7 @@ export function ProposalReview() {
           <div className="space-y-3">
             {proposal.instruction && (
               <p className="text-sm">
-                <span className="text-zinc-500">{generated ? "Direction:" : "Instruction:"}</span> {proposal.instruction}
+                <span className="text-zinc-500">{generated || converted ? "Direction:" : "Instruction:"}</span> {proposal.instruction}
               </p>
             )}
             {proposal.images.length > 0 && (

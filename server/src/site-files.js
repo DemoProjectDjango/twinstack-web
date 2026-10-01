@@ -146,7 +146,8 @@ export async function getOverview(key) {
   ];
 
   // Copies made before edit-page.js learnt --image/--proposal-out can still run
-  // plain edits, and ones before --generate can't turn a draft into a page.
+  // plain edits, ones before --generate can't turn a draft into a page, and
+  // ones before --from-html can't convert an HTML page.
   const editScript = (await readText(path.join(dir, "scripts/edit-page.js"))) ?? "";
   // Copies made before scripts/edit-md.js existed can't edit other markdown.
   const mdEdit = existsSync(path.join(dir, "scripts/edit-md.js"));
@@ -156,6 +157,7 @@ export async function getOverview(key) {
     features: {
       pageEditImages: editScript.includes("--proposal-out"),
       pageGenerate: editScript.includes("--generate"),
+      pageConvert: editScript.includes("--from-html"),
       mdEdit,
       // Copies made before knowledge/ existed have no notes or work log for Claude.
       memory: existsSync(path.join(dir, KNOWLEDGE_SCRIPT)),
@@ -297,7 +299,7 @@ export async function readProposal(key) {
     const proposal = JSON.parse(text);
     if (typeof proposal.file !== "string" || typeof proposal.content !== "string") return null;
     // Older copies write no mode: their proposals are always instruction edits.
-    const mode = ["generate", "markdown"].includes(proposal.mode) ? proposal.mode : "edit";
+    const mode = ["generate", "convert", "markdown"].includes(proposal.mode) ? proposal.mode : "edit";
     const original = proposalAllowed(mode, proposal.file)
       ? await readText(inside(workspaceDir(key), proposal.file))
       : null;
@@ -307,6 +309,8 @@ export async function readProposal(key) {
       original,
       instruction: String(proposal.instruction ?? ""),
       images: Array.isArray(proposal.images) ? proposal.images.map(String) : [],
+      // A converted page's HTML file, by name only (it's kept inside .git).
+      source: typeof proposal.source === "string" ? path.posix.basename(proposal.source) : null,
       content: proposal.content,
       problems: Array.isArray(proposal.problems) ? proposal.problems.map(String) : [],
       warnings: Array.isArray(proposal.warnings) ? proposal.warnings.map(String) : [],
@@ -559,10 +563,14 @@ export async function applyProposal(key, content) {
     const normalised = content.replace(/\r\n/g, "\n");
     await fs.writeFile(target, normalised.endsWith("\n") ? normalised : `${normalised}\n`);
     await clearProposal(key);
+    const defaultInstruction = {
+      generate: "turned the draft into the finished page",
+      convert: `converted ${proposal.source ?? "an HTML page"} into the page`,
+    };
     await logAppliedChange(key, {
-      command: { generate: "page:generate", markdown: "md:edit" }[proposal.mode] ?? "page:edit",
+      command: { generate: "page:generate", convert: "page:convert", markdown: "md:edit" }[proposal.mode] ?? "page:edit",
       file: proposal.file,
-      instruction: proposal.instruction || (proposal.mode === "generate" ? "turned the draft into the finished page" : ""),
+      instruction: proposal.instruction || (defaultInstruction[proposal.mode] ?? ""),
     });
     return { file: proposal.file };
   } finally {
@@ -667,6 +675,47 @@ export async function saveUpload(key, { name, data }) {
   } finally {
     release();
   }
+}
+
+/* ------------------------------------------------------------ HTML pages */
+
+// An existing HTML page for Claude to convert into a page (edit-page.js
+// --from-html). It's kept inside .git, so it's never a change or committed,
+// and only the latest upload is kept.
+const HTML_SOURCE_DIR = ".git/twinstack-html";
+export const HTML_SOURCE_PATH = /^\.git\/twinstack-html\/[a-z0-9-]+\.html$/;
+// The site script's own limit.
+const MAX_HTML_BYTES = 2 * 1024 * 1024;
+
+export async function saveHtmlSource(key, { name, content }) {
+  if (typeof content !== "string" || !content.trim()) throw new WorkspaceError("No HTML received.", 400);
+  if (Buffer.byteLength(content) > MAX_HTML_BYTES) throw new WorkspaceError("HTML files must be 2 MB or smaller.", 400);
+  if (content.includes("\0") || !/<\s*(html|body|main|article|section|div|p|h[1-6]|table|ul|ol)\b/i.test(content)) {
+    throw new WorkspaceError("That doesn't look like an HTML page.", 400);
+  }
+  const base =
+    String(name ?? "")
+      .replace(/\.[^.]*$/, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "page";
+
+  const release = acquire(key, "saving an HTML page");
+  try {
+    const dir = path.join(workspaceDir(key), HTML_SOURCE_DIR);
+    await fs.rm(dir, { recursive: true, force: true });
+    await fs.mkdir(dir, { recursive: true });
+    const source = `${HTML_SOURCE_DIR}/${base}.html`;
+    await fs.writeFile(path.join(workspaceDir(key), source), content);
+    return { source, name: `${base}.html`, bytes: Buffer.byteLength(content) };
+  } finally {
+    release();
+  }
+}
+
+export function htmlSourceExists(key, source) {
+  return HTML_SOURCE_PATH.test(source) && existsSync(path.join(workspaceDir(key), source));
 }
 
 /** For thumbnails in the UI: an image under assets/img/ with its content type. */

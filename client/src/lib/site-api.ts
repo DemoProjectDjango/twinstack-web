@@ -41,10 +41,11 @@ export type Overview = {
   /**
    * pageEditImages: the copy's edit-page.js supports --image and --proposal-out.
    * pageGenerate: it supports --generate (turn a hand-written draft into the finished page).
+   * pageConvert: it supports --from-html (convert an existing HTML page into a page).
    * mdEdit: it has scripts/edit-md.js (edit markdown outside content/, listed in markdownFiles).
    * memory: it has scripts/lib/knowledge.js (Claude reads knowledge/notes.md and the work log first).
    */
-  features: { pageEditImages: boolean; pageGenerate: boolean; mdEdit: boolean; memory: boolean };
+  features: { pageEditImages: boolean; pageGenerate: boolean; pageConvert: boolean; mdEdit: boolean; memory: boolean };
   /** Markdown files outside content/ that the "md-edit" command may change. Empty without mdEdit. */
   markdownFiles: string[];
   collections: { name: string; dir: string; label: string; pages: SitePage[] }[];
@@ -118,13 +119,16 @@ export type Proposal = {
   file: string;
   /**
    * "edit": a page changed by an instruction. "generate": written from the page's own draft.
-   * "markdown": a markdown file outside content/ changed by an instruction.
+   * "convert": converted from an uploaded HTML page. "markdown": a markdown file outside
+   * content/ changed by an instruction.
    */
-  mode: "edit" | "generate" | "markdown";
+  mode: "edit" | "generate" | "convert" | "markdown";
   /** The file as it is on disk now, to diff the proposal against. Null if it's gone. */
   original: string | null;
   instruction: string;
   images: string[];
+  /** The HTML file a converted page came from (its name), or null. */
+  source: string | null;
   content: string;
   /** Checks that failed: the script wouldn't have written this version itself. */
   problems: string[];
@@ -139,6 +143,9 @@ export type Proposal = {
  * lines go to Claude. `available` is false for copies whose scripts predate it.
  */
 export type Memory = { available: boolean; lines: string[]; sent: number };
+
+/** An uploaded HTML page, saved inside .git for the "page-convert" command. */
+export type HtmlSource = { source: string; name: string; bytes: number };
 
 /** A page's markdown; `version` must come back with a save. */
 export type PageSource = { file: string; content: string; version: string };

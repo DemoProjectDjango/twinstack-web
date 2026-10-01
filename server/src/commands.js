@@ -1,6 +1,13 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { IMAGE_PATH, PROPOSAL_FILE, clearProposal, isEditableMarkdown } from "./site-files.js";
+import {
+  HTML_SOURCE_PATH,
+  IMAGE_PATH,
+  PROPOSAL_FILE,
+  clearProposal,
+  htmlSourceExists,
+  isEditableMarkdown,
+} from "./site-files.js";
 import { WorkspaceError, markInstalled } from "./workspace.js";
 
 // Every command the site manager can run, mapped to the same scripts the
@@ -202,6 +209,25 @@ export const COMMANDS = {
       return [script("edit-page.js", [...args, ...claudeFlags(input)])];
     },
     prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
+  },
+
+  // An existing HTML page (uploaded into .git by saveHtmlSource) converted into the page's markdown.
+  "page-convert": {
+    label: "Convert HTML with Claude",
+    claude: true,
+    needsKey: () => true,
+    steps: (input) => {
+      const source = text(input, "source", "HTML file", { max: 200 });
+      if (!HTML_SOURCE_PATH.test(source)) throw new WorkspaceError("Upload the HTML file again.", 400);
+      const args = [markdownPage(input), `--from-html=${source}`];
+      const direction = text(input, "instruction", "Direction", { max: 4000, multiline: true, optional: true });
+      if (direction) args.push(direction);
+      return [script("edit-page.js", [...args, ...claudeFlags(input)])];
+    },
+    prepare: async (key, input) => {
+      if (!htmlSourceExists(key, input.source)) throw new WorkspaceError("The uploaded HTML file is gone. Upload it again.", 409);
+      if (flag(input, "dryRun")) await clearProposal(key);
+    },
   },
 
   // Markdown outside content/ (the site tree, the schedule, the docs), via the copy's scripts/edit-md.js.

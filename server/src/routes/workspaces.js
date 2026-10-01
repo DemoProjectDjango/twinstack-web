@@ -36,6 +36,7 @@ import {
   savePage,
   prepareWorkLog,
   replaceMemoryLine,
+  saveHtmlSource,
   saveUpload,
   updateFromTemplate,
   WORK_LOG_FOR_RUN,
@@ -419,6 +420,15 @@ workspacesRouter.post(
   "/:owner/:repo/uploads",
   express.json({ limit: "8mb" }),
   handle(async (req, res) => res.status(201).json(await saveUpload(keyFor(req), req.body ?? {}))),
+);
+
+/* An existing HTML page for Claude to convert into one of the site's pages. */
+
+workspacesRouter.post(
+  "/:owner/:repo/html-source",
+  // JSON escaping can nearly double a 2 MB page.
+  express.json({ limit: "4mb" }),
+  handle(async (req, res) => res.status(201).json(await saveHtmlSource(keyFor(req), req.body ?? {}))),
 );
 
 /* Static information: site-wide facts in site.config.json and content/data/. */
