@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import {
+  CSS_SOURCE_PATH,
   HTML_SOURCE_PATH,
   IMAGE_PATH,
   PROPOSAL_FILE,
@@ -80,6 +81,18 @@ function claudeFlags(input) {
   // Inside .git, so the preview is never a change.
   if (flag(input, "dryRun")) args.push("--dry-run", `--proposal-out=${PROPOSAL_FILE}`);
   return args;
+}
+
+/** Uploaded stylesheets (saveHtmlSource) for a --keep-styles conversion. */
+function cssSources(input) {
+  const list = input?.css ?? [];
+  if (!Array.isArray(list) || list.length > 10) throw new WorkspaceError("Add at most 10 CSS files.", 400);
+  return list.map((entry) => {
+    if (typeof entry !== "string" || !CSS_SOURCE_PATH.test(entry) || entry.split("/").includes("..")) {
+      throw new WorkspaceError("Upload the CSS files again.", 400);
+    }
+    return entry;
+  });
 }
 
 /** Images for a Claude edit: https URLs, or image files under assets/img/ in the repo. */
@@ -220,12 +233,19 @@ export const COMMANDS = {
       const source = text(input, "source", "HTML file", { max: 200 });
       if (!HTML_SOURCE_PATH.test(source)) throw new WorkspaceError("Upload the HTML file again.", 400);
       const args = [markdownPage(input), `--from-html=${source}`];
+      // Copy the page as-is with its own CSS, scoped to it, instead of converting it to markdown.
+      if (flag(input, "keepStyles")) args.push("--keep-styles", ...cssSources(input).map((css) => `--css=${css}`));
       const direction = text(input, "instruction", "Direction", { max: 4000, multiline: true, optional: true });
       if (direction) args.push(direction);
-      return [script("edit-page.js", [...args, ...claudeFlags(input)])];
+      // Up to three Claude requests (the conversion, a review, a correction) and, with styles kept,
+      // a browser check at three widths.
+      return [script("edit-page.js", [...args, ...claudeFlags(input)], 20 * MINUTE)];
     },
     prepare: async (key, input) => {
       if (!htmlSourceExists(key, input.source)) throw new WorkspaceError("The uploaded HTML file is gone. Upload it again.", 409);
+      if (flag(input, "keepStyles") && !cssSources(input).every((css) => htmlSourceExists(key, css))) {
+        throw new WorkspaceError("An uploaded CSS file is gone. Upload the files again.", 409);
+      }
       if (flag(input, "dryRun")) await clearProposal(key);
     },
   },
@@ -273,8 +293,9 @@ export const COMMANDS = {
 
 // Only these reach the site's scripts. In particular the server's own secrets
 // and the user's GitHub token are never visible to repo code.
+// CHROME_PATH lets an HTML conversion's render check find a browser that isn't on PATH.
 const PASS_ENV = new Set(
-  ["PATH", "SYSTEMROOT", "COMSPEC", "PATHEXT", "WINDIR", "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG", "LC_ALL"],
+  ["PATH", "SYSTEMROOT", "COMSPEC", "PATHEXT", "WINDIR", "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG", "LC_ALL", "CHROME_PATH"],
 );
 
 export function jobEnv(anthropicKey) {

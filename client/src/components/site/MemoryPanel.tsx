@@ -9,16 +9,32 @@ import { Button, ErrorText, Notice, Section, inputClass } from "./ui";
 type DataFile = { content: string; exists: boolean; path: string };
 type MemoryResult = Memory & { status: WorkspaceStatus };
 
-/** A written line, "- <date> · <command> · <file>[ · <what was asked>]", split up; null for a hand-written one. */
-function parseLine(line: string) {
-  const parts = line.slice(2).split(" · ");
-  if (parts.length < 3 || !/^\d{4}-\d{2}-\d{2}$/.test(parts[0])) return null;
-  return { date: parts[0], command: parts[1], file: parts[2], what: parts.slice(3).join(" · ") };
+const MAX_SUMMARY_POINTS = 5;
+
+/** An entry's summary: the "  - " points under its line, without the dashes. */
+function summaryOf(entry: string) {
+  return entry
+    .split("\n")
+    .slice(1)
+    .map((line) => line.replace(/^\s*-\s*/, "").trim())
+    .filter(Boolean);
 }
 
-function buildLine({ date, command, file, what }: NonNullable<ReturnType<typeof parseLine>>) {
+/**
+ * A written entry, "- <date> · <command> · <file>[ · <what was asked>]" plus
+ * its summary points, split up; null for a hand-written one.
+ */
+function parseLine(entry: string) {
+  const line = entry.split("\n")[0];
+  const parts = line.slice(2).split(" · ");
+  if (parts.length < 3 || !/^\d{4}-\d{2}-\d{2}$/.test(parts[0])) return null;
+  return { date: parts[0], command: parts[1], file: parts[2], what: parts.slice(3).join(" · "), summary: summaryOf(entry) };
+}
+
+function buildLine({ date, command, file, what, summary }: NonNullable<ReturnType<typeof parseLine>>) {
   const text = what.replace(/\s+/g, " ").trim();
-  return `- ${date} · ${command} · ${file}${text ? ` · ${text}` : ""}`;
+  const points = summary.map((p) => p.replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, MAX_SUMMARY_POINTS);
+  return [`- ${date} · ${command} · ${file}${text ? ` · ${text}` : ""}`, ...points.map((p) => `  - ${p}`)].join("\n");
 }
 
 export function MemoryPanel() {
@@ -144,7 +160,8 @@ function WorkLogSection() {
   const [memory, setMemory] = useState<Memory | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [working, setWorking] = useState(false);
-  const [editing, setEditing] = useState<{ line: string; what: string } | null>(null);
+  // `summary` is edited as text, one point per line.
+  const [editing, setEditing] = useState<{ line: string; what: string; summary: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -177,7 +194,7 @@ function WorkLogSection() {
     if (!editing) return;
     const parsed = parseLine(editing.line);
     if (!parsed) return;
-    change("replace", { line: editing.line, replacement: buildLine({ ...parsed, what: editing.what }) });
+    change("replace", { line: editing.line, replacement: buildLine({ ...parsed, what: editing.what, summary: editing.summary.split("\n") }) });
   }
 
   function clearAll() {
@@ -196,16 +213,17 @@ function WorkLogSection() {
       title="Work log"
       description={
         <>
-          One line per change Claude made that was kept, newest first. Claude reads the newest {memory?.sent ?? 60} before
-          every request, including changes that aren&apos;t published or merged yet. Edit a line to correct what it says, or
-          remove one that&apos;s wrong or was undone. Removed lines stay forgotten even if an older branch still has them.
+          One entry per change Claude made that was kept, newest first: what was asked, and Claude&apos;s summary of what it
+          changed. Claude reads the newest {memory?.sent ?? 60} before every request, including changes that aren&apos;t
+          published or merged yet. Edit an entry to correct what it says, or remove one that&apos;s wrong or was undone.
+          Removed entries stay forgotten even if an older branch still has them.
         </>
       }
     >
       <ErrorText error={error} />
       {!memory && !error && <p className="text-sm text-zinc-500">Loading…</p>}
       {memory && lines.length === 0 && (
-        <p className="text-sm text-zinc-500">Nothing yet. Each change Claude makes that you keep adds a line here.</p>
+        <p className="text-sm text-zinc-500">Nothing yet. Each change Claude makes that you keep adds an entry here.</p>
       )}
       {lines.length > 0 && (
         <ol className="divide-y divide-zinc-200 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
@@ -229,7 +247,7 @@ function WorkLogSection() {
                   <div className="mt-1.5 space-y-2">
                     <input
                       value={editing.what}
-                      onChange={(e) => setEditing({ line, what: e.target.value })}
+                      onChange={(e) => setEditing({ ...editing, what: e.target.value })}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") saveEdit();
                         if (e.key === "Escape") setEditing(null);
@@ -237,9 +255,21 @@ function WorkLogSection() {
                       className={inputClass}
                       maxLength={400}
                       disabled={working}
-                      aria-label="What was changed"
+                      aria-label="What was asked"
                       autoFocus
                     />
+                    <label className="block text-xs text-zinc-500">
+                      Summary of what changed, one point per line (up to {MAX_SUMMARY_POINTS})
+                      <textarea
+                        value={editing.summary}
+                        onChange={(e) => setEditing({ ...editing, summary: e.target.value })}
+                        onKeyDown={(e) => e.key === "Escape" && setEditing(null)}
+                        rows={Math.min(6, Math.max(2, editing.summary.split("\n").length + 1))}
+                        className={`${inputClass} mt-1 text-sm`}
+                        maxLength={1100}
+                        disabled={working}
+                      />
+                    </label>
                     <div className="flex gap-2">
                       <Button variant="primary" disabled={working} onClick={saveEdit}>
                         Save
@@ -251,11 +281,23 @@ function WorkLogSection() {
                   </div>
                 ) : (
                   <div className="mt-0.5 flex items-start gap-2">
-                    <p className="min-w-0 flex-1 break-words">
-                      {parsed ? parsed.what || <span className="text-zinc-500">(no instruction)</span> : line.slice(2)}
-                    </p>
+                    <div className="min-w-0 flex-1 break-words">
+                      <p>{parsed ? parsed.what || <span className="text-zinc-500">(no instruction)</span> : line.split("\n")[0].slice(2)}</p>
+                      {(parsed?.summary ?? summaryOf(line)).length > 0 && (
+                        <ul className="mt-1 list-disc space-y-0.5 pl-5 text-zinc-600 dark:text-zinc-400">
+                          {(parsed?.summary ?? summaryOf(line)).map((point, i) => (
+                            <li key={i}>{point}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                     {parsed && (
-                      <Button variant="ghost" className="px-2 py-0.5 text-xs" disabled={disabled} onClick={() => setEditing({ line, what: parsed.what })}>
+                      <Button
+                        variant="ghost"
+                        className="px-2 py-0.5 text-xs"
+                        disabled={disabled}
+                        onClick={() => setEditing({ line, what: parsed.what, summary: parsed.summary.join("\n") })}
+                      >
                         Edit
                       </Button>
                     )}

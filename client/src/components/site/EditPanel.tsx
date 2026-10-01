@@ -12,6 +12,7 @@ import { Button, ErrorText, Field, Notice, Section, inputClass } from "./ui";
 const MAX_IMAGES = 6;
 // The site script's own limit.
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
+const MAX_CSS_FILES = 10;
 
 /**
  * The page modes, "convert" for turning an existing HTML page into a page, and
@@ -293,40 +294,69 @@ function InstructionEditor({ file, onFileChange }: { file: string; onFileChange:
 /** Convert an existing HTML page (from an old site, say) into one of the site's pages. */
 function ConvertEditor({ file, onFileChange }: { file: string; onFileChange: (file: string) => void }) {
   const { owner, repo, overview, busy, run, hasKey, job } = useSite();
-  const [html, setHtml] = useState<HtmlSource | null>(null);
+  const [htmlFile, setHtmlFile] = useState<File | null>(null);
+  const [cssFiles, setCssFiles] = useState<File[]>([]);
+  const [keepStyles, setKeepStyles] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
   const supported = overview?.features.pageConvert ?? true;
+  const stylesSupported = overview?.features.pageConvertStyles ?? true;
+  const styled = keepStyles && stylesSupported;
   const disabled = busy || !hasKey || !supported;
-  const ready = Boolean(file) && Boolean(html);
+  const ready = Boolean(file) && Boolean(htmlFile);
   const previewRunning = job?.command === "page-convert" && job.status === "running";
 
-  async function upload(files: FileList | null) {
+  function pickHtml(files: FileList | null) {
     const picked = files?.[0];
     if (!picked) return;
-    setError(null);
     if (picked.size > MAX_HTML_BYTES) {
       setError(new Error(`${picked.name} is over 2 MB.`));
       return;
     }
+    setError(null);
+    setHtmlFile(picked);
+  }
+
+  function pickCss(files: FileList | null) {
+    const picked = Array.from(files ?? []);
+    const tooBig = picked.find((f) => f.size > MAX_HTML_BYTES);
+    if (tooBig) {
+      setError(new Error(`${tooBig.name} is over 2 MB.`));
+      return;
+    }
+    setError(null);
+    setCssFiles((prev) => [...prev.filter((f) => !picked.some((p) => p.name === f.name)), ...picked].slice(0, MAX_CSS_FILES));
+  }
+
+  // The files are uploaded with every run, so the server always converts what's picked here.
+  async function startConvert(dryRun: boolean) {
+    if (!htmlFile) return;
+    setError(null);
     setUploading(true);
     try {
       const saved = await api<HtmlSource>(workspacePath(owner, repo, "/html-source"), {
         method: "POST",
-        body: { name: picked.name, content: await picked.text() },
+        body: {
+          name: htmlFile.name,
+          content: await htmlFile.text(),
+          css: styled ? await Promise.all(cssFiles.map(async (f) => ({ name: f.name, content: await f.text() }))) : [],
+        },
       });
-      setHtml(saved);
+      void run("page-convert", {
+        page: file,
+        source: saved.source,
+        keepStyles: styled,
+        css: saved.css.map((c) => c.source),
+        instruction,
+        dryRun,
+      });
     } catch (err) {
       setError(err);
     } finally {
       setUploading(false);
     }
-  }
-
-  function startConvert(dryRun: boolean) {
-    if (html) void run("page-convert", { page: file, source: html.source, instruction, dryRun });
   }
 
   return (
@@ -341,7 +371,7 @@ function ConvertEditor({ file, onFileChange }: { file: string; onFileChange: (fi
 
       <Section
         title="Convert an HTML page with Claude"
-        description="Upload an existing HTML page and pick the page it becomes. The old site's header, footer, navigation and sidebars are removed, and the rest is converted to markdown with its wording kept. The page keeps its frontmatter, and its current body is replaced. Preview first: you'll see the complete new file below and can adjust it before applying."
+        description="Upload an existing HTML page and pick the page it becomes. The old site's header, footer, navigation and sidebars are removed. By default the rest is converted to markdown in this site's style, with its wording kept; or keep the old page's own look. The page keeps its frontmatter, and its current body is replaced. Preview first: you'll see the complete new file below and can adjust it before applying."
       >
         <div className="space-y-4">
           <PageSelect value={file} onChange={onFileChange} disabled={disabled} />
@@ -351,51 +381,104 @@ function ConvertEditor({ file, onFileChange }: { file: string; onFileChange: (fi
 
           <div>
             <span className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">HTML file</span>
-            <label
-              className={`mt-1 flex items-center justify-center rounded-md border border-dashed border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 ${disabled || uploading ? "opacity-50" : "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900"}`}
-            >
-              {uploading
-                ? "Uploading…"
-                : html
-                  ? `${html.name} (${Math.ceil(html.bytes / 1024)} KB). Choose another file`
-                  : "Choose an .html file (2 MB max)"}
-              <input
-                type="file"
-                accept=".html,.htm,text/html"
-                className="sr-only"
-                disabled={disabled || uploading}
-                onChange={(e) => {
-                  void upload(e.target.files);
-                  e.target.value = "";
-                }}
-              />
-            </label>
+            <FilePick
+              label={htmlFile ? `${htmlFile.name} (${Math.ceil(htmlFile.size / 1024)} KB). Choose another file` : "Choose an .html file (2 MB max)"}
+              accept=".html,.htm,text/html"
+              disabled={disabled || uploading}
+              onPick={pickHtml}
+            />
             <p className="mt-1 text-xs text-zinc-500">
               It&apos;s kept out of the site&apos;s files and never committed. Images with full URLs, or already in the site, are
               kept. Others are left out and listed, so you can upload them and add them afterwards.
             </p>
-            <div className="mt-1">
-              <ErrorText error={error} />
-            </div>
           </div>
 
-          <Field label="Direction (optional)">
+          <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={keepStyles}
+                onChange={(e) => setKeepStyles(e.target.checked)}
+                disabled={disabled || !stylesSupported}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium">Keep the old page&apos;s styling</span>
+                <span className="block text-xs text-zinc-500">
+                  Copies the page&apos;s HTML as-is instead of converting it to markdown, and saves its CSS (only the rules this
+                  page uses, scoped so they can&apos;t affect the rest of the site) under{" "}
+                  <code className="font-mono">assets/css/imported/</code>. The page then shows its own layout between the
+                  site&apos;s header and footer, without the site&apos;s page heading. Claude only writes the title and description.
+                </span>
+              </span>
+            </label>
+            {!stylesSupported && (
+              <p className="mt-2 text-xs text-zinc-500">
+                This copy&apos;s <code className="font-mono">scripts/edit-page.js</code> can&apos;t keep styles yet. Update it, and
+                add <code className="font-mono">scripts/lib/css-scope.js</code>, from the template.
+              </p>
+            )}
+            {styled && (
+              <div className="mt-3">
+                <span className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                  CSS files the page links (optional, up to {MAX_CSS_FILES})
+                </span>
+                {cssFiles.length > 0 && (
+                  <ul className="mt-1 flex flex-wrap gap-2">
+                    {cssFiles.map((f) => (
+                      <li
+                        key={f.name}
+                        className="flex items-center gap-2 rounded-md border border-zinc-200 px-2 py-1 font-mono text-xs dark:border-zinc-800"
+                      >
+                        {f.name}
+                        <button
+                          type="button"
+                          onClick={() => setCssFiles((prev) => prev.filter((p) => p !== f))}
+                          disabled={disabled || uploading}
+                          aria-label={`Remove ${f.name}`}
+                          className="text-zinc-500 hover:text-foreground"
+                        >
+                          ×
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <FilePick
+                  label="Add .css files"
+                  accept=".css,text/css"
+                  multiple
+                  disabled={disabled || uploading || cssFiles.length >= MAX_CSS_FILES}
+                  onPick={pickCss}
+                />
+                <p className="mt-1 text-xs text-zinc-500">
+                  A saved page usually links its stylesheet rather than including it. Upload those files under the names the
+                  page links them by (e.g. <code className="font-mono">style.css</code>) so they keep their place in the
+                  cascade. The preview lists any linked stylesheet that&apos;s missing.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <ErrorText error={error} />
+
+          <Field label={styled ? "Direction for the title and description (optional)" : "Direction (optional)"}>
             <textarea
               value={instruction}
               onChange={(e) => setInstruction(e.target.value)}
               rows={3}
               maxLength={4000}
-              placeholder="Leave out the 'Latest news' section"
+              placeholder={styled ? "Use 'Our story' as the title" : "Leave out the 'Latest news' section"}
               className={inputClass}
               disabled={disabled}
             />
           </Field>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="primary" disabled={disabled || uploading || !ready} onClick={() => startConvert(true)}>
-              {previewRunning ? "Asking Claude…" : "Preview conversion"}
+            <Button variant="primary" disabled={disabled || uploading || !ready} onClick={() => void startConvert(true)}>
+              {uploading ? "Uploading…" : previewRunning ? "Asking Claude…" : "Preview conversion"}
             </Button>
-            <Button disabled={disabled || uploading || !ready} onClick={() => startConvert(false)}>
+            <Button disabled={disabled || uploading || !ready} onClick={() => void startConvert(false)}>
               Apply without preview
             </Button>
             <span className="text-xs text-zinc-500">Each click is one Claude request, billed to your key.</span>
@@ -403,5 +486,39 @@ function ConvertEditor({ file, onFileChange }: { file: string; onFileChange: (fi
         </div>
       </Section>
     </>
+  );
+}
+
+/** A dashed file-picker button. */
+function FilePick({
+  label,
+  accept,
+  multiple = false,
+  disabled,
+  onPick,
+}: {
+  label: string;
+  accept: string;
+  multiple?: boolean;
+  disabled: boolean;
+  onPick: (files: FileList | null) => void;
+}) {
+  return (
+    <label
+      className={`mt-1 flex items-center justify-center rounded-md border border-dashed border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 ${disabled ? "opacity-50" : "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900"}`}
+    >
+      {label}
+      <input
+        type="file"
+        accept={accept}
+        multiple={multiple}
+        className="sr-only"
+        disabled={disabled}
+        onChange={(e) => {
+          onPick(e.target.files);
+          e.target.value = "";
+        }}
+      />
+    </label>
   );
 }

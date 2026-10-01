@@ -42,10 +42,18 @@ export type Overview = {
    * pageEditImages: the copy's edit-page.js supports --image and --proposal-out.
    * pageGenerate: it supports --generate (turn a hand-written draft into the finished page).
    * pageConvert: it supports --from-html (convert an existing HTML page into a page).
+   * pageConvertStyles: it supports --keep-styles (copy that page as-is with its own CSS).
    * mdEdit: it has scripts/edit-md.js (edit markdown outside content/, listed in markdownFiles).
    * memory: it has scripts/lib/knowledge.js (Claude reads knowledge/notes.md and the work log first).
    */
-  features: { pageEditImages: boolean; pageGenerate: boolean; pageConvert: boolean; mdEdit: boolean; memory: boolean };
+  features: {
+    pageEditImages: boolean;
+    pageGenerate: boolean;
+    pageConvert: boolean;
+    pageConvertStyles: boolean;
+    mdEdit: boolean;
+    memory: boolean;
+  };
   /** Markdown files outside content/ that the "md-edit" command may change. Empty without mdEdit. */
   markdownFiles: string[];
   collections: { name: string; dir: string; label: string; pages: SitePage[] }[];
@@ -129,6 +137,12 @@ export type Proposal = {
   images: string[];
   /** The HTML file a converted page came from (its name), or null. */
   source: string | null;
+  /** Other files applying writes (a converted page's own stylesheet, with --keep-styles). */
+  files: { file: string; content: string }[];
+  /** What an HTML conversion tested before showing this ("attempt 1: …", "pass 2, 1280px wide: …"). */
+  checks: string[];
+  /** Claude's summary of the change, recorded in the work log when it's applied. */
+  summary: string[];
   content: string;
   /** Checks that failed: the script wouldn't have written this version itself. */
   problems: string[];
@@ -138,14 +152,21 @@ export type Proposal = {
 };
 
 /**
- * Claude's memory of earlier work: one line per kept change, oldest first
- * ("- <date> · <command> · <file> · <instruction>"). Only the newest `sent`
- * lines go to Claude. `available` is false for copies whose scripts predate it.
+ * Claude's memory of earlier work: one entry per kept change, oldest first
+ * ("- <date> · <command> · <file> · <instruction>", then any summary points on
+ * their own "  - " lines, all in one string). Only the newest `sent` entries go
+ * to Claude. `available` is false for copies whose scripts predate it.
  */
 export type Memory = { available: boolean; lines: string[]; sent: number };
 
 /** An uploaded HTML page, saved inside .git for the "page-convert" command. */
-export type HtmlSource = { source: string; name: string; bytes: number };
+export type HtmlSource = {
+  source: string;
+  name: string;
+  bytes: number;
+  /** The stylesheets uploaded with it, for keeping its styles. */
+  css: { source: string; name: string; bytes: number }[];
+};
 
 /** A page's markdown; `version` must come back with a save. */
 export type PageSource = { file: string; content: string; version: string };

@@ -157,6 +157,15 @@ pm2 -v
 
 `git` is required at runtime too: the site manager uses it to clone and push users' sites.
 
+Optional: install Chromium as well, so HTML conversions that keep the old page's styling can test themselves. The copy is rendered next to the original at three widths before the preview is shown, and the preview lists the result.
+
+```bash
+sudo apt install -y chromium-browser   # or: sudo snap install chromium
+which chromium-browser chromium        # found on PATH automatically
+```
+
+If the browser lives somewhere else, set `CHROME_PATH=/path/to/chrome` in `server/.env`. Without a browser, conversions still work, and the preview says the render check was skipped. This needs Node 22 or newer, which step 6 installs.
+
 ## 7. Install MongoDB 8.0
 
 ```bash

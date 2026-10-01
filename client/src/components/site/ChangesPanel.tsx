@@ -104,7 +104,7 @@ export function ChangesPanel() {
         {files?.length === 0 && <p className="text-sm text-zinc-500">No changes.</p>}
         {files && files.length > 0 && (
           <>
-            <ul className="space-y-2">
+            <ul className="space-y-2 overflow-y-auto max-h-96">
               {files.map((file) => (
                 <li key={file.path} className="rounded-md border border-zinc-200 dark:border-zinc-800">
                   <details>

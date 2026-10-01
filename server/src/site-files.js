@@ -158,6 +158,7 @@ export async function getOverview(key) {
       pageEditImages: editScript.includes("--proposal-out"),
       pageGenerate: editScript.includes("--generate"),
       pageConvert: editScript.includes("--from-html"),
+      pageConvertStyles: editScript.includes("--keep-styles"),
       mdEdit,
       // Copies made before knowledge/ existed have no notes or work log for Claude.
       memory: existsSync(path.join(dir, KNOWLEDGE_SCRIPT)),
@@ -291,6 +292,18 @@ function proposalAllowed(mode, file) {
   return mode === "markdown" ? isEditableMarkdown(file) : MARKDOWN_PAGE.test(file) && !file.split("/").includes("..");
 }
 
+// The only other file a proposal may write: a converted page's own stylesheet (--keep-styles).
+const IMPORTED_CSS = /^assets\/css\/imported\/[a-z0-9-]+\.css$/;
+const MAX_EXTRA_BYTES = 1024 * 1024;
+
+function proposalFiles(mode, files) {
+  if (mode !== "convert" || !Array.isArray(files)) return [];
+  return files
+    .filter((f) => typeof f?.file === "string" && typeof f.content === "string" && IMPORTED_CSS.test(f.file))
+    .filter((f) => Buffer.byteLength(f.content) <= MAX_EXTRA_BYTES)
+    .map((f) => ({ file: f.file, content: f.content }));
+}
+
 /** The pending proposal with the file's current text as `original` (null if it's gone), or null. */
 export async function readProposal(key) {
   const text = await readText(path.join(workspaceDir(key), PROPOSAL_FILE));
@@ -311,6 +324,12 @@ export async function readProposal(key) {
       images: Array.isArray(proposal.images) ? proposal.images.map(String) : [],
       // A converted page's HTML file, by name only (it's kept inside .git).
       source: typeof proposal.source === "string" ? path.posix.basename(proposal.source) : null,
+      // Written alongside the page when it's applied (a converted page's stylesheet).
+      files: proposalFiles(mode, proposal.files),
+      // What a conversion tested before showing this: Claude's attempts, content and render passes.
+      checks: Array.isArray(proposal.checks) ? proposal.checks.map(String).slice(0, 20) : [],
+      // The work-log summary Claude wrote for this change, recorded when it's applied.
+      summary: cleanSummary(proposal.summary),
       content: proposal.content,
       problems: Array.isArray(proposal.problems) ? proposal.problems.map(String) : [],
       warnings: Array.isArray(proposal.warnings) ? proposal.warnings.map(String) : [],
@@ -343,17 +362,58 @@ const LOG_KEEP = 30;
 const MAX_INSTRUCTION_CHARS = 160;
 const WORK_LOG_HEADER = `# Work log
 
-Written automatically: one line per change Claude made to this site that was kept, oldest first. Claude reads this before every request so new work stays consistent with earlier work. Older lines move to knowledge/archive/. Standing decisions belong in knowledge/notes.md, not here.
+Written automatically: one entry per change Claude made to this site that was kept, oldest first, with a short summary of what changed. Claude reads this before every request so new work stays consistent with earlier work. Older entries move to knowledge/archive/. Standing decisions belong in knowledge/notes.md, not here.
 `;
 
-// A run's new lines are written by the copy's own script, so only well-formed
-// ones are kept, and only so many per run.
+// An entry is its line ("- <date> · <command> · <file> · <instruction>") and
+// the summary points under it ("  - Added a team section"), kept as one string
+// everywhere: in the database, the memory tab and the committed file. Entries
+// from before summaries are just the line. A run's new entries are written by
+// the copy's own script, so only well-formed ones are kept, and only so many
+// per run. The summary limits match the template's scripts/lib/knowledge.js.
 const MAX_LINES_PER_RUN = 100;
 const MAX_LINE_CHARS = 600;
+const MAX_SUMMARY_LINES = 5;
+const MAX_SUMMARY_CHARS = 200;
 const WELL_FORMED = /^- \d{4}-\d{2}-\d{2} · \S/;
 
 const isEntry = (line) => line.startsWith("- ");
-const entriesOf = (text) => (text ?? "").replace(/\r\n/g, "\n").split("\n").filter(isEntry);
+const isSummaryLine = (line) => /^ {2}- \S/.test(line);
+
+/** The log's lines grouped into entries (a "- " line with its "  - " points) and other lines, in order. */
+function segmentsOf(text) {
+  const out = [];
+  for (const line of (text ?? "").replace(/\r\n/g, "\n").split("\n")) {
+    const last = out.at(-1);
+    if (isEntry(line)) out.push({ entry: line });
+    else if (isSummaryLine(line) && last?.entry !== undefined) last.entry += `\n${line}`;
+    else out.push({ line });
+  }
+  return out;
+}
+const entriesOf = (text) => segmentsOf(text).filter((s) => s.entry !== undefined).map((s) => s.entry);
+const joinSegments = (list) => list.map((s) => s.entry ?? s.line).join("\n");
+
+/** A written entry: a well-formed line, then at most MAX_SUMMARY_LINES short points. */
+function isWellFormedEntry(entry) {
+  const [line, ...points] = entry.split("\n");
+  return (
+    WELL_FORMED.test(line) &&
+    line.length <= MAX_LINE_CHARS &&
+    points.length <= MAX_SUMMARY_LINES &&
+    points.every((p) => isSummaryLine(p) && p.length <= MAX_SUMMARY_CHARS + 4)
+  );
+}
+
+/** Summary points as they're written: single lines, trimmed and capped. */
+function cleanSummary(points) {
+  return (Array.isArray(points) ? points : [])
+    .map((p) => String(p ?? "").replace(/^\s*[-*•]\s*/, "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .map((p) => (p.length > MAX_SUMMARY_CHARS ? `${p.slice(0, MAX_SUMMARY_CHARS - 1).trimEnd()}…` : p))
+    .slice(0, MAX_SUMMARY_LINES);
+}
+
 // Written entries start "- YYYY-MM-DD"; a hand-written line without a date sorts first.
 const entryDate = (line) => (WELL_FORMED.test(line) ? line.slice(2, 12) : "");
 
@@ -417,14 +477,14 @@ export async function readMemory(key) {
   return { available: true, lines: await mergedWorkLog(dir, await siteIdFor(key), MEMORY_LIST_LIMIT), sent: LOG_ROTATE_AT };
 }
 
-/** Applies `change` to the entry lines of the committed log, if there is one; the rest of the file stays as it is. */
+/** Applies `change` to the entries of the committed log (with their summaries), if there is one; the rest of the file stays as it is. */
 async function rewriteCommittedWorkLog(dir, change) {
   const logPath = path.join(dir, WORK_LOG);
   const text = await readText(logPath);
   if (text === null) return;
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  const next = lines.flatMap((line) => (isEntry(line) ? change(line) : [line]));
-  if (next.join("\n") !== lines.join("\n")) await fs.writeFile(logPath, next.join("\n"));
+  const parts = segmentsOf(text);
+  const next = parts.flatMap((s) => (s.entry !== undefined ? change(s.entry).map((entry) => ({ entry })) : [s]));
+  if (joinSegments(next) !== joinSegments(parts)) await fs.writeFile(logPath, joinSegments(next));
 }
 
 /** Runs a memory change under the workspace lock and returns the updated memory. */
@@ -440,28 +500,35 @@ async function changeMemory(key, label, fn) {
   return readMemory(key);
 }
 
+// An entry as the memory tab sends it: its line, plus summary points.
+const MAX_ENTRY_CHARS = MAX_LINE_CHARS + MAX_SUMMARY_LINES * (MAX_SUMMARY_CHARS + 5);
+
 function memoryLine(value, label) {
-  if (typeof value !== "string" || !value || value.length > MAX_LINE_CHARS || /[\r\n]/.test(value)) {
-    throw new WorkspaceError(`${label} must be one line of at most ${MAX_LINE_CHARS} characters.`, 400);
+  if (typeof value !== "string" || !value || value.length > MAX_ENTRY_CHARS || /\r/.test(value)) {
+    throw new WorkspaceError(`${label} must be a work-log entry of at most ${MAX_ENTRY_CHARS} characters.`, 400);
   }
   return value;
 }
 
-/** Removes one line from the memory. */
+/** Removes one entry (with its summary) from the memory. */
 export async function forgetMemoryLine(key, line) {
-  const target = memoryLine(line, "The line");
+  const target = memoryLine(line, "The entry");
   return changeMemory(key, "removing a memory line", async (dir, siteId) => {
     await forgetWorkLogLines(siteId, [target]);
     await rewriteCommittedWorkLog(dir, (entry) => (entry === target ? [] : [entry]));
   });
 }
 
-/** Rewrites one line of the memory in place. */
+/** Rewrites one entry of the memory in place: its line, its summary or both. */
 export async function replaceMemoryLine(key, line, replacement) {
-  const target = memoryLine(line, "The line");
-  const next = memoryLine(replacement, "The new line").trim();
-  if (!WELL_FORMED.test(next)) {
-    throw new WorkspaceError('A memory line must start with "- YYYY-MM-DD · ".', 400);
+  const target = memoryLine(line, "The entry");
+  const [head, ...points] = memoryLine(replacement, "The new entry").trim().split("\n");
+  const next = [head.trim(), ...cleanSummary(points).map((p) => `  - ${p}`)].join("\n");
+  if (!WELL_FORMED.test(next) || head.trim().length > MAX_LINE_CHARS) {
+    throw new WorkspaceError(`A memory entry must start with "- YYYY-MM-DD · ", on one line of at most ${MAX_LINE_CHARS} characters.`, 400);
+  }
+  if (points.filter((p) => p.trim()).length > MAX_SUMMARY_LINES) {
+    throw new WorkspaceError(`A summary has at most ${MAX_SUMMARY_LINES} points.`, 400);
   }
   return changeMemory(key, "editing a memory line", async (dir, siteId) => {
     if (!(await mergedWorkLog(dir, siteId, MEMORY_LIST_LIMIT)).includes(target)) {
@@ -490,7 +557,7 @@ export async function collectWorkLog(key, prepared) {
   try {
     const lines = entriesOf(await readText(path.join(workspaceDir(key), WORK_LOG_FOR_RUN)))
       .slice(prepared.count)
-      .filter((line) => WELL_FORMED.test(line) && line.length <= MAX_LINE_CHARS)
+      .filter(isWellFormedEntry)
       .slice(0, MAX_LINES_PER_RUN);
     await addWorkLogLines(prepared.siteId, lines);
   } catch (err) {
@@ -498,35 +565,36 @@ export async function collectWorkLog(key, prepared) {
   }
 }
 
-/** One log line: "- <date> · <command> · <file> · <instruction>". */
-function workLogEntry({ command, file, instruction }) {
+/** One log entry: "- <date> · <command> · <file> · <instruction>", then its summary points indented. */
+function workLogEntry({ command, file, instruction, summary }) {
   let what = String(instruction || "").replace(/\s+/g, " ").trim();
   if (what.length > MAX_INSTRUCTION_CHARS) what = `${what.slice(0, MAX_INSTRUCTION_CHARS - 1).trimEnd()}…`;
-  return `- ${new Date().toISOString().slice(0, 10)} · ${command} · ${file}${what ? ` · ${what}` : ""}`;
+  const line = `- ${new Date().toISOString().slice(0, 10)} · ${command} · ${file}${what ? ` · ${what}` : ""}`;
+  return [line, ...cleanSummary(summary).map((p) => `  - ${p}`)].join("\n");
 }
 
-/** Appends a line to the copy's committed log, rotating it like knowledge.js does. Never throws. */
+/** Appends an entry to the copy's committed log, rotating it like knowledge.js does (whole entries). Never throws. */
 async function appendCommittedWorkLog(dir, entry) {
   try {
     const logPath = path.join(dir, WORK_LOG);
     const existing = (await readText(logPath))?.replace(/\r\n/g, "\n");
     const text = existing ? existing.replace(/\n*$/, "\n") : `${WORK_LOG_HEADER}\n`;
     await fs.mkdir(path.dirname(logPath), { recursive: true });
-    const lines = `${text}${entry}\n`.split("\n");
+    const parts = segmentsOf(`${text}${entry}\n`);
 
-    const entries = lines.filter(isEntry);
+    const entries = parts.filter((s) => s.entry !== undefined).map((s) => s.entry);
     if (entries.length <= LOG_ROTATE_AT) {
-      await fs.writeFile(logPath, lines.join("\n"));
+      await fs.writeFile(logPath, joinSegments(parts));
       return;
     }
     // The oldest entries move to the archive, which is never sent to Claude.
     const moving = entries.length - LOG_KEEP;
     const archivePath = path.join(dir, WORK_LOG_ARCHIVE, `work-log-${entryDate(entry)}.md`);
-    const archive = (await readText(archivePath)) ?? "# Work log archive\n\nOlder lines from knowledge/work-log.md. Not sent to Claude.\n";
+    const archive = (await readText(archivePath)) ?? "# Work log archive\n\nOlder entries from knowledge/work-log.md. Not sent to Claude.\n";
     await fs.mkdir(path.dirname(archivePath), { recursive: true });
     await fs.writeFile(archivePath, `${archive.replace(/\n*$/, "\n")}${entries.slice(0, moving).join("\n")}\n`);
     let seen = 0;
-    await fs.writeFile(logPath, lines.filter((line) => !(isEntry(line) && seen++ < moving)).join("\n").replace(/\n*$/, "\n"));
+    await fs.writeFile(logPath, joinSegments(parts.filter((s) => !(s.entry !== undefined && seen++ < moving))).replace(/\n*$/, "\n"));
   } catch (err) {
     console.error(`Couldn't update ${WORK_LOG}: ${err.message}`);
   }
@@ -560,19 +628,25 @@ export async function applyProposal(key, content) {
     const dir = workspaceDir(key);
     const target = inside(dir, proposal.file);
     if (!existsSync(target)) throw new WorkspaceError(`${proposal.file} no longer exists.`, 409);
+    for (const extra of proposal.files) {
+      const file = inside(dir, extra.file);
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, extra.content);
+    }
     const normalised = content.replace(/\r\n/g, "\n");
     await fs.writeFile(target, normalised.endsWith("\n") ? normalised : `${normalised}\n`);
     await clearProposal(key);
     const defaultInstruction = {
       generate: "turned the draft into the finished page",
-      convert: `converted ${proposal.source ?? "an HTML page"} into the page`,
+      convert: `converted ${proposal.source ?? "an HTML page"} into the page${proposal.files.length ? ", keeping its styles" : ""}`,
     };
     await logAppliedChange(key, {
       command: { generate: "page:generate", convert: "page:convert", markdown: "md:edit" }[proposal.mode] ?? "page:edit",
       file: proposal.file,
       instruction: proposal.instruction || (defaultInstruction[proposal.mode] ?? ""),
+      summary: proposal.summary,
     });
-    return { file: proposal.file };
+    return { file: proposal.file, files: proposal.files.map((f) => f.file) };
   } finally {
     release();
   }
@@ -680,42 +754,68 @@ export async function saveUpload(key, { name, data }) {
 /* ------------------------------------------------------------ HTML pages */
 
 // An existing HTML page for Claude to convert into a page (edit-page.js
-// --from-html). It's kept inside .git, so it's never a change or committed,
-// and only the latest upload is kept.
+// --from-html), plus the stylesheets it links (--css, for --keep-styles). They
+// are kept inside .git, so they're never a change or committed, and only the
+// latest upload is kept.
 const HTML_SOURCE_DIR = ".git/twinstack-html";
 export const HTML_SOURCE_PATH = /^\.git\/twinstack-html\/[a-z0-9-]+\.html$/;
-// The site script's own limit.
+// Dots are kept: the site script matches each one to a <link href> by file name.
+export const CSS_SOURCE_PATH = /^\.git\/twinstack-html\/css\/[a-z0-9][a-z0-9._-]*\.css$/;
+// The site script's own limit, per file.
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
+const MAX_CSS_FILES = 10;
+const MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
 
-export async function saveHtmlSource(key, { name, content }) {
+const safeName = (name, fallback, keep) =>
+  String(name ?? "")
+    .replace(/\.[^.]*$/, "")
+    .toLowerCase()
+    .replace(keep, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 60) || fallback;
+
+export async function saveHtmlSource(key, { name, content, css = [] }) {
   if (typeof content !== "string" || !content.trim()) throw new WorkspaceError("No HTML received.", 400);
   if (Buffer.byteLength(content) > MAX_HTML_BYTES) throw new WorkspaceError("HTML files must be 2 MB or smaller.", 400);
   if (content.includes("\0") || !/<\s*(html|body|main|article|section|div|p|h[1-6]|table|ul|ol)\b/i.test(content)) {
     throw new WorkspaceError("That doesn't look like an HTML page.", 400);
   }
-  const base =
-    String(name ?? "")
-      .replace(/\.[^.]*$/, "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || "page";
+  if (!Array.isArray(css) || css.length > MAX_CSS_FILES) throw new WorkspaceError(`Add at most ${MAX_CSS_FILES} CSS files.`, 400);
+  let total = Buffer.byteLength(content);
+  for (const sheet of css) {
+    if (typeof sheet?.content !== "string" || sheet.content.includes("\0")) throw new WorkspaceError("A CSS file couldn't be read.", 400);
+    const bytes = Buffer.byteLength(sheet.content);
+    if (bytes > MAX_HTML_BYTES) throw new WorkspaceError(`${String(sheet.name ?? "A CSS file")} is over 2 MB.`, 400);
+    total += bytes;
+  }
+  if (total > MAX_UPLOAD_BYTES) throw new WorkspaceError("The HTML and CSS files together must be 6 MB or smaller.", 400);
 
   const release = acquire(key, "saving an HTML page");
   try {
     const dir = path.join(workspaceDir(key), HTML_SOURCE_DIR);
     await fs.rm(dir, { recursive: true, force: true });
-    await fs.mkdir(dir, { recursive: true });
+    await fs.mkdir(path.join(dir, "css"), { recursive: true });
+    const base = safeName(name, "page", /[^a-z0-9]+/g);
     const source = `${HTML_SOURCE_DIR}/${base}.html`;
     await fs.writeFile(path.join(workspaceDir(key), source), content);
-    return { source, name: `${base}.html`, bytes: Buffer.byteLength(content) };
+
+    const sheets = [];
+    for (const sheet of css) {
+      const stem = safeName(sheet.name, "styles", /[^a-z0-9.]+/g);
+      let file = `${stem}.css`;
+      for (let n = 2; sheets.some((s) => s.name === file); n++) file = `${stem}-${n}.css`;
+      await fs.writeFile(path.join(dir, "css", file), sheet.content);
+      sheets.push({ source: `${HTML_SOURCE_DIR}/css/${file}`, name: file, bytes: Buffer.byteLength(sheet.content) });
+    }
+    return { source, name: `${base}.html`, bytes: Buffer.byteLength(content), css: sheets };
   } finally {
     release();
   }
 }
 
 export function htmlSourceExists(key, source) {
-  return HTML_SOURCE_PATH.test(source) && existsSync(path.join(workspaceDir(key), source));
+  const ok = HTML_SOURCE_PATH.test(source) || CSS_SOURCE_PATH.test(source);
+  return ok && !source.split("/").includes("..") && existsSync(path.join(workspaceDir(key), source));
 }
 
 /** For thumbnails in the UI: an image under assets/img/ with its content type. */

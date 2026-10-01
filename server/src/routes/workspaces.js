@@ -426,8 +426,8 @@ workspacesRouter.post(
 
 workspacesRouter.post(
   "/:owner/:repo/html-source",
-  // JSON escaping can nearly double a 2 MB page.
-  express.json({ limit: "4mb" }),
+  // Up to 6 MB of HTML and CSS, and JSON escaping adds to it.
+  express.json({ limit: "8mb" }),
   handle(async (req, res) => res.status(201).json(await saveHtmlSource(keyFor(req), req.body ?? {}))),
 );
 

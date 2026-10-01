@@ -16,8 +16,8 @@ const app = express();
 
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
-// Default 100kb JSON bodies everywhere except image uploads (up to 8mb) and
-// HTML pages to convert (up to 4mb), which parse their own.
+// Default 100kb JSON bodies everywhere except image uploads and HTML pages to
+// convert (with their CSS), which parse their own (up to 8mb).
 const json = express.json();
 const UPLOAD_PATH = /^\/api\/workspaces\/[^/]+\/[^/]+\/(uploads|html-source)$/;
 app.use((req, res, next) => (UPLOAD_PATH.test(req.path) ? next() : json(req, res, next)));

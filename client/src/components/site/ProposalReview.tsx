@@ -21,7 +21,7 @@ export function ProposalReview() {
   const loadedAt = useRef<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [applied, setApplied] = useState<{ file: string; page: boolean } | null>(null);
+  const [applied, setApplied] = useState<{ file: string; files: string[]; page: boolean } | null>(null);
 
   // After every command re-read the proposal. The text is only replaced when a new proposal arrives.
   useEffect(() => {
@@ -48,12 +48,12 @@ export function ProposalReview() {
     setApplying(true);
     setError(null);
     try {
-      const result = await api<{ file: string; status: WorkspaceStatus }>(workspacePath(owner, repo, "/proposal/apply"), {
-        method: "POST",
-        body: { content: draft },
-      });
+      const result = await api<{ file: string; files?: string[]; status: WorkspaceStatus }>(
+        workspacePath(owner, repo, "/proposal/apply"),
+        { method: "POST", body: { content: draft } },
+      );
       setStatus(result.status);
-      setApplied({ file: result.file, page: proposal.mode !== "markdown" });
+      setApplied({ file: result.file, files: result.files ?? [], page: proposal.mode !== "markdown" });
       setProposal(null);
       loadedAt.current = null;
       await refresh();
@@ -84,7 +84,14 @@ export function ProposalReview() {
     <>
       {applied && (
         <Notice tone="success">
-          Saved <code className="font-mono">{applied.file}</code>.{" "}
+          Saved <code className="font-mono">{applied.file}</code>
+          {applied.files.map((f) => (
+            <span key={f}>
+              {" "}
+              and <code className="font-mono">{f}</code>
+            </span>
+          ))}
+          .{" "}
           {applied.page ? "Build a preview to see it, or review it on the Changes tab." : "Review it on the Changes tab."}
         </Notice>
       )}
@@ -124,6 +131,35 @@ export function ProposalReview() {
               <p className="break-all text-sm">
                 <span className="text-zinc-500">Images:</span> {proposal.images.join(", ")}
               </p>
+            )}
+            {proposal.files.map((extra) => (
+              <details key={extra.file} className="rounded-md border border-zinc-200 p-2 text-sm dark:border-zinc-800">
+                <summary className="cursor-pointer">
+                  Also writes <code className="font-mono">{extra.file}</code> ({Math.ceil(extra.content.length / 1024)} KB): the old
+                  page&apos;s CSS, scoped to this page
+                </summary>
+                <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">{extra.content}</pre>
+              </details>
+            ))}
+            {proposal.checks?.length > 0 && (
+              <div className="rounded-md border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+                <span className="font-medium">Tested before showing you this:</span>
+                <ul className="mt-1 list-disc pl-5 text-zinc-600 dark:text-zinc-400">
+                  {proposal.checks.map((check) => (
+                    <li key={check}>{check}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {proposal.summary?.length > 0 && (
+              <div className="text-sm">
+                <span className="text-zinc-500">Work-log summary, saved with the change when you apply it:</span>
+                <ul className="mt-1 list-disc pl-5">
+                  {proposal.summary.map((point) => (
+                    <li key={point}>{point}</li>
+                  ))}
+                </ul>
+              </div>
             )}
             {proposal.problems.length > 0 && (
               <Notice tone="warning">
