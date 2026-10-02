@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { isHomePage } from "@/lib/site-api";
 import { useSite } from "./site-context";
 import { Badge, Button, Field, Section, inputClass } from "./ui";
 
@@ -87,6 +88,7 @@ export function PagesPanel() {
                   {collection.pages.map((page) => (
                     <li key={page.file} className="flex flex-wrap items-center gap-2 px-3 py-2">
                       <span className="text-sm font-medium">{page.title}</span>
+                      {isHomePage(page) && <Badge>Homepage · index.html</Badge>}
                       {page.draft && <Badge>Draft</Badge>}
                       <span className="font-mono text-xs text-zinc-500">{page.file}</span>
                       <span className="ml-auto flex gap-1">

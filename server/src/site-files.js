@@ -133,6 +133,8 @@ export async function getOverview(key) {
         file: `${collection.dir}/${file}`,
         slug: fields.slug || path.basename(file, ".md").replace(/^\d{4}-\d{2}-\d{2}-/, ""),
         title: fields.title || file,
+        // Set when the page chooses its own address; "/" is the homepage (index.html in the site tree).
+        url: fields.url || null,
         draft: fields.draft === "true",
         date: fields.date || null,
       });
@@ -305,11 +307,28 @@ const IMPORTED_JS = /^assets\/js\/imported\/[a-z0-9-]+\/[a-z0-9][a-z0-9._-]*\.m?
 const GLOBAL_CSS = /^styles\/global\/[\w./-]+\.css$/;
 const MAX_EXTRA_BYTES = 2 * 1024 * 1024;
 
+// An edit of a page that shows shared data (the homepage's sections in content/data/home.json)
+// may change those data files too.
+const DATA_JSON = /^content\/data\/[\w-]+\.json$/;
+const validJson = (text) => {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 function proposalFiles(mode, files) {
-  if (mode !== "convert" || !Array.isArray(files)) return [];
-  const allowed = (file) => IMPORTED_CSS.test(file) || IMPORTED_JS.test(file) || (GLOBAL_CSS.test(file) && !file.split("/").some((seg) => seg === ".." || seg === "."));
+  if (!Array.isArray(files)) return [];
+  const allowed =
+    mode === "convert"
+      ? (f) => IMPORTED_CSS.test(f.file) || IMPORTED_JS.test(f.file) || (GLOBAL_CSS.test(f.file) && !f.file.split("/").some((seg) => seg === ".." || seg === "."))
+      : mode === "edit"
+        ? (f) => DATA_JSON.test(f.file) && validJson(f.content)
+        : () => false;
   return files
-    .filter((f) => typeof f?.file === "string" && typeof f.content === "string" && allowed(f.file))
+    .filter((f) => typeof f?.file === "string" && typeof f.content === "string" && allowed(f))
     .filter((f) => Buffer.byteLength(f.content) <= MAX_EXTRA_BYTES)
     .map((f) => ({ file: f.file, content: f.content }));
 }
@@ -351,7 +370,10 @@ export async function readProposal(key) {
       // A converted page's HTML file, by name only (it's kept inside .git).
       source: typeof proposal.source === "string" ? path.posix.basename(proposal.source) : null,
       // Written alongside the page when it's applied (a converted page's stylesheet).
-      files: proposalFiles(mode, proposal.files),
+      // Each with its current text (null for a new file), so the review can show what changes.
+      files: await Promise.all(
+        proposalFiles(mode, proposal.files).map(async (f) => ({ ...f, original: await readText(inside(workspaceDir(key), f.file)) })),
+      ),
       // What a conversion tested before showing this: Claude's attempts, content and render passes.
       checks: Array.isArray(proposal.checks) ? proposal.checks.map(String).slice(0, 20) : [],
       // The work-log summary Claude wrote for this change, recorded when it's applied.

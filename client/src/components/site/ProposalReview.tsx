@@ -14,6 +14,14 @@ export const CLAUDE_PAGE_COMMANDS = ["page-edit", "page-generate", "page-convert
  * proposed file, which the user can adjust and then apply without calling
  * Claude again.
  */
+/** What an extra file in a proposal is, for its heading in the review. */
+function extraFileRole(file: string) {
+  if (file.startsWith("content/data/")) return "data the page shows, which other pages may show too";
+  if (file.startsWith("assets/js/imported/")) return "one of the page's own scripts";
+  if (file.startsWith("styles/global/")) return "a global stylesheet from the site tree, replaced by your upload";
+  return "the old page's CSS, scoped to this page";
+}
+
 export function ProposalReview() {
   const { owner, repo, busy, version, job, setStatus, refresh } = useSite();
   const [proposal, setProposal] = useState<Proposal | null>(null);
@@ -133,12 +141,22 @@ export function ProposalReview() {
               </p>
             )}
             {proposal.files.map((extra) => (
-              <details key={extra.file} className="rounded-md border border-zinc-200 p-2 text-sm dark:border-zinc-800">
+              <details
+                key={extra.file}
+                open={extra.file.startsWith("content/data/")}
+                className="rounded-md border border-zinc-200 p-2 text-sm dark:border-zinc-800"
+              >
                 <summary className="cursor-pointer">
-                  Also writes <code className="font-mono">{extra.file}</code> ({Math.ceil(extra.content.length / 1024)} KB): the old
-                  page&apos;s CSS, scoped to this page
+                  Also writes <code className="font-mono">{extra.file}</code> ({Math.ceil(extra.content.length / 1024)} KB):{" "}
+                  {extraFileRole(extra.file)}
                 </summary>
-                <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">{extra.content}</pre>
+                {extra.file.startsWith("content/data/") && extra.original != null ? (
+                  <div className="mt-2">
+                    <LiveDiff before={extra.original} after={extra.content} label={`Changes to ${extra.file}`} />
+                  </div>
+                ) : (
+                  <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">{extra.content}</pre>
+                )}
               </details>
             ))}
             {proposal.checks?.length > 0 && (

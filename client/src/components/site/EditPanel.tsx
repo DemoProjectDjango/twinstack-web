@@ -24,7 +24,7 @@ const MODES: { id: PanelMode; label: string }[] = [
   { id: "generate", label: "Write & generate" },
   { id: "edit", label: "Edit by instruction" },
   { id: "convert", label: "Convert HTML" },
-  { id: "markdown", label: "Other markdown" },
+  // { id: "markdown", label: "Other markdown" },
 ];
 
 export function EditPanel({ initialFile, initialMode }: { initialFile: string | null; initialMode: EditMode | null }) {

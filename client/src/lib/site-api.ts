@@ -34,7 +34,11 @@ export type Job = {
   next: number;
 };
 
-export type SitePage = { file: string; slug: string; title: string; draft: boolean; date: string | null };
+/** `url` is set when the page's frontmatter chooses its address: "/" is the homepage. Older servers send none. */
+export type SitePage = { file: string; slug: string; title: string; url?: string | null; draft: boolean; date: string | null };
+
+/** The homepage: the page at "/" (index.html in the site tree, content/pages/home.md when scaffolded). */
+export const isHomePage = (page: SitePage) => page.url === "/" || (page.url == null && page.file === "content/pages/home.md");
 
 /** A stylesheet the Styles tab can edit. A declared global stylesheet may not exist yet. */
 export type CssFile = { file: string; kind: "site" | "global" | "imported"; declared: boolean; exists: boolean };
@@ -147,8 +151,12 @@ export type Proposal = {
   images: string[];
   /** The HTML file a converted page came from (its name), or null. */
   source: string | null;
-  /** Other files applying writes (a converted page's own stylesheet, with --keep-styles). */
-  files: { file: string; content: string }[];
+  /**
+   * Other files applying writes: a converted page's own stylesheet and scripts, or the shared data
+   * files (content/data/*.json) an edit of a page like the homepage changes. `original` is the file's
+   * current text, null if it doesn't exist yet (older servers send none).
+   */
+  files: { file: string; content: string; original?: string | null }[];
   /** What an HTML conversion tested before showing this ("attempt 1: …", "pass 2, 1280px wide: …"). */
   checks: string[];
   /** Claude's summary of the change, recorded in the work log when it's applied. */

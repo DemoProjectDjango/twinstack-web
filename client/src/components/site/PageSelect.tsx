@@ -1,25 +1,34 @@
 "use client";
 
+import { isHomePage } from "@/lib/site-api";
 import { useSite } from "./site-context";
 import { Field, inputClass } from "./ui";
 
-/** Every markdown page in the site, grouped by collection. */
+/** Every markdown page in the site, grouped by collection, with the homepage first. */
 export function PageSelect({ value, onChange, disabled }: { value: string; onChange: (file: string) => void; disabled: boolean }) {
   const { overview } = useSite();
   const collections = overview?.collections.filter((c) => c.pages.length) ?? [];
+  const home = collections.flatMap((c) => c.pages).find(isHomePage);
 
   return (
     <>
       <Field label="Page">
         <select value={value} onChange={(e) => onChange(e.target.value)} className={inputClass} disabled={disabled}>
           <option value="">Choose a page…</option>
+          {home && (
+            <option value={home.file}>
+              Homepage (index.html) — {home.file}
+            </option>
+          )}
           {collections.map((collection) => (
             <optgroup key={collection.name} label={collection.label}>
-              {collection.pages.map((page) => (
-                <option key={page.file} value={page.file}>
-                  {page.title} — {page.file}
-                </option>
-              ))}
+              {collection.pages
+                .filter((page) => page !== home)
+                .map((page) => (
+                  <option key={page.file} value={page.file}>
+                    {page.title} — {page.file}
+                  </option>
+                ))}
             </optgroup>
           ))}
         </select>
