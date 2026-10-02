@@ -19,7 +19,7 @@ app.set("trust proxy", 1);
 // Default 100kb JSON bodies everywhere except image uploads, HTML pages to
 // convert (with their CSS) and saved stylesheets, which parse their own.
 const json = express.json();
-const UPLOAD_PATH = /^\/api\/workspaces\/[^/]+\/[^/]+\/(uploads|html-source|css\/source)$/;
+const UPLOAD_PATH = /^\/api\/workspaces\/[^/]+\/[^/]+\/(uploads|html-source|css\/source|brand\/image)$/;
 app.use((req, res, next) => (UPLOAD_PATH.test(req.path) ? next() : json(req, res, next)));
 app.use(cookieParser());
 

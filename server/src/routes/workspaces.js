@@ -47,6 +47,7 @@ import {
   writeSchedule,
 } from "../site-files.js";
 import { getStaticInfo, saveStaticInfo } from "../static-info.js";
+import { getBrand, saveBrand, saveBrandImage } from "../brand.js";
 import {
   WorkspaceError,
   acquire,
@@ -456,6 +457,29 @@ workspacesRouter.post(
   // Up to 6 MB of HTML and CSS, and JSON escaping adds to it.
   express.json({ limit: "8mb" }),
   handle(async (req, res) => res.status(201).json(await saveHtmlSource(keyFor(req), req.body ?? {}))),
+);
+
+/* The site's logo, favicon and name (site.config.json → brand), with uploads to assets/img/brand/. */
+
+workspacesRouter.get(
+  "/:owner/:repo/brand",
+  handle(async (req, res) => res.json(await getBrand(keyFor(req)))),
+);
+
+workspacesRouter.put(
+  "/:owner/:repo/brand",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const brand = await saveBrand(key, req.body?.brand);
+    res.json({ ...brand, status: await getStatus(key) });
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/brand/image",
+  // Logos up to 2 MB, and base64 adds a third.
+  express.json({ limit: "3mb" }),
+  handle(async (req, res) => res.status(201).json(await saveBrandImage(keyFor(req), req.body ?? {}))),
 );
 
 /* Static information: site-wide facts in site.config.json and content/data/. */

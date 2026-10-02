@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, workspacePath, type EditMode, type Job, type Overview, type WorkspaceStatus } from "@/lib/site-api";
+import { BrandPanel } from "./BrandPanel";
 import { BuildPanel } from "./BuildPanel";
 import { ChangesPanel } from "./ChangesPanel";
 import { EditPanel } from "./EditPanel";
@@ -295,6 +296,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
             {tab === "build" && <BuildPanel />}
             {tab === "pages" && <PagesPanel />}
             {tab === "navigation" && <NavPanel />}
+            {tab === "info" && <BrandPanel />}
             {tab === "info" && <StaticInfoPanel />}
             {editOpened && (
               <div hidden={tab !== "edit"} className="space-y-6">

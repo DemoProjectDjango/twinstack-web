@@ -40,6 +40,11 @@ export type SitePage = { file: string; slug: string; title: string; url?: string
 /** The homepage: the page at "/" (index.html in the site tree, content/pages/home.md when scaffolded). */
 export const isHomePage = (page: SitePage) => page.url === "/" || (page.url == null && page.file === "content/pages/home.md");
 
+/** site.config.json → brand: images are site paths ("/assets/img/…"), "" when not set. */
+export type Brand = { logoText: string; logo: string; logoDark: string; logoMark: string; favicon: string };
+/** The brand with data: URL previews of its images (null when missing or large); `supported` is false for copies whose templates only show the mark and name. */
+export type BrandInfo = { brand: Brand; previews: Partial<Record<"logo" | "logoDark" | "logoMark" | "favicon", string | null>>; supported: boolean };
+
 /** A stylesheet the Styles tab can edit. A declared global stylesheet may not exist yet. */
 export type CssFile = { file: string; kind: "site" | "global" | "imported"; declared: boolean; exists: boolean };
 export type CssSource = { file: string; exists: boolean; content: string; version: string };
