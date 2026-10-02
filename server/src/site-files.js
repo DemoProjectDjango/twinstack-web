@@ -41,7 +41,7 @@ const DATA_FILES = {
   },
 };
 
-async function readText(file) {
+export async function readText(file) {
   try {
     return await fs.readFile(file, "utf8");
   } catch (err) {
@@ -50,7 +50,7 @@ async function readText(file) {
   }
 }
 
-function inside(dir, relative) {
+export function inside(dir, relative) {
   const full = path.resolve(dir, relative);
   if (full !== dir && !full.startsWith(dir + path.sep)) throw new WorkspaceError("Invalid path.", 400);
   return full;
@@ -59,7 +59,7 @@ function inside(dir, relative) {
 /* --------------------------------------------------------------- overview */
 
 /** Top-level scalar frontmatter fields only; enough to list pages. */
-function frontmatter(text) {
+export function frontmatter(text) {
   const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   const fields = {};
   if (!match) return fields;
@@ -96,7 +96,7 @@ async function listMarkdown(dir, base = dir) {
   return out.sort();
 }
 
-async function listFiles(dir, extension, base = dir) {
+export async function listFiles(dir, extension, base = dir) {
   if (!existsSync(dir)) return [];
   const out = [];
   for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
@@ -107,17 +107,14 @@ async function listFiles(dir, extension, base = dir) {
   return out.sort();
 }
 
-/** Collections, their pages, the header navigation and the files Claude may edit. */
+/** Collections, their pages and the files Claude may edit. (The header and footer are in navigation.js.) */
 export async function getOverview(key) {
   const dir = workspaceDir(key);
   const siteText = await readText(path.join(dir, "site.config.json"));
   if (siteText === null) throw new WorkspaceError("site.config.json is missing.", 422);
   let site;
-  let navigation = null;
   try {
     site = JSON.parse(siteText);
-    const navText = await readText(path.join(dir, "content/data/navigation.json"));
-    if (navText) navigation = JSON.parse(navText);
   } catch (err) {
     throw new WorkspaceError(`Couldn't parse the site's JSON config: ${err.message}`, 422);
   }
@@ -173,15 +170,6 @@ export async function getOverview(key) {
     markdownFiles: mdEdit ? await listMarkdown(dir) : [],
     globalStylesheets: globalCss ? await globalStylesheets(dir) : [],
     collections,
-    navigation: {
-      items: (navigation?.header?.items ?? []).map((item) => ({
-        label: item.label,
-        url: item.url,
-        collection: item.type === "collection" ? item.collection : null,
-        limit: item.limit ?? null,
-      })),
-      cta: navigation?.header?.cta ?? null,
-    },
     otherEditable: [...templates, "styles/main.css", "site.config.json"],
   };
 }
@@ -707,7 +695,7 @@ export async function applyProposal(key, content) {
 // the version it was based on, so it can't silently replace a newer file (one
 // Claude wrote in the meantime, say).
 
-const contentVersion = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
+export const contentVersion = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
 function pageFile(key, file) {
   if (typeof file !== "string" || !MARKDOWN_PAGE.test(file) || file.split("/").includes("..")) {

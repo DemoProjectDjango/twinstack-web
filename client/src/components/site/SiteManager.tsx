@@ -7,10 +7,10 @@ import { BrandPanel } from "./BrandPanel";
 import { BuildPanel } from "./BuildPanel";
 import { ChangesPanel } from "./ChangesPanel";
 import { EditPanel } from "./EditPanel";
+import { HeaderFooterPanel } from "./HeaderFooterPanel";
 import { PublishBar } from "./PublishBar";
 import { JobLog } from "./JobLog";
 import { MemoryPanel } from "./MemoryPanel";
-import { NavPanel } from "./NavPanel";
 import { PagesPanel } from "./PagesPanel";
 import { SchedulePanel } from "./SchedulePanel";
 import { SiteContext, type SiteContextValue } from "./site-context";
@@ -22,7 +22,7 @@ import { Badge, Button, ErrorText, Notice } from "./ui";
 const TABS = [
   { id: "build", label: "Build & preview" },
   { id: "pages", label: "Pages" },
-  { id: "navigation", label: "Navigation" },
+  { id: "navigation", label: "Header & footer" },
   { id: "info", label: "Site info" },
   { id: "edit", label: "Edit with Claude" },
   { id: "memory", label: "Claude memory" },
@@ -33,6 +33,8 @@ const TABS = [
 ] as const;
 
 type Tab = (typeof TABS)[number]["id"];
+
+const FULL_WIDTH = new Set<Tab>(["edit", "navigation"]);
 
 const POLL_MS = 700;
 const MAX_LOG_CHARS = 500_000;
@@ -53,6 +55,8 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   const [editTarget, setEditTarget] = useState<{ file: string; mode: EditMode } | null>(null);
   // Once opened, the Claude tab stays mounted, so a hand-written draft survives visits to other tabs.
   const [editOpened, setEditOpened] = useState(false);
+  // The header and footer editor stays mounted too, so unsaved edits survive other tabs.
+  const [navOpened, setNavOpened] = useState(false);
   const unsavedDraft = useRef(false);
   const [resetting, setResetting] = useState(false);
 
@@ -149,6 +153,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   const openTab = useCallback((next: Tab) => {
     setTab(next);
     if (next === "edit") setEditOpened(true);
+    if (next === "navigation") setNavOpened(true);
   }, []);
 
   const setUnsavedDraft = useCallback((unsaved: boolean) => {
@@ -291,11 +296,15 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
           ))}
         </nav>
 
-        <div className={`mt-6 grid gap-6 ${tab === "edit" ? "" : "lg:grid-cols-[minmax(0,1fr)_22rem]"}`}>
+        <div className={`mt-6 grid gap-6 ${FULL_WIDTH.has(tab) ? "" : "lg:grid-cols-[minmax(0,1fr)_22rem]"}`}>
           <div className="min-w-0 space-y-6">
             {tab === "build" && <BuildPanel />}
             {tab === "pages" && <PagesPanel />}
-            {tab === "navigation" && <NavPanel />}
+            {navOpened && (
+              <div hidden={tab !== "navigation"}>
+                <HeaderFooterPanel />
+              </div>
+            )}
             {tab === "info" && <BrandPanel />}
             {tab === "info" && <StaticInfoPanel />}
             {editOpened && (
@@ -313,8 +322,8 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
             {tab === "schedule" && <SchedulePanel />}
             {tab === "changes" && <ChangesPanel />}
           </div>
-          {/* The Claude tab uses the full width for the editor and its live diff. */}
-          {tab !== "edit" && <JobLog />}
+          {/* The Claude tab uses the full width for the editor and its live diff, the header and footer tab for its preview. */}
+          {!FULL_WIDTH.has(tab) && <JobLog />}
         </div>
       </Shell>
     </SiteContext.Provider>

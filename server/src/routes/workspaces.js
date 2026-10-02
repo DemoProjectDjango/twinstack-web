@@ -48,6 +48,7 @@ import {
 } from "../site-files.js";
 import { getStaticInfo, saveStaticInfo } from "../static-info.js";
 import { getBrand, saveBrand, saveBrandImage } from "../brand.js";
+import { APPEARANCE_MARKER, HEADER_FOOTER_FILES, getNavigation, saveNavigation } from "../navigation.js";
 import {
   WorkspaceError,
   acquire,
@@ -480,6 +481,43 @@ workspacesRouter.post(
   // Logos up to 2 MB, and base64 adds a third.
   express.json({ limit: "3mb" }),
   handle(async (req, res) => res.status(201).json(await saveBrandImage(keyFor(req), req.body ?? {}))),
+);
+
+/* The header and footer (content/data/navigation.json): menus, button, footer columns, legal links and their look. */
+
+workspacesRouter.get(
+  "/:owner/:repo/navigation",
+  handle(async (req, res) => res.json(await getNavigation(keyFor(req)))),
+);
+
+workspacesRouter.put(
+  "/:owner/:repo/navigation",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const navigation = await saveNavigation(key, req.body?.navigation, req.body?.version);
+    res.json({ ...navigation, status: await getStatus(key) });
+  }),
+);
+
+/* Brings the template's header, footer and content.js into a copy made before they had appearance settings. */
+
+workspacesRouter.post(
+  "/:owner/:repo/install/header-footer",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const accessToken = await getAccessToken(req, res);
+    const files = {};
+    for (const file of HEADER_FOOTER_FILES) {
+      const content = await readRepoFile(accessToken, config.siteTemplate, file);
+      const marker = file.endsWith(".html") ? APPEARANCE_MARKER : "navAppearance";
+      if (content === null || !content.includes(marker)) {
+        throw new WorkspaceError(`The template (${config.siteTemplate}) doesn't have the new ${file} yet. Push it to GitHub first.`, 409);
+      }
+      files[file] = content;
+    }
+    const result = await updateFromTemplate(key, files, "updating the header and footer templates");
+    res.json({ ...result, status: await getStatus(key) });
+  }),
 );
 
 /* Static information: site-wide facts in site.config.json and content/data/. */

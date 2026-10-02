@@ -45,6 +45,53 @@ export type Brand = { logoText: string; logo: string; logoDark: string; logoMark
 /** The brand with data: URL previews of its images (null when missing or large); `supported` is false for copies whose templates only show the mark and name. */
 export type BrandInfo = { brand: Brand; previews: Partial<Record<"logo" | "logoDark" | "logoMark" | "favicon", string | null>>; supported: boolean };
 
+/**
+ * content/data/navigation.json as the Header & footer tab edits it. Items keep any other fields
+ * the file has. A header item is a link, a dropdown (`children`), or a collection menu
+ * (`type: "collection"`, which lists that collection's pages itself, up to `limit`). An unlabelled
+ * collection entry in a footer column lists the pages as the column's links.
+ */
+export type NavLink = { label: string; url: string; description?: string; [field: string]: unknown };
+export type NavItem = {
+  label: string;
+  url?: string;
+  type?: "collection";
+  collection?: string;
+  limit?: number;
+  children?: NavLink[];
+  description?: string;
+  [field: string]: unknown;
+};
+export type FooterColumn = { title: string; links: NavItem[]; [field: string]: unknown };
+export type HeaderTheme = "light" | "dark" | "brand";
+export type FooterTheme = "dark" | "light" | "brand";
+export type MenuLayout = "right" | "center" | "left";
+export type NavAppearance = {
+  header: { theme: HeaderTheme; layout: MenuLayout; sticky: boolean };
+  /** `copyright` follows "© <year>"; empty shows the site name and "All rights reserved." */
+  footer: { theme: FooterTheme; showTagline: boolean; showContact: boolean; copyright: string };
+};
+export type Navigation = {
+  header: { items: NavItem[]; cta: { label: string; url: string; [field: string]: unknown } | null };
+  footer: FooterColumn[];
+  legal: NavLink[];
+  appearance: NavAppearance;
+};
+/**
+ * The header and footer with what the editor needs around them. `supportsAppearance` is false for
+ * copies whose header.html, footer.html and content.js predate the appearance settings. `version`
+ * must come back with a save. `pages` is every page the site builds (drafts marked), for picking
+ * links and spotting ones the build would leave out.
+ */
+export type NavigationInfo = {
+  navigation: Navigation;
+  supportsAppearance: boolean;
+  version: string;
+  collections: { name: string; label: string }[];
+  pages: { url: string; title: string; collection: string; draft: boolean }[];
+  site: { name: string; footerTagline: string; foundedYear: number | string | null; email: string; phone: string };
+};
+
 /** A stylesheet the Styles tab can edit. A declared global stylesheet may not exist yet. */
 export type CssFile = { file: string; kind: "site" | "global" | "imported"; declared: boolean; exists: boolean };
 export type CssSource = { file: string; exists: boolean; content: string; version: string };
@@ -76,10 +123,6 @@ export type Overview = {
   /** Global stylesheets declared in scripts/site-tree.md ("- css/style.css"), kept as styles/global/<path>. Empty without globalCss. */
   globalStylesheets: { path: string; file: string; exists: boolean }[];
   collections: { name: string; dir: string; label: string; pages: SitePage[] }[];
-  navigation: {
-    items: { label: string; url: string; collection: string | null; limit: number | null }[];
-    cta: { label: string; url: string } | null;
-  };
   otherEditable: string[];
 };
 

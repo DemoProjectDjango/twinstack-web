@@ -89,7 +89,8 @@ export async function getBrand(key) {
       ...Object.fromEntries(IMAGE_FIELDS.map((f) => [f, typeof brand[f] === "string" ? brand[f] : ""])),
     },
     previews,
-    supported: header.includes("site.brand.logo }}"),
+    // Newer headers pick the logo for their background through nav.appearance (scripts/lib/content.js).
+    supported: header.includes("site.brand.logo }}") || header.includes("nav.appearance.header.logo"),
   };
 }
 
