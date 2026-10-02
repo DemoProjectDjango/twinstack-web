@@ -4,6 +4,7 @@ import {
   CSS_SOURCE_PATH,
   HTML_SOURCE_PATH,
   IMAGE_PATH,
+  JS_SOURCE_PATH,
   PROPOSAL_FILE,
   clearProposal,
   htmlSourceExists,
@@ -90,6 +91,18 @@ function cssSources(input) {
   return list.map((entry) => {
     if (typeof entry !== "string" || !CSS_SOURCE_PATH.test(entry) || entry.split("/").includes("..")) {
       throw new WorkspaceError("Upload the CSS files again.", 400);
+    }
+    return entry;
+  });
+}
+
+/** Uploaded scripts (saveHtmlSource) the page loads from its own files, kept with it (--js). */
+function jsSources(input) {
+  const list = input?.js ?? [];
+  if (!Array.isArray(list) || list.length > 10) throw new WorkspaceError("Add at most 10 JavaScript files.", 400);
+  return list.map((entry) => {
+    if (typeof entry !== "string" || !JS_SOURCE_PATH.test(entry) || entry.split("/").includes("..")) {
+      throw new WorkspaceError("Upload the JavaScript files again.", 400);
     }
     return entry;
   });
@@ -233,8 +246,13 @@ export const COMMANDS = {
       const source = text(input, "source", "HTML file", { max: 200 });
       if (!HTML_SOURCE_PATH.test(source)) throw new WorkspaceError("Upload the HTML file again.", 400);
       const args = [markdownPage(input), `--from-html=${source}`];
-      // Copy the page as-is with its own CSS, scoped to it, instead of converting it to markdown.
-      if (flag(input, "keepStyles")) args.push("--keep-styles", ...cssSources(input).map((css) => `--css=${css}`));
+      // The page is copied as-is with its own CSS, scoped to it, unless markdown is asked for
+      // (keepStyles: false). --keep-styles is passed for copies made before that was the default;
+      // --markdown is ignored by those copies, whose default was markdown anyway.
+      if (input?.keepStyles === false) args.push("--markdown");
+      else {
+        args.push("--keep-styles", ...cssSources(input).map((css) => `--css=${css}`), ...jsSources(input).map((js) => `--js=${js}`));
+      }
       const direction = text(input, "instruction", "Direction", { max: 4000, multiline: true, optional: true });
       if (direction) args.push(direction);
       // Up to three Claude requests (the conversion, a review, a correction) and, with styles kept,
@@ -243,8 +261,8 @@ export const COMMANDS = {
     },
     prepare: async (key, input) => {
       if (!htmlSourceExists(key, input.source)) throw new WorkspaceError("The uploaded HTML file is gone. Upload it again.", 409);
-      if (flag(input, "keepStyles") && !cssSources(input).every((css) => htmlSourceExists(key, css))) {
-        throw new WorkspaceError("An uploaded CSS file is gone. Upload the files again.", 409);
+      if (input?.keepStyles !== false && ![...cssSources(input), ...jsSources(input)].every((file) => htmlSourceExists(key, file))) {
+        throw new WorkspaceError("An uploaded CSS or JavaScript file is gone. Upload the files again.", 409);
       }
       if (flag(input, "dryRun")) await clearProposal(key);
     },

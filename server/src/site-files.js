@@ -151,6 +151,8 @@ export async function getOverview(key) {
   const editScript = (await readText(path.join(dir, "scripts/edit-page.js"))) ?? "";
   // Copies made before scripts/edit-md.js existed can't edit other markdown.
   const mdEdit = existsSync(path.join(dir, "scripts/edit-md.js"));
+  // Copies made before the site tree could declare global stylesheets ignore its .css lines.
+  const globalCss = editScript.includes("globalStylesheets");
 
   return {
     site: { name: site.name, url: site.url, model: site.automation?.model ?? null },
@@ -159,11 +161,15 @@ export async function getOverview(key) {
       pageGenerate: editScript.includes("--generate"),
       pageConvert: editScript.includes("--from-html"),
       pageConvertStyles: editScript.includes("--keep-styles"),
+      // Copies made before scripts were kept drop them and take no --js uploads.
+      pageConvertScripts: editScript.includes("--js="),
+      globalCss,
       mdEdit,
       // Copies made before knowledge/ existed have no notes or work log for Claude.
       memory: existsSync(path.join(dir, KNOWLEDGE_SCRIPT)),
     },
     markdownFiles: mdEdit ? await listMarkdown(dir) : [],
+    globalStylesheets: globalCss ? await globalStylesheets(dir) : [],
     collections,
     navigation: {
       items: (navigation?.header?.items ?? []).map((item) => ({
@@ -292,16 +298,36 @@ function proposalAllowed(mode, file) {
   return mode === "markdown" ? isEditableMarkdown(file) : MARKDOWN_PAGE.test(file) && !file.split("/").includes("..");
 }
 
-// The only other file a proposal may write: a converted page's own stylesheet (--keep-styles).
+// The only other files a proposal may write (--keep-styles): a converted page's own stylesheet
+// and scripts, and a global stylesheet from the site tree that the conversion's upload replaced.
 const IMPORTED_CSS = /^assets\/css\/imported\/[a-z0-9-]+\.css$/;
-const MAX_EXTRA_BYTES = 1024 * 1024;
+const IMPORTED_JS = /^assets\/js\/imported\/[a-z0-9-]+\/[a-z0-9][a-z0-9._-]*\.m?js$/;
+const GLOBAL_CSS = /^styles\/global\/[\w./-]+\.css$/;
+const MAX_EXTRA_BYTES = 2 * 1024 * 1024;
 
 function proposalFiles(mode, files) {
   if (mode !== "convert" || !Array.isArray(files)) return [];
+  const allowed = (file) => IMPORTED_CSS.test(file) || IMPORTED_JS.test(file) || (GLOBAL_CSS.test(file) && !file.split("/").some((seg) => seg === ".." || seg === "."));
   return files
-    .filter((f) => typeof f?.file === "string" && typeof f.content === "string" && IMPORTED_CSS.test(f.file))
+    .filter((f) => typeof f?.file === "string" && typeof f.content === "string" && allowed(f.file))
     .filter((f) => Buffer.byteLength(f.content) <= MAX_EXTRA_BYTES)
     .map((f) => ({ file: f.file, content: f.content }));
+}
+
+/**
+ * The global stylesheets scripts/site-tree.md declares ("- css/style.css" lines), as the copy's
+ * scripts/lib/scaffold-tree-runner.js reads them: [{ path, file: "styles/global/<path>", exists }].
+ */
+async function globalStylesheets(dir) {
+  const tree = (await readText(path.join(dir, DATA_FILES["site-tree"].path))) ?? "";
+  const out = [];
+  for (const line of tree.split(/\r?\n/)) {
+    const raw = /^\s*-\s+(\S+)(?:\s+(?:—|--)\s+.*)?\s*$/.exec(line)?.[1]?.replace(/^\/+/, "");
+    if (!raw || !/^[\w./-]+\.css$/.test(raw) || raw.split("/").some((seg) => !seg || seg === "." || seg === "..")) continue;
+    const file = `styles/global/${raw}`;
+    out.push({ path: raw, file, exists: existsSync(path.join(dir, file)) });
+  }
+  return out;
 }
 
 /** The pending proposal with the file's current text as `original` (null if it's gone), or null. */
@@ -695,6 +721,87 @@ export async function savePage(key, file, content, version) {
   return readPage(key, file);
 }
 
+/* -------------------------------------------------------------------- CSS */
+
+// Stylesheets the web UI may edit: the site's Tailwind source, the site tree's global
+// stylesheets and converted pages' own (scoped) stylesheets. assets/css/main.css is generated.
+const SITE_CSS = "styles/main.css";
+const MAX_CSS_BYTES = 2 * 1024 * 1024;
+
+function editableCss(file) {
+  if (typeof file !== "string" || file.split("/").some((seg) => !seg || seg === "." || seg === "..")) return null;
+  if (file === SITE_CSS) return "site";
+  if (GLOBAL_CSS.test(file)) return "global";
+  if (IMPORTED_CSS.test(file)) return "imported";
+  return null;
+}
+
+/** Every editable stylesheet: [{ file, kind, declared, exists }]. Declared globals are listed even before they exist. */
+export async function listCss(key) {
+  const dir = workspaceDir(key);
+  const declared = await globalStylesheets(dir);
+  const globals = new Map(declared.map((g) => [g.file, { file: g.file, kind: "global", declared: true, exists: g.exists }]));
+  for (const f of await listFiles(path.join(dir, "styles/global"), ".css")) {
+    const file = `styles/global/${f}`;
+    if (!globals.has(file) && editableCss(file)) globals.set(file, { file, kind: "global", declared: false, exists: true });
+  }
+  const imported = (await listFiles(path.join(dir, "assets/css/imported"), ".css"))
+    .map((f) => `assets/css/imported/${f}`)
+    .filter((file) => editableCss(file))
+    .map((file) => ({ file, kind: "imported", declared: false, exists: true }));
+  const site = existsSync(path.join(dir, SITE_CSS)) ? [{ file: SITE_CSS, kind: "site", declared: false, exists: true }] : [];
+  return [...site, ...globals.values(), ...imported];
+}
+
+export async function readCss(key, file) {
+  if (!editableCss(file)) throw new WorkspaceError("That isn't a stylesheet you can edit here.", 400);
+  const content = await readText(inside(workspaceDir(key), file));
+  // A declared global stylesheet that hasn't been created yet opens empty.
+  return { file, exists: content !== null, content: content ?? "", version: contentVersion(content ?? "") };
+}
+
+/** Unbalanced braces (outside comments and strings) would break the build or drop rules silently. */
+function cssProblem(css) {
+  let depth = 0;
+  for (let i = 0; i < css.length; i++) {
+    const c = css[i];
+    if (c === "/" && css[i + 1] === "*") {
+      const end = css.indexOf("*/", i + 2);
+      if (end < 0) return "a comment is never closed (missing */)";
+      i = end + 1;
+    } else if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < css.length && css[j] !== c && css[j] !== "\n") j += css[j] === "\\" ? 2 : 1;
+      i = j;
+    } else if (c === "{") depth++;
+    else if (c === "}" && --depth < 0) return "there's a } without a matching {";
+  }
+  return depth ? `${depth} { ${depth === 1 ? "is" : "are"} never closed` : null;
+}
+
+export async function saveCss(key, file, content, version) {
+  if (!editableCss(file)) throw new WorkspaceError("That isn't a stylesheet you can edit here.", 400);
+  if (typeof content !== "string" || Buffer.byteLength(content) > MAX_CSS_BYTES) {
+    throw new WorkspaceError("The stylesheet is missing or over 2 MB.", 400);
+  }
+  if (typeof version !== "string") throw new WorkspaceError("Reload the stylesheet, then save again.", 400);
+  const problem = cssProblem(content);
+  if (problem) throw new WorkspaceError(`Not saved: ${problem}.`, 400);
+  const target = inside(workspaceDir(key), file);
+  const release = acquire(key, `saving ${file}`);
+  try {
+    if (contentVersion((await readText(target)) ?? "") !== version) {
+      throw new WorkspaceError(`${file} changed since you opened it. Copy your text, reload and save again.`, 409);
+    }
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    const normalised = content.replace(/\r\n/g, "\n");
+    await fs.writeFile(target, normalised.endsWith("\n") ? normalised : `${normalised}\n`);
+  } finally {
+    release();
+  }
+  return readCss(key, file);
+}
+
 /* ----------------------------------------------------------------- images */
 
 export const IMAGE_PATH = /^assets\/img\/[\w./-]+\.(png|jpe?g|gif|webp)$/i;
@@ -754,16 +861,20 @@ export async function saveUpload(key, { name, data }) {
 /* ------------------------------------------------------------ HTML pages */
 
 // An existing HTML page for Claude to convert into a page (edit-page.js
-// --from-html), plus the stylesheets it links (--css, for --keep-styles). They
+// --from-html), plus the stylesheets it links (--css) and the scripts it loads
+// from its own files (--js). They
 // are kept inside .git, so they're never a change or committed, and only the
 // latest upload is kept.
 const HTML_SOURCE_DIR = ".git/twinstack-html";
 export const HTML_SOURCE_PATH = /^\.git\/twinstack-html\/[a-z0-9-]+\.html$/;
 // Dots are kept: the site script matches each one to a <link href> by file name.
 export const CSS_SOURCE_PATH = /^\.git\/twinstack-html\/css\/[a-z0-9][a-z0-9._-]*\.css$/;
+// Matched to a <script src> by file name the same way.
+export const JS_SOURCE_PATH = /^\.git\/twinstack-html\/js\/[a-z0-9][a-z0-9._-]*\.m?js$/;
 // The site script's own limit, per file.
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 const MAX_CSS_FILES = 10;
+const MAX_JS_FILES = 10;
 const MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
 
 const safeName = (name, fallback, keep) =>
@@ -774,7 +885,7 @@ const safeName = (name, fallback, keep) =>
     .replace(/^[-.]+|[-.]+$/g, "")
     .slice(0, 60) || fallback;
 
-export async function saveHtmlSource(key, { name, content, css = [] }) {
+export async function saveHtmlSource(key, { name, content, css = [], js = [] }) {
   if (typeof content !== "string" || !content.trim()) throw new WorkspaceError("No HTML received.", 400);
   if (Buffer.byteLength(content) > MAX_HTML_BYTES) throw new WorkspaceError("HTML files must be 2 MB or smaller.", 400);
   if (content.includes("\0") || !/<\s*(html|body|main|article|section|div|p|h[1-6]|table|ul|ol)\b/i.test(content)) {
@@ -788,13 +899,21 @@ export async function saveHtmlSource(key, { name, content, css = [] }) {
     if (bytes > MAX_HTML_BYTES) throw new WorkspaceError(`${String(sheet.name ?? "A CSS file")} is over 2 MB.`, 400);
     total += bytes;
   }
-  if (total > MAX_UPLOAD_BYTES) throw new WorkspaceError("The HTML and CSS files together must be 6 MB or smaller.", 400);
+  if (!Array.isArray(js) || js.length > MAX_JS_FILES) throw new WorkspaceError(`Add at most ${MAX_JS_FILES} JavaScript files.`, 400);
+  for (const script of js) {
+    if (typeof script?.content !== "string" || script.content.includes("\0")) throw new WorkspaceError("A JavaScript file couldn't be read.", 400);
+    const bytes = Buffer.byteLength(script.content);
+    if (bytes > MAX_HTML_BYTES) throw new WorkspaceError(`${String(script.name ?? "A JavaScript file")} is over 2 MB.`, 400);
+    total += bytes;
+  }
+  if (total > MAX_UPLOAD_BYTES) throw new WorkspaceError("The HTML, CSS and JavaScript files together must be 6 MB or smaller.", 400);
 
   const release = acquire(key, "saving an HTML page");
   try {
     const dir = path.join(workspaceDir(key), HTML_SOURCE_DIR);
     await fs.rm(dir, { recursive: true, force: true });
     await fs.mkdir(path.join(dir, "css"), { recursive: true });
+    await fs.mkdir(path.join(dir, "js"), { recursive: true });
     const base = safeName(name, "page", /[^a-z0-9]+/g);
     const source = `${HTML_SOURCE_DIR}/${base}.html`;
     await fs.writeFile(path.join(workspaceDir(key), source), content);
@@ -807,14 +926,23 @@ export async function saveHtmlSource(key, { name, content, css = [] }) {
       await fs.writeFile(path.join(dir, "css", file), sheet.content);
       sheets.push({ source: `${HTML_SOURCE_DIR}/css/${file}`, name: file, bytes: Buffer.byteLength(sheet.content) });
     }
-    return { source, name: `${base}.html`, bytes: Buffer.byteLength(content), css: sheets };
+    const scripts = [];
+    for (const script of js) {
+      const extension = /\.mjs$/i.test(String(script.name ?? "")) ? "mjs" : "js";
+      const stem = safeName(script.name, "script", /[^a-z0-9.]+/g);
+      let file = `${stem}.${extension}`;
+      for (let n = 2; scripts.some((s) => s.name === file); n++) file = `${stem}-${n}.${extension}`;
+      await fs.writeFile(path.join(dir, "js", file), script.content);
+      scripts.push({ source: `${HTML_SOURCE_DIR}/js/${file}`, name: file, bytes: Buffer.byteLength(script.content) });
+    }
+    return { source, name: `${base}.html`, bytes: Buffer.byteLength(content), css: sheets, js: scripts };
   } finally {
     release();
   }
 }
 
 export function htmlSourceExists(key, source) {
-  const ok = HTML_SOURCE_PATH.test(source) || CSS_SOURCE_PATH.test(source);
+  const ok = HTML_SOURCE_PATH.test(source) || CSS_SOURCE_PATH.test(source) || JS_SOURCE_PATH.test(source);
   return ok && !source.split("/").includes("..") && existsSync(path.join(workspaceDir(key), source));
 }
 

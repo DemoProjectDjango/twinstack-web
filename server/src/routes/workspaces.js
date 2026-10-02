@@ -26,7 +26,9 @@ import {
   MD_EDIT_FILES,
   getOverview,
   installMdEdit,
+  listCss,
   listImages,
+  readCss,
   readDataFile,
   readImage,
   readMemory,
@@ -36,6 +38,7 @@ import {
   savePage,
   prepareWorkLog,
   replaceMemoryLine,
+  saveCss,
   saveHtmlSource,
   saveUpload,
   updateFromTemplate,
@@ -233,6 +236,30 @@ workspacesRouter.put(
     const { file, content, version } = req.body ?? {};
     const page = await savePage(key, file, content, version);
     res.json({ page, status: await getStatus(key) });
+  }),
+);
+
+/* Stylesheets: the Tailwind source, the site tree's global stylesheets, converted pages' own. */
+
+workspacesRouter.get(
+  "/:owner/:repo/css",
+  handle(async (req, res) => res.json({ files: await listCss(keyFor(req)) })),
+);
+
+workspacesRouter.get(
+  "/:owner/:repo/css/source",
+  handle(async (req, res) => res.json(await readCss(keyFor(req), req.query.file))),
+);
+
+workspacesRouter.put(
+  "/:owner/:repo/css/source",
+  // Stylesheets up to 2 MB, and JSON escaping adds to it.
+  express.json({ limit: "3mb" }),
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const { file, content, version } = req.body ?? {};
+    const css = await saveCss(key, file, content, version);
+    res.json({ css, status: await getStatus(key) });
   }),
 );
 

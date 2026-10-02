@@ -14,6 +14,7 @@ import { PagesPanel } from "./PagesPanel";
 import { SchedulePanel } from "./SchedulePanel";
 import { SiteContext, type SiteContextValue } from "./site-context";
 import { StaticInfoPanel } from "./StaticInfoPanel";
+import { StylesPanel } from "./StylesPanel";
 import { TreePanel } from "./TreePanel";
 import { Badge, Button, ErrorText, Notice } from "./ui";
 
@@ -25,6 +26,7 @@ const TABS = [
   { id: "edit", label: "Edit with Claude" },
   { id: "memory", label: "Claude memory" },
   { id: "tree", label: "Site tree" },
+  { id: "styles", label: "Styles" },
   { id: "schedule", label: "Schedule" },
   { id: "changes", label: "Changes" },
 ] as const;
@@ -153,7 +155,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   }, []);
 
   const confirmDiscardDraft = useCallback(
-    () => !unsavedDraft.current || confirm("Your draft has unsaved changes. Leave it without saving?"),
+    () => !unsavedDraft.current || confirm("You have unsaved changes. Leave without saving?"),
     [],
   );
 
@@ -305,6 +307,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
             )}
             {tab === "memory" && <MemoryPanel />}
             {tab === "tree" && <TreePanel />}
+            {tab === "styles" && <StylesPanel />}
             {tab === "schedule" && <SchedulePanel />}
             {tab === "changes" && <ChangesPanel />}
           </div>

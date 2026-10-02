@@ -296,14 +296,18 @@ function ConvertEditor({ file, onFileChange }: { file: string; onFileChange: (fi
   const { owner, repo, overview, busy, run, hasKey, job } = useSite();
   const [htmlFile, setHtmlFile] = useState<File | null>(null);
   const [cssFiles, setCssFiles] = useState<File[]>([]);
-  const [keepStyles, setKeepStyles] = useState(false);
+  // Keeping the page as it is (its HTML and CSS) is the default; markdown rewrites it in the site's design.
+  const [keepStyles, setKeepStyles] = useState(true);
   const [instruction, setInstruction] = useState("");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
   const supported = overview?.features.pageConvert ?? true;
   const stylesSupported = overview?.features.pageConvertStyles ?? true;
+  const scriptsSupported = overview?.features.pageConvertScripts ?? true;
   const styled = keepStyles && stylesSupported;
+  const isScript = (f: File) => /\.m?js$/i.test(f.name);
+  const globalSheets = overview?.globalStylesheets ?? [];
   const disabled = busy || !hasKey || !supported;
   const ready = Boolean(file) && Boolean(htmlFile);
   const previewRunning = job?.command === "page-convert" && job.status === "running";
@@ -327,7 +331,11 @@ function ConvertEditor({ file, onFileChange }: { file: string; onFileChange: (fi
       return;
     }
     setError(null);
-    setCssFiles((prev) => [...prev.filter((f) => !picked.some((p) => p.name === f.name)), ...picked].slice(0, MAX_CSS_FILES));
+    // Stylesheets and scripts share the list, up to MAX_CSS_FILES of each.
+    setCssFiles((prev) => {
+      const all = [...prev.filter((f) => !picked.some((p) => p.name === f.name)), ...picked];
+      return [...all.filter((f) => !isScript(f)).slice(0, MAX_CSS_FILES), ...all.filter(isScript).slice(0, MAX_CSS_FILES)];
+    });
   }
 
   // The files are uploaded with every run, so the server always converts what's picked here.
@@ -341,7 +349,8 @@ function ConvertEditor({ file, onFileChange }: { file: string; onFileChange: (fi
         body: {
           name: htmlFile.name,
           content: await htmlFile.text(),
-          css: styled ? await Promise.all(cssFiles.map(async (f) => ({ name: f.name, content: await f.text() }))) : [],
+          css: styled ? await Promise.all(cssFiles.filter((f) => !isScript(f)).map(async (f) => ({ name: f.name, content: await f.text() }))) : [],
+          js: styled && scriptsSupported ? await Promise.all(cssFiles.filter(isScript).map(async (f) => ({ name: f.name, content: await f.text() }))) : [],
         },
       });
       void run("page-convert", {
@@ -349,6 +358,7 @@ function ConvertEditor({ file, onFileChange }: { file: string; onFileChange: (fi
         source: saved.source,
         keepStyles: styled,
         css: saved.css.map((c) => c.source),
+        js: (saved.js ?? []).map((c) => c.source),
         instruction,
         dryRun,
       });
@@ -371,7 +381,7 @@ function ConvertEditor({ file, onFileChange }: { file: string; onFileChange: (fi
 
       <Section
         title="Convert an HTML page with Claude"
-        description="Upload an existing HTML page and pick the page it becomes. The old site's header, footer, navigation and sidebars are removed. By default the rest is converted to markdown in this site's style, with its wording kept; or keep the old page's own look. The page keeps its frontmatter, and its current body is replaced. Preview first: you'll see the complete new file below and can adjust it before applying."
+        description="Upload an existing HTML page and pick the page it becomes. The old site's header, footer, navigation and sidebars are removed. By default the rest is kept as it is, with its own HTML and CSS, so it looks like the original; or convert it to markdown in this site's style, with its wording kept. The new page replaces the old one completely: only its address, layout, order and listing fields are kept, and its old body, hero, FAQ and call to action go. Preview first: you'll see the complete new file below and can adjust it before applying."
       >
         <div className="space-y-4">
           <PageSelect value={file} onChange={onFileChange} disabled={disabled} />
@@ -403,12 +413,17 @@ function ConvertEditor({ file, onFileChange }: { file: string; onFileChange: (fi
                 className="mt-0.5"
               />
               <span>
-                <span className="font-medium">Keep the old page&apos;s styling</span>
+                <span className="font-medium">Keep the page&apos;s own HTML and styling (recommended)</span>
                 <span className="block text-xs text-zinc-500">
                   Copies the page&apos;s HTML as-is instead of converting it to markdown, and saves its CSS (only the rules this
                   page uses, scoped so they can&apos;t affect the rest of the site) under{" "}
-                  <code className="font-mono">assets/css/imported/</code>. The page then shows its own layout between the
-                  site&apos;s header and footer, without the site&apos;s page heading. Claude only writes the title and description.
+                  <code className="font-mono">assets/css/imported/</code>. The page then shows its own layout edge to edge
+                  between the site&apos;s header and footer, with nothing from its old layout around it.{" "}
+                  {scriptsSupported
+                    ? "Its scripts are kept too, in their original order, and the preview checks they run without errors. "
+                    : "This copy drops the page's scripts; update scripts/edit-page.js from the template to keep them. "}
+                  Claude only writes the title and description. Untick it to rewrite the page as markdown in this site&apos;s
+                  own design instead.
                 </span>
               </span>
             </label>
@@ -421,7 +436,8 @@ function ConvertEditor({ file, onFileChange }: { file: string; onFileChange: (fi
             {styled && (
               <div className="mt-3">
                 <span className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                  CSS files the page links (optional, up to {MAX_CSS_FILES})
+                  {scriptsSupported ? "CSS and JavaScript files the page links" : "CSS files the page links"} (optional, up to{" "}
+                  {MAX_CSS_FILES}{scriptsSupported ? " of each" : ""})
                 </span>
                 {cssFiles.length > 0 && (
                   <ul className="mt-1 flex flex-wrap gap-2">
@@ -445,17 +461,31 @@ function ConvertEditor({ file, onFileChange }: { file: string; onFileChange: (fi
                   </ul>
                 )}
                 <FilePick
-                  label="Add .css files"
-                  accept=".css,text/css"
+                  label={scriptsSupported ? "Add .css or .js files" : "Add .css files"}
+                  accept={scriptsSupported ? ".css,.js,.mjs,text/css,text/javascript" : ".css,text/css"}
                   multiple
-                  disabled={disabled || uploading || cssFiles.length >= MAX_CSS_FILES}
+                  disabled={disabled || uploading || cssFiles.length >= MAX_CSS_FILES * (scriptsSupported ? 2 : 1)}
                   onPick={pickCss}
                 />
                 <p className="mt-1 text-xs text-zinc-500">
-                  A saved page usually links its stylesheet rather than including it. Upload those files under the names the
-                  page links them by (e.g. <code className="font-mono">style.css</code>) so they keep their place in the
-                  cascade. The preview lists any linked stylesheet that&apos;s missing.
+                  A saved page usually links its stylesheet and scripts rather than including them. Upload those files under
+                  the names the page links them by (e.g. <code className="font-mono">style.css</code>,{" "}
+                  <code className="font-mono">main.js</code>) so they keep their place. Scripts from a full URL (a CDN) load
+                  from it without uploading. The preview lists any linked file that&apos;s missing.
                 </p>
+                {globalSheets.length > 0 && (
+                  <p className="mt-2 text-xs text-zinc-500">
+                    Global stylesheets from the site tree are applied, without uploading them, to a page that links them:{" "}
+                    {globalSheets.map((g, i) => (
+                      <span key={g.file}>
+                        {i > 0 && ", "}
+                        <code className="font-mono">{g.path}</code>
+                        {!g.exists && " (not created yet: scaffold the site tree, or upload it here)"}
+                      </span>
+                    ))}
+                    . Uploading a file with the same name replaces the stored one for every page you convert after this.
+                  </p>
+                )}
               </div>
             )}
           </div>

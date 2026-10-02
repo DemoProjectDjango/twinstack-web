@@ -36,6 +36,10 @@ export type Job = {
 
 export type SitePage = { file: string; slug: string; title: string; draft: boolean; date: string | null };
 
+/** A stylesheet the Styles tab can edit. A declared global stylesheet may not exist yet. */
+export type CssFile = { file: string; kind: "site" | "global" | "imported"; declared: boolean; exists: boolean };
+export type CssSource = { file: string; exists: boolean; content: string; version: string };
+
 export type Overview = {
   site: { name: string; url: string; model: string | null };
   /**
@@ -43,6 +47,8 @@ export type Overview = {
    * pageGenerate: it supports --generate (turn a hand-written draft into the finished page).
    * pageConvert: it supports --from-html (convert an existing HTML page into a page).
    * pageConvertStyles: it supports --keep-styles (copy that page as-is with its own CSS).
+   * pageConvertScripts: such a copy keeps the page's scripts too, and takes --js uploads.
+   * globalCss: --keep-styles applies the site tree's global stylesheets (listed in globalStylesheets).
    * mdEdit: it has scripts/edit-md.js (edit markdown outside content/, listed in markdownFiles).
    * memory: it has scripts/lib/knowledge.js (Claude reads knowledge/notes.md and the work log first).
    */
@@ -51,11 +57,15 @@ export type Overview = {
     pageGenerate: boolean;
     pageConvert: boolean;
     pageConvertStyles: boolean;
+    pageConvertScripts: boolean;
+    globalCss: boolean;
     mdEdit: boolean;
     memory: boolean;
   };
   /** Markdown files outside content/ that the "md-edit" command may change. Empty without mdEdit. */
   markdownFiles: string[];
+  /** Global stylesheets declared in scripts/site-tree.md ("- css/style.css"), kept as styles/global/<path>. Empty without globalCss. */
+  globalStylesheets: { path: string; file: string; exists: boolean }[];
   collections: { name: string; dir: string; label: string; pages: SitePage[] }[];
   navigation: {
     items: { label: string; url: string; collection: string | null; limit: number | null }[];
@@ -166,6 +176,8 @@ export type HtmlSource = {
   bytes: number;
   /** The stylesheets uploaded with it, for keeping its styles. */
   css: { source: string; name: string; bytes: number }[];
+  /** The scripts uploaded with it (the ones the page loads from its own files). Older servers send none. */
+  js?: { source: string; name: string; bytes: number }[];
 };
 
 /** A page's markdown; `version` must come back with a save. */

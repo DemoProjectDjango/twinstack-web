@@ -40,7 +40,7 @@ export function LiveDiff({ before, after, label }: { before: string; after: stri
         )}
         {deferred !== after && <span className="text-zinc-400">updating…</span>}
       </div>
-      <div className={`max-h-[32rem] flex-1 overflow-auto font-mono text-xs leading-relaxed ${hunks.length ? "" : "hidden"}`}>
+      <div className={`max-h-[24rem] flex-1 overflow-auto font-mono text-xs leading-relaxed ${hunks.length ? "" : "hidden"}`}>
         {hunks.map((hunk, h) => (
           <div key={h} className={h ? "border-t border-dashed border-zinc-200 dark:border-zinc-800" : ""}>
             {hunk.lines.map((line, i) => (

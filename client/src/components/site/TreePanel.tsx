@@ -68,7 +68,9 @@ export function TreePanel() {
         <>
           scripts/site-tree.md lists every page the site should have, one path per bullet. Anything after &quot; — &quot; is the
           instruction for that page. Scaffolding creates only the pages that are missing, using
-          scripts/site-tree-content/&lt;path&gt;.md verbatim when one exists.
+          scripts/site-tree-content/&lt;path&gt;.md verbatim when one exists. A bullet ending in .css (- css/style.css)
+          declares a global stylesheet: it&apos;s scaffolded to styles/global/&lt;path&gt;, and every page converted with
+          its styles kept that links it gets it.
         </>
       }
     >
