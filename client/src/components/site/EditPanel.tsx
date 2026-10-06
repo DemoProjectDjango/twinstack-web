@@ -30,8 +30,8 @@ export function PageContentEditor({ file, initialMode }: { file: string; initial
   const [mode, setMode] = useState<PageEditMode>(initialMode);
 
   // Leaving the draft editor may lose unsaved text.
-  function changeMode(next: PageEditMode) {
-    if (next !== mode && (mode !== "generate" || confirmDiscardDraft())) setMode(next);
+  async function changeMode(next: PageEditMode) {
+    if (next !== mode && (mode !== "generate" || (await confirmDiscardDraft()))) setMode(next);
   }
 
   return (

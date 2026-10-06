@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, workspacePath, type ScheduleJob } from "@/lib/site-api";
+import { confirmModal } from "@/lib/confirm";
 import { useSite } from "./site-context";
 import { Badge, Button, ErrorText, Field, Notice, Section, inputClass } from "./ui";
 
@@ -127,7 +128,11 @@ export function SchedulePanel() {
                     variant="ghost"
                     className="px-2 py-1 text-xs"
                     disabled={disabled}
-                    onClick={() => confirm(`Remove "${job.title}" from the schedule?`) && save(jobs.filter((_, i) => i !== index))}
+                    onClick={async () => {
+                      if (await confirmModal(`Remove "${job.title}" from the schedule?`, { confirmLabel: "Remove", danger: true })) {
+                        void save(jobs.filter((_, i) => i !== index));
+                      }
+                    }}
                   >
                     Remove
                   </Button>

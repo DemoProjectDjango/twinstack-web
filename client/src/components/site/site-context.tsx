@@ -62,11 +62,11 @@ export type SiteContextValue = {
   /** Re-reads status and overview after a change made outside a command; the preview then rebuilds by itself. */
   refresh: () => Promise<void>;
   /** Opens a page in the page editor: "generate" writes from its draft, "edit" (the default) takes an instruction. */
-  editFile: (file: string, mode?: PageEditMode) => void;
+  editFile: (file: string, mode?: PageEditMode) => Promise<void>;
   /** The page editor's hand-written draft reports whether it has unsaved edits. */
   setUnsavedDraft: (unsaved: boolean) => void;
   /** True if there are no unsaved draft edits, or the user agrees to lose them. */
-  confirmDiscardDraft: () => boolean;
+  confirmDiscardDraft: () => Promise<boolean>;
   /** Switches to another screen, e.g. from a hint that points there. */
   showSection: (section: SiteSection) => void;
   publishing: PublishingState;

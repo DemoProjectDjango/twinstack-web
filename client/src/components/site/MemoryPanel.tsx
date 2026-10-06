@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, workspacePath, type Memory, type WorkspaceStatus } from "@/lib/site-api";
+import { confirmModal } from "@/lib/confirm";
 import { LiveDiff } from "./LiveDiff";
 import { useSite } from "./site-context";
 import { Button, ErrorText, Notice, Section, inputClass } from "./ui";
@@ -197,8 +198,12 @@ function WorkLogSection() {
     change("replace", { line: editing.line, replacement: buildLine({ ...parsed, what: editing.what, summary: editing.summary.split("\n") }) });
   }
 
-  function clearAll() {
-    if (!confirm("Clear Claude's memory of earlier work on this site? Claude's next requests start without it. Your notes stay.")) {
+  async function clearAll() {
+    const ok = await confirmModal("Clear Claude's memory of earlier work on this site? Claude's next requests start without it. Your notes stay.", {
+      confirmLabel: "Clear memory",
+      danger: true,
+    });
+    if (!ok) {
       return;
     }
     change("clear");

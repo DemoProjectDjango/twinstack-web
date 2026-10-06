@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { confirmModal } from "@/lib/confirm";
 import type { GithubAccount } from "@/lib/session";
 import { GitHubIcon } from "./GitHubIcon";
 
@@ -18,7 +19,11 @@ export function GithubConnection({ github, error, justConnected = false }: { git
   const [failed, setFailed] = useState(false);
 
   async function disconnect() {
-    if (!confirm("Disconnect GitHub? You won't be able to open or publish your sites until you connect it again. Your sites stay on GitHub.")) return;
+    const ok = await confirmModal("Disconnect GitHub? You won't be able to open or publish your sites until you connect it again. Your sites stay on GitHub.", {
+      confirmLabel: "Disconnect",
+      danger: true,
+    });
+    if (!ok) return;
     setWorking(true);
     setFailed(false);
     const res = await fetch("/auth/github/disconnect", {

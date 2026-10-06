@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { describeChange, summarizeChanges } from "@/lib/change-labels";
+import { confirmModal } from "@/lib/confirm";
 import { api, workspacePath, type FileDiff, type WorkspaceStatus } from "@/lib/site-api";
 import { DomainSettings } from "./DomainSettings";
 import { useSite } from "./site-context";
@@ -48,7 +49,7 @@ export function ChangesPanel() {
   }, [owner, repo, version]);
 
   async function discard(paths: string[], what: string) {
-    if (!confirm(`Undo ${what}? This can't be undone.`)) return;
+    if (!(await confirmModal(`Undo ${what}? This can't be undone.`, { confirmLabel: "Undo", danger: true }))) return;
     setWorking("discard");
     setError(null);
     try {

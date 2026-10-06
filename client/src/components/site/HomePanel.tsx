@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, workspacePath, type BrandInfo, type Publishing } from "@/lib/site-api";
+import { confirmModal } from "@/lib/confirm";
 import { useSite, type SiteSection } from "./site-context";
 import { Button, EmptyState, ErrorText, Notice, ScreenHeader, Segmented, Spinner, StepList, type Step } from "./ui";
 
@@ -229,10 +230,12 @@ export function ToolsNotice({ compact = false }: { compact?: boolean }) {
         variant="ghost"
         className="ml-1 underline"
         disabled={busy || tools.updating}
-        onClick={() => {
-          if (confirm("Update your site's tools to the latest version? Any changes made by hand to those tool files are replaced. You'll publish the update like any other change.")) {
-            void tools.update();
-          }
+        onClick={async () => {
+          const ok = await confirmModal(
+            "Update your site's tools to the latest version? Any changes made by hand to those tool files are replaced. You'll publish the update like any other change.",
+            { confirmLabel: "Update site tools" },
+          );
+          if (ok) void tools.update();
         }}
       >
         {tools.updating ? "Updating…" : "Update site tools"}

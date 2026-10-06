@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, workspacePath, type Json, type StaticSection } from "@/lib/site-api";
+import { confirmModal } from "@/lib/confirm";
 import { markVisited } from "./HomePanel";
 import { JsonForm } from "./JsonForm";
 import { useSite } from "./site-context";
@@ -36,9 +37,9 @@ export function StaticInfoPanel() {
   const section = sections?.find((s) => s.id === selected) ?? null;
   const dirty = section !== null && JSON.stringify(draft) !== JSON.stringify(section.data);
 
-  function choose(id: string) {
+  async function choose(id: string) {
     if (id === selected) return;
-    if (dirty && !confirm("You have unsaved changes in this section. Discard them?")) return;
+    if (dirty && !(await confirmModal("You have unsaved changes in this section. Discard them?", { confirmLabel: "Discard", danger: true }))) return;
     const next = sections?.find((s) => s.id === id);
     setSelected(id);
     setDraft(next?.data ?? null);

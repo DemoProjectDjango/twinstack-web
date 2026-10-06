@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, workspacePath } from "@/lib/site-api";
+import { confirmModal } from "@/lib/confirm";
 import { LiveDiff } from "./LiveDiff";
 import { useSite } from "./site-context";
 import { Button, ErrorText, Notice, Section, inputClass } from "./ui";
@@ -57,7 +58,9 @@ export function TreePanel() {
   // Unsaved edits are saved first, so the command always sees what's on screen.
   async function scaffold(dryRun: boolean) {
     if (dirty && !(await save())) return;
-    if (!dryRun && force && !confirm("Overwrite every existing page listed in the tree with a fresh skeleton?")) return;
+    if (!dryRun && force && !(await confirmModal("Overwrite every existing page listed in the tree with a fresh skeleton?", { confirmLabel: "Overwrite pages", danger: true }))) {
+      return;
+    }
     await run("scaffold", { dryRun, force });
   }
 

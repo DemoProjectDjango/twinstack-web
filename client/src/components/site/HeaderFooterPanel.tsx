@@ -15,6 +15,7 @@ import {
   type NavLink,
   type WorkspaceStatus,
 } from "@/lib/site-api";
+import { confirmModal } from "@/lib/confirm";
 import { HeaderFooterPreview } from "./HeaderFooterPreview";
 import { JobLog } from "./JobLog";
 import { kindOf, linkStatus, move, pageIndex, withKind, type ItemKind, type PageIndex } from "./header-footer";
@@ -142,9 +143,9 @@ export function HeaderFooterPanel() {
     }
   }
 
-  function discard() {
+  async function discard() {
     if (!info) return;
-    if (!confirm("Discard your changes to the header and footer?")) return;
+    if (!(await confirmModal("Discard your changes to the header and footer?", { confirmLabel: "Discard", danger: true }))) return;
     setDraft(info.navigation);
     setError(null);
     setStale(false);
@@ -160,7 +161,11 @@ export function HeaderFooterPanel() {
   }
 
   async function installTemplates() {
-    if (!confirm("This replaces templates/partials/header.html, templates/partials/footer.html and scripts/lib/content.js with the template's versions. Changes you made to those files by hand are lost (you can undo them on the Publish screen before publishing). Continue?")) return;
+    const ok = await confirmModal(
+      "This replaces templates/partials/header.html, templates/partials/footer.html and scripts/lib/content.js with the template's versions. Changes you made to those files by hand are lost (you can undo them on the Publish screen before publishing). Continue?",
+      { confirmLabel: "Update templates" },
+    );
+    if (!ok) return;
     setInstalling(true);
     setError(null);
     try {
@@ -330,11 +335,14 @@ export function HeaderFooterPanel() {
                 disabled={disabled}
                 onUp={i > 0 ? () => edit((n) => move(n.header.items, i, -1)) : undefined}
                 onDown={i < draft.header.items.length - 1 ? () => edit((n) => move(n.header.items, i, 1)) : undefined}
-                onRemove={() => {
-                  if (confirm(`Remove "${item.label || "this item"}" from the menu? Its pages stay; only the menu entry goes.`)) {
-                    edit((n) => void n.header.items.splice(i, 1));
-                    setOpen(null);
-                  }
+                onRemove={async () => {
+                  const ok = await confirmModal(`Remove "${item.label || "this item"}" from the menu? Its pages stay; only the menu entry goes.`, {
+                    confirmLabel: "Remove",
+                    danger: true,
+                  });
+                  if (!ok) return;
+                  edit((n) => void n.header.items.splice(i, 1));
+                  setOpen(null);
                 }}
               >
                 <HeaderItemEditor
@@ -454,11 +462,11 @@ export function HeaderFooterPanel() {
                 disabled={disabled}
                 onUp={i > 0 ? () => edit((n) => move(n.footer, i, -1)) : undefined}
                 onDown={i < draft.footer.length - 1 ? () => edit((n) => move(n.footer, i, 1)) : undefined}
-                onRemove={() => {
-                  if (confirm(`Remove the "${column.title || "untitled"}" column from the footer?`)) {
-                    edit((n) => void n.footer.splice(i, 1));
-                    setOpen(null);
-                  }
+                onRemove={async () => {
+                  const ok = await confirmModal(`Remove the "${column.title || "untitled"}" column from the footer?`, { confirmLabel: "Remove", danger: true });
+                  if (!ok) return;
+                  edit((n) => void n.footer.splice(i, 1));
+                  setOpen(null);
                 }}
               >
                 <Field label="Heading">

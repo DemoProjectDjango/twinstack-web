@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { claudeAccess } from "@/lib/claude";
+import { confirmModal } from "@/lib/confirm";
 import { ApiError, api, setBeforeChange, workspacePath, type Job, type Overview, type WorkspaceStatus } from "@/lib/site-api";
 import { BrandPanel } from "./BrandPanel";
 import { BuildPanel } from "./BuildPanel";
@@ -246,7 +247,9 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   }, []);
 
   const confirmDiscardDraft = useCallback(
-    () => !unsavedDraft.current || confirm("You have unsaved changes. Leave without saving?"),
+    async () =>
+      !unsavedDraft.current ||
+      (await confirmModal("You have unsaved changes. Leave without saving?", { confirmLabel: "Leave without saving", danger: true })),
     [],
   );
 
@@ -260,8 +263,8 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   }, []);
 
   const editFile = useCallback(
-    (file: string, mode: PageEditMode = "edit") => {
-      if (!confirmDiscardDraft()) return;
+    async (file: string, mode: PageEditMode = "edit") => {
+      if (!(await confirmDiscardDraft())) return;
       unsavedDraft.current = false;
       setOpenPage({ file, mode });
       showSection("pages");
@@ -269,8 +272,8 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     [confirmDiscardDraft, showSection],
   );
 
-  const closePage = useCallback(() => {
-    if (!confirmDiscardDraft()) return;
+  const closePage = useCallback(async () => {
+    if (!(await confirmDiscardDraft())) return;
     unsavedDraft.current = false;
     setOpenPage(null);
   }, [confirmDiscardDraft]);

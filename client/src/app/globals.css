@@ -24,6 +24,13 @@ html {
   scroll-padding-top: 5rem;
 }
 
+/* Toasts (react-toastify) follow the app's light and dark colours. */
+:root {
+  --toastify-color-light: var(--background);
+  --toastify-text-color-light: var(--foreground);
+  --toastify-font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

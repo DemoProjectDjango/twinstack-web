@@ -1,5 +1,6 @@
 "use client";
 
+import { confirmModal } from "@/lib/confirm";
 import { useState } from "react";
 import { api, workspacePath, type DomainCheck, type DomainHealth, type Publishing } from "@/lib/site-api";
 import { dnsRecords, looksApex, type DnsRecord } from "@/lib/custom-domain";
@@ -44,7 +45,9 @@ export function DomainSettings({ publishing, onChange }: { publishing: Publishin
   }
 
   async function saveDomain(next: string | null) {
-    if (next === null && !confirm(`Remove ${domain}? The site goes back to its github.io address.`)) return;
+    if (next === null && !(await confirmModal(`Remove ${domain}? The site goes back to its github.io address.`, { confirmLabel: "Remove domain", danger: true }))) {
+      return;
+    }
     const result = await call<Publishing & { redeployed: boolean }>(next ? "save" : "remove", "/publishing/domain", "PUT", {
       domain: next,
     });
