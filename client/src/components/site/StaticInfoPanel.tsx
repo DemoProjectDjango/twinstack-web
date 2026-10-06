@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, workspacePath, type Json, type StaticSection } from "@/lib/site-api";
+import { markVisited } from "./HomePanel";
 import { JsonForm } from "./JsonForm";
 import { useSite } from "./site-context";
 import { Button, ErrorText, Notice, Section } from "./ui";
@@ -10,6 +11,7 @@ import { Button, ErrorText, Notice, Section } from "./ui";
 export function StaticInfoPanel() {
   const { owner, repo, busy, refresh } = useSite();
   const [sections, setSections] = useState<StaticSection[] | null>(null);
+  useEffect(() => markVisited(owner, repo, "details"), [owner, repo]);
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState<Json | null>(null);
   const [saving, setSaving] = useState(false);
@@ -67,7 +69,7 @@ export function StaticInfoPanel() {
 
   if (!sections) {
     return (
-      <Section title="Site information">
+      <Section title="Site details">
         {error ? <ErrorText error={error} /> : <p className="text-sm text-zinc-500">Loading…</p>}
       </Section>
     );
@@ -75,7 +77,7 @@ export function StaticInfoPanel() {
 
   return (
     <Section
-      title="Site information"
+      title="Site details"
       description="Facts that appear across the whole site. Change them here once and every page that uses them updates on the next build."
     >
       {sections.length === 0 ? (
@@ -111,7 +113,7 @@ export function StaticInfoPanel() {
               <ErrorText error={error} />
               {savedAt && !dirty && (
                 <Notice tone="success">
-                  Saved {savedAt}. Build a preview to see it on the site. The change is listed on the Changes tab until you publish it.
+                  Saved {savedAt}. The preview on Home updates by itself, and the change goes live when you publish.
                 </Notice>
               )}
               <div className="sticky bottom-0 flex flex-wrap items-center gap-2 border-t border-zinc-200 bg-background py-3 dark:border-zinc-800">

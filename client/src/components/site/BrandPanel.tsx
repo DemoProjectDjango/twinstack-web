@@ -132,7 +132,7 @@ export function BrandPanel() {
         <>
           The logo, icon and name in the site&apos;s header, footer and browser tab. They&apos;re kept in{" "}
           <code className="font-mono">site.config.json</code> (brand), and uploads go to{" "}
-          <code className="font-mono">assets/img/brand/</code>. Save, then build to see them; commit on the Changes tab.
+          <code className="font-mono">assets/img/brand/</code>. Save, and the preview on Home updates by itself.
         </>
       }
     >
@@ -238,7 +238,7 @@ export function BrandPanel() {
             >
               Discard changes
             </Button>
-            {saved && !dirty && <span className="text-xs text-zinc-500">Saved. Build the site to see it.</span>}
+            {saved && !dirty && <span className="text-xs text-zinc-500">Saved. The preview updates by itself.</span>}
           </div>
         </div>
       )}

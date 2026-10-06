@@ -37,7 +37,7 @@ const PAGES_LIST = "header-footer-pages";
  * shows the real result.
  */
 export function HeaderFooterPanel() {
-  const { owner, repo, busy, version, setStatus, run, job, showTab } = useSite();
+  const { owner, repo, busy, version, setStatus, job, showSection } = useSite();
   const [info, setInfo] = useState<NavigationInfo | null>(null);
   const [draft, setDraft] = useState<Navigation | null>(null);
   const [brand, setBrand] = useState<BrandInfo | null>(null);
@@ -160,7 +160,7 @@ export function HeaderFooterPanel() {
   }
 
   async function installTemplates() {
-    if (!confirm("This replaces templates/partials/header.html, templates/partials/footer.html and scripts/lib/content.js with the template's versions. Changes you made to those files by hand are lost (review them on the Changes tab before committing). Continue?")) return;
+    if (!confirm("This replaces templates/partials/header.html, templates/partials/footer.html and scripts/lib/content.js with the template's versions. Changes you made to those files by hand are lost (you can undo them on the Publish screen before publishing). Continue?")) return;
     setInstalling(true);
     setError(null);
     try {
@@ -199,27 +199,17 @@ export function HeaderFooterPanel() {
         ))}
       </datalist>
 
-      <div className="sticky top-0 z-30 flex flex-wrap items-center gap-3 rounded-lg border border-zinc-200 bg-background/95 px-4 py-2.5 backdrop-blur dark:border-zinc-800">
+      <div className="sticky top-16 z-10 flex flex-wrap items-center gap-3 rounded-lg border border-zinc-200 bg-background/95 px-4 py-2.5 backdrop-blur dark:border-zinc-800">
         <p className="mr-auto text-sm">
           {dirty ? (
             <span className="font-medium">You have unsaved changes.</span>
           ) : saved ? (
-            <span className="text-green-700 dark:text-green-400">Saved to content/data/navigation.json.</span>
+            <span className="text-green-700 dark:text-green-400">Saved. The preview on Home updates by itself.</span>
           ) : (
             <span className="text-zinc-500">Edit below or click any part of the preview. Changes show in the preview straight away.</span>
           )}
         </p>
-        {saved && !dirty && (
-          <Button
-            disabled={busy}
-            onClick={() => {
-              void run("preview");
-              showTab("build");
-            }}
-          >
-            Build and preview the site
-          </Button>
-        )}
+        {saved && !dirty && <Button onClick={() => showSection("home")}>See it on Home</Button>}
         <Button disabled={!dirty || disabled} onClick={discard}>
           Discard
         </Button>
@@ -276,7 +266,7 @@ export function HeaderFooterPanel() {
       {installed && (
         <Notice tone="success">
           {installed.length
-            ? `Updated ${installed.join(", ")}. Review them on the Changes tab.`
+            ? `Updated ${installed.join(", ")}. Publish to put them live.`
             : "The header and footer templates were already up to date."}
         </Notice>
       )}
@@ -316,9 +306,9 @@ export function HeaderFooterPanel() {
               label="Keep the header at the top of the screen while scrolling"
             />
             <p className="text-xs text-zinc-500">
-              The logo and site name come from{" "}
-              <button type="button" className="underline" onClick={() => showTab("info")}>
-                Site info
+              The logo is set in the Logo section above, and the site name in{" "}
+              <button type="button" className="underline" onClick={() => showSection("details")}>
+                Site details
               </button>
               . On a dark or brand-colour header, the logo for dark backgrounds is used when there is one.
             </p>
@@ -429,9 +419,9 @@ export function HeaderFooterPanel() {
                 label="Show the email address and phone number"
               />
               <p className="text-xs text-zinc-500">
-                The tagline and contact details are edited on{" "}
-                <button type="button" className="underline" onClick={() => showTab("info")}>
-                  Site info
+                The tagline and contact details are edited in{" "}
+                <button type="button" className="underline" onClick={() => showSection("details")}>
+                  Site details
                 </button>
                 .
               </p>

@@ -1,21 +1,31 @@
 "use client";
 
+import { ToolsNotice } from "./HomePanel";
+import { JobLog } from "./JobLog";
 import { useSite } from "./site-context";
-import { Button, Notice, Section } from "./ui";
+import { Button, Notice, ScreenHeader, Section } from "./ui";
 
+/** Advanced: the commands the editor normally runs by itself, their full output, and where the site stands in git. */
 export function BuildPanel() {
-  const { status, busy, run, version, showTab } = useSite();
+  const { status, busy, run } = useSite();
   const needsInstall = status.needsInstall;
 
   return (
-    <>
+    <div className="space-y-6">
+      <ScreenHeader
+        title="Build tools and log"
+        description="The editor builds the preview and installs what the site needs by itself. Use these when something looks wrong, and read the full output below."
+      />
+
+      <ToolsNotice />
+
       <Section
         title="Build"
-        description="Build and check is the same gate as npm run check: it fails on broken internal links or duplicate URLs, and warns about SEO gaps."
+        description="Build and check is the same check the live site runs before publishing: it fails on broken links between pages or two pages at the same address, and warns about missing search settings."
       >
         {needsInstall && (
           <div className="mb-4">
-            <Notice tone="warning">Dependencies need installing before anything can build.</Notice>
+            <Notice tone="warning">The site&apos;s dependencies need installing before anything can build.</Notice>
           </div>
         )}
         <div className="flex flex-wrap gap-2">
@@ -23,7 +33,7 @@ export function BuildPanel() {
             Build and check
           </Button>
           <Button disabled={busy || needsInstall} onClick={() => run("preview")}>
-            Build preview (with drafts)
+            Rebuild the preview (with hidden pages)
           </Button>
           <Button disabled={busy} onClick={() => run("install")}>
             Install dependencies
@@ -34,43 +44,29 @@ export function BuildPanel() {
         </div>
       </Section>
 
-      <Section
-        title="Preview"
-        description="Shows the last build. Build and check leaves drafts out; Build preview includes drafts and future-dated posts."
-      >
-        {status.previewUrl ? (
-          <>
-            <div className="mb-2 flex justify-end">
-              <a href={status.previewUrl} target="_blank" rel="noreferrer" className="text-sm text-zinc-500 hover:underline">
-                Open in a new tab ↗
-              </a>
-            </div>
-            {/* Sandboxed without allow-same-origin: the site's scripts can't act as the user on this app. */}
-            <iframe
-              key={version}
-              src={status.previewUrl}
-              title="Site preview"
-              sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-              className="h-[36rem] w-full rounded-md border border-zinc-200 bg-white dark:border-zinc-800"
-            />
-          </>
-        ) : status.build === "empty" ? (
-          <Notice tone="warning">
-            The last build has no pages, so there&apos;s no homepage to show. This site doesn&apos;t have any content files yet.
-            Create them from the{" "}
-            <button type="button" onClick={() => showTab("tree")} className="font-medium underline">
-              Site tree
-            </button>{" "}
-            tab (Scaffold missing pages), or add one on the{" "}
-            <button type="button" onClick={() => showTab("pages")} className="font-medium underline">
-              Pages
-            </button>{" "}
-            tab, then build again.
-          </Notice>
-        ) : (
-          <p className="text-sm text-zinc-500">Nothing built yet. Run a build to see the site here.</p>
-        )}
+      <Section title="Where the site stands">
+        <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[max-content_1fr]">
+          <dt className="text-zinc-500">Repository</dt>
+          <dd>
+            <a href={status.htmlUrl} target="_blank" rel="noreferrer" className="underline">
+              {status.fullName} on GitHub ↗
+            </a>
+          </dd>
+          <dt className="text-zinc-500">Branch</dt>
+          <dd className="font-mono">
+            {status.branch}
+            {!status.onDefaultBranch && <span className="font-sans text-zinc-500"> (the live branch is {status.defaultBranch})</span>}
+          </dd>
+          <dt className="text-zinc-500">Unpublished files</dt>
+          <dd>{status.changes.length}</dd>
+          <dt className="text-zinc-500">Commits not pushed</dt>
+          <dd>{status.ahead ?? "unknown"}</dd>
+          <dt className="text-zinc-500">Newer commits on GitHub</dt>
+          <dd>{status.behind ?? "unknown"}</dd>
+        </dl>
       </Section>
-    </>
+
+      <JobLog />
+    </div>
   );
 }

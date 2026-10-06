@@ -23,8 +23,8 @@ export async function Navbar() {
           {user ? (
             <>
               <Link
-                href="/dashboard"
-                title={user.email}
+                href="/settings"
+                title={`${user.email}: settings`}
                 className="flex items-center gap-2 text-sm text-zinc-600 hover:text-foreground dark:text-zinc-400"
               >
                 {user.github ? (

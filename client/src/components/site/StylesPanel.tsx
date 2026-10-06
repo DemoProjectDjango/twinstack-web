@@ -46,7 +46,7 @@ export function StylesPanel() {
         <>
           Edit the site&apos;s CSS. Global stylesheets are declared in the site tree as <code className="font-mono">- css/style.css</code>{" "}
           lines and are applied to every page converted with its styles kept that links them. Changes are saved to the files directly; review
-          and commit them on the Changes tab.
+          and publish them like any other change.
         </>
       }
     >

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, workspacePath, type Proposal, type WorkspaceStatus } from "@/lib/site-api";
 import { LiveDiff } from "./LiveDiff";
 import { useSite } from "./site-context";
-import { Button, ErrorText, Notice, Section, inputClass } from "./ui";
+import { Button, Details, ErrorText, Notice, inputClass } from "./ui";
 
 /** Claude commands whose preview this shows. */
 export const CLAUDE_PAGE_COMMANDS = ["page-edit", "page-generate", "page-convert", "md-edit"];
@@ -31,7 +31,7 @@ export function ProposalReview() {
   const loadedAt = useRef<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [applied, setApplied] = useState<{ file: string; files: string[]; page: boolean } | null>(null);
+  const [applied, setApplied] = useState(false);
 
   // After every command re-read the proposal. The text is only replaced when a new proposal arrives.
   useEffect(() => {
@@ -47,7 +47,7 @@ export function ProposalReview() {
           loadedAt.current = stamp;
           setDraft(next?.content ?? "");
           setPreviewedDraft(null);
-          if (next) setApplied(null);
+          if (next) setApplied(false);
         }
       })
       .catch((err) => !cancelled && setError(err));
@@ -66,7 +66,7 @@ export function ProposalReview() {
         { method: "POST", body: { content: draft } },
       );
       setStatus(result.status);
-      setApplied({ file: result.file, files: result.files ?? [], page: proposal.mode !== "markdown" });
+      setApplied(true);
       setProposal(null);
       loadedAt.current = null;
       await refresh();
@@ -120,127 +120,72 @@ export function ProposalReview() {
     <>
       {applied && (
         <Notice tone="success">
-          Saved <code className="font-mono">{applied.file}</code>
-          {applied.files.map((f) => (
-            <span key={f}>
-              {" "}
-              and <code className="font-mono">{f}</code>
-            </span>
-          ))}
-          .{" "}
-          {applied.page ? "Build a preview to see it, or review it on the Changes tab." : "Review it on the Changes tab."}
+          Kept. It&apos;s in your list of changes to publish, and the preview on Home updates by itself.
         </Notice>
       )}
       {claudeJob?.status === "failed" && !proposal && (
-        // The Claude tab has no Output panel, so the end of the run's output is shown here.
+        // The page editor has no output panel, so the end of the run's output is shown here.
         <Notice tone="warning">
-          Claude&apos;s run didn&apos;t complete:
-          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">
-            {claudeJob.output.trim().split("\n").slice(-15).join("\n")}
-          </pre>
+          Claude couldn&apos;t finish this time. Try again, perhaps with a shorter or clearer request.
+          <div className="mt-2">
+            <Details summary="What went wrong (technical)">
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">
+                {claudeJob.output.trim().split("\n").slice(-15).join("\n")}
+              </pre>
+            </Details>
+          </div>
         </Notice>
       )}
       {!proposal && error !== null && <ErrorText error={error} />}
 
       {proposal && (
-        <Section
-          title={generated ? "Finished page" : converted ? "Converted page" : proposal.mode === "markdown" ? "Proposed file" : "Proposed page"}
-          description={
-            <>
+        <section className="space-y-4 rounded-lg border-2 border-foreground p-5">
+          <div>
+            <h3 className="font-semibold">
               {generated
-                ? "Claude's finished version of your draft of"
+                ? "Claude's finished page"
                 : converted
-                  ? `Claude's conversion of ${proposal.source ?? "the HTML page"} into`
-                  : "Claude's complete new version of"}{" "}
-              <code className="font-mono">{proposal.file}</code>. Nothing is saved yet. Edit the text if you want, then apply it.
-              Applying doesn&apos;t call Claude again.
-            </>
-          }
-        >
-          <div className="space-y-3">
-            {proposal.instruction && (
-              <p className="text-sm">
-                <span className="text-zinc-500">{generated || converted ? "Direction:" : "Instruction:"}</span> {proposal.instruction}
-              </p>
-            )}
-            {proposal.images.length > 0 && (
-              <p className="break-all text-sm">
-                <span className="text-zinc-500">Images:</span> {proposal.images.join(", ")}
-              </p>
-            )}
-            {proposal.files.map((extra) => (
-              <details
-                key={extra.file}
-                open={extra.file.startsWith("content/data/")}
-                className="rounded-md border border-zinc-200 p-2 text-sm dark:border-zinc-800"
-              >
-                <summary className="cursor-pointer">
-                  Also writes <code className="font-mono">{extra.file}</code> ({Math.ceil(extra.content.length / 1024)} KB):{" "}
-                  {extraFileRole(extra.file)}
-                </summary>
-                {extra.file.startsWith("content/data/") && extra.original != null ? (
-                  <div className="mt-2">
-                    <LiveDiff before={extra.original} after={extra.content} label={`Changes to ${extra.file}`} />
-                  </div>
-                ) : (
-                  <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">{extra.content}</pre>
-                )}
-              </details>
-            ))}
-            {proposal.checks?.length > 0 && (
-              <div className="rounded-md border border-zinc-200 p-3 text-sm dark:border-zinc-800">
-                <span className="font-medium">Tested before showing you this:</span>
-                <ul className="mt-1 list-disc pl-5 text-zinc-600 dark:text-zinc-400">
-                  {proposal.checks.map((check) => (
-                    <li key={check}>{check}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {proposal.summary?.length > 0 && (
-              <div className="text-sm">
-                <span className="text-zinc-500">Work-log summary, saved with the change when you apply it:</span>
-                <ul className="mt-1 list-disc pl-5">
-                  {proposal.summary.map((point) => (
-                    <li key={point}>{point}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {proposal.problems.length > 0 && (
-              <Notice tone="warning">
-                The script wouldn&apos;t write this version itself. Check this before applying:
-                <ul className="mt-1 list-disc pl-5">
-                  {proposal.problems.map((problem) => (
-                    <li key={problem}>{problem}</li>
-                  ))}
-                </ul>
-              </Notice>
-            )}
-            {proposal.warnings.length > 0 && (
-              <Notice>
-                Worth a look:
-                <ul className="mt-1 list-disc pl-5">
-                  {proposal.warnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              </Notice>
-            )}
-            <div className="grid gap-3 lg:grid-cols-2">
-              <textarea
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                rows={24}
-                spellCheck={false}
-                aria-label={`Proposed contents of ${proposal.file}`}
-                className={`${inputClass} font-mono text-xs leading-relaxed`}
-                disabled={applying || busy}
-              />
-              <LiveDiff before={proposal.original ?? ""} after={draft} label={`Changes to ${proposal.file}`} />
+                  ? `The page from ${proposal.source ?? "your old website"}`
+                  : proposal.mode === "markdown"
+                    ? "Claude's version of the file"
+                    : "Claude's changed page"}
+            </h3>
+            <p className="mt-1 text-sm text-zinc-500">Nothing is kept yet. Check it, then keep it or throw it away.</p>
+          </div>
+
+          {proposal.summary?.length > 0 && (
+            <div className="text-sm">
+              <p className="font-medium">What Claude did</p>
+              <ul className="mt-1 list-disc pl-5 text-zinc-700 dark:text-zinc-300">
+                {proposal.summary.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
             </div>
-            {pageProposal && (
-              <PagePreview
+          )}
+          {proposal.problems.length > 0 && (
+            <Notice tone="warning">
+              This version didn&apos;t pass some checks. Look at these before keeping it:
+              <ul className="mt-1 list-disc pl-5">
+                {proposal.problems.map((problem) => (
+                  <li key={problem}>{problem}</li>
+                ))}
+              </ul>
+            </Notice>
+          )}
+          {proposal.warnings.length > 0 && (
+            <Notice>
+              Worth a look:
+              <ul className="mt-1 list-disc pl-5">
+                {proposal.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </Notice>
+          )}
+
+          {pageProposal && (
+            <PagePreview
               proposal={proposal}
               supported={canPreview}
               building={building}
@@ -248,27 +193,83 @@ export function ProposalReview() {
               outdated={previewedDraft !== null && draft !== previewedDraft}
               disabled={applying || busy || !draft.trim()}
               onBuild={previewPage}
-              />
+            />
+          )}
+
+          <ErrorText error={error} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="primary" disabled={applying || busy || !draft.trim()} onClick={apply}>
+              {applying ? "Keeping…" : "Keep this version"}
+            </Button>
+            <Button disabled={applying || busy} onClick={discard}>
+              Throw it away
+            </Button>
+            {draft !== proposal.content && (
+              <>
+                <span className="text-xs text-zinc-500">You&apos;ve edited Claude&apos;s text.</span>
+                <Button variant="ghost" className="text-xs" disabled={applying || busy} onClick={() => setDraft(proposal.content)}>
+                  Undo my edits
+                </Button>
+              </>
             )}
-            <ErrorText error={error} />
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="primary" disabled={applying || busy || !draft.trim()} onClick={apply}>
-                {applying ? "Applying…" : "Apply this version"}
-              </Button>
-              <Button disabled={applying || busy} onClick={discard}>
-                Discard
-              </Button>
-              {draft !== proposal.content && (
-                <>
-                  <span className="text-xs text-zinc-500">Edited by you.</span>
-                  <Button variant="ghost" className="text-xs" disabled={applying || busy} onClick={() => setDraft(proposal.content)}>
-                    Reset to Claude&apos;s version
-                  </Button>
-                </>
+          </div>
+
+          <Details summary="Change the text before keeping it" open={!pageProposal}>
+            <div className="space-y-3">
+              {proposal.instruction && (
+                <p className="text-sm">
+                  <span className="text-zinc-500">You asked:</span> {proposal.instruction}
+                </p>
+              )}
+              {proposal.images.length > 0 && (
+                <p className="break-all text-sm">
+                  <span className="text-zinc-500">Photos:</span> {proposal.images.join(", ")}
+                </p>
+              )}
+              <div className="grid gap-3 lg:grid-cols-2">
+                <textarea
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  rows={24}
+                  spellCheck={false}
+                  aria-label={`Proposed contents of ${proposal.file}`}
+                  className={`${inputClass} font-mono text-xs leading-relaxed`}
+                  disabled={applying || busy}
+                />
+                <LiveDiff before={proposal.original ?? ""} after={draft} label={`Changes to ${proposal.file}`} />
+              </div>
+              {proposal.files.map((extra) => (
+                <details
+                  key={extra.file}
+                  open={extra.file.startsWith("content/data/")}
+                  className="rounded-md border border-zinc-200 p-2 text-sm dark:border-zinc-800"
+                >
+                  <summary className="cursor-pointer">
+                    Also writes <code className="font-mono">{extra.file}</code> ({Math.ceil(extra.content.length / 1024)} KB):{" "}
+                    {extraFileRole(extra.file)}
+                  </summary>
+                  {extra.file.startsWith("content/data/") && extra.original != null ? (
+                    <div className="mt-2">
+                      <LiveDiff before={extra.original} after={extra.content} label={`Changes to ${extra.file}`} />
+                    </div>
+                  ) : (
+                    <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">{extra.content}</pre>
+                  )}
+                </details>
+              ))}
+              {proposal.checks?.length > 0 && (
+                <div className="rounded-md border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+                  <span className="font-medium">Tested before showing you this:</span>
+                  <ul className="mt-1 list-disc pl-5 text-zinc-600 dark:text-zinc-400">
+                    {proposal.checks.map((check) => (
+                      <li key={check}>{check}</li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
-          </div>
-        </Section>
+          </Details>
+        </section>
       )}
     </>
   );
@@ -318,12 +319,8 @@ function PagePreview({
   return (
     <div className="space-y-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
       <div className="flex flex-wrap items-center gap-2">
-        <h4 className="text-sm font-medium">The page with this change</h4>
-        {preview && (
-          <span className="text-xs text-zinc-500">
-            {preview.edited ? "built from your edited text" : "built from Claude's version"}, not saved
-          </span>
-        )}
+        <h4 className="text-sm font-medium">How the page will look</h4>
+        {preview?.edited && <span className="text-xs text-zinc-500">with your edits</span>}
         {supported && (
           <span className="ml-auto flex items-center gap-1">
             {(["desktop", "phone"] as const).map((w) => (
@@ -334,12 +331,12 @@ function PagePreview({
                 aria-pressed={width === w}
                 className={`rounded px-2.5 py-1 text-xs font-medium ${width === w ? "bg-foreground text-background" : "hover:bg-zinc-100 dark:hover:bg-zinc-900"}`}
               >
-                {w === "desktop" ? "Desktop" : "Phone"}
+                {w === "desktop" ? "Computer" : "Phone"}
               </button>
             ))}
             {preview && (
               <a href={preview.url} target="_blank" rel="noreferrer" className="ml-2 text-sm text-zinc-500 hover:underline">
-                Open in a new tab ↗
+                Open full size ↗
               </a>
             )}
           </span>
@@ -348,38 +345,44 @@ function PagePreview({
 
       {!supported ? (
         <Notice>
-          This site&apos;s build script is older than page previews, so only the text changes are shown above. Update its build files
-          from the template (<code className="font-mono">scripts/build.js</code>, <code className="font-mono">check.js</code>,{" "}
-          <code className="font-mono">lib/content.js</code>, <code className="font-mono">lib/seo.js</code> and the deploy workflow,
-          as uncommitted changes you review on the Changes tab), then preview the change again.{" "}
+          Your site&apos;s tools are too old to show the page itself here, only its text (under &quot;Change the text before
+          keeping it&quot;).{" "}
           <Button variant="ghost" className="underline" disabled={busy || updating} onClick={updateBuildFiles}>
-            {updating ? "Updating…" : "Update the build files"}
+            {updating ? "Updating…" : "Update the site tools"}
           </Button>
+          , then ask Claude again.
+          <span className="mt-1 block text-xs opacity-80">
+            Technical: copies scripts/build.js, check.js, lib/content.js, lib/seo.js and the deploy workflow from the template.
+          </span>
           <ErrorText error={error} />
         </Notice>
       ) : (
         <>
           {failedOutput !== null && !building && (
             <Notice tone="warning">
-              The page couldn&apos;t be built:
-              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">
-                {failedOutput.trim().split("\n").slice(-12).join("\n")}
-              </pre>
+              The page couldn&apos;t be shown.
+              <div className="mt-2">
+                <Details summary="What went wrong (technical)">
+                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">
+                    {failedOutput.trim().split("\n").slice(-12).join("\n")}
+                  </pre>
+                </Details>
+              </div>
             </Notice>
           )}
           {(outdated || (!preview && !building)) && (
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="text-zinc-500">
-                {outdated ? "You've edited the text since this was built." : "Not built yet."}
+                {outdated ? "You've edited the text since this was shown." : "Not shown yet."}
               </span>
               <Button disabled={disabled} onClick={onBuild}>
-                {outdated ? "Update the preview" : "Build the page"}
+                {outdated ? "Show it with my edits" : "Show the page"}
               </Button>
             </div>
           )}
-          {building && <p className="text-sm text-zinc-500">Building the page with this change…</p>}
+          {building && <p className="text-sm text-zinc-500">Getting the page ready…</p>}
           {preview && (
-            // Sandboxed without allow-same-origin, like the Build tab's preview.
+            // Sandboxed without allow-same-origin, like the Home preview.
             <iframe
               key={preview.builtAt}
               src={preview.url}

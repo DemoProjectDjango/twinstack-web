@@ -31,10 +31,10 @@ export function JobLog() {
   }
 
   return (
-    <aside className="lg:sticky lg:top-6 lg:self-start">
+    <section aria-label="Command output">
       <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
         <div className="flex items-center gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
-          <h3 className="text-sm font-semibold">Output</h3>
+          <h3 className="text-sm font-semibold">Full output</h3>
           {job && (
             <span className={`text-xs ${STATUS_STYLES[job.status]}`}>
               {job.label} · {job.status === "running" ? "running…" : job.status}
@@ -53,9 +53,9 @@ export function JobLog() {
           {job?.output ||
             (status.busy && !job
               ? `Busy: ${status.busy}`
-              : "Command output appears here. Every change stays in this workspace until you commit it on the Changes tab.")}
+              : "The output of the latest command appears here.")}
         </pre>
       </div>
-    </aside>
+    </section>
   );
 }

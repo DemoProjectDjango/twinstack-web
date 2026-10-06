@@ -43,7 +43,7 @@ appear on the dashboard (`server/src/sites.js`). A repo counts as a copy only if
 which records it by repo id (so renaming it is fine). Copies made before that record existed can be recorded with
 `npm --prefix server run record-copies -- <owner/repo> …`.
 
-- The **template** can only be duplicated. Its **Manage site** button is disabled, and the API refuses to open it.
+- The **template** can only be duplicated. It isn't listed on the dashboard (it's the **Create my site** action), and the API refuses to open it.
 - **Copies** can only be managed, not duplicated.
 
 ### Scopes
@@ -58,7 +58,7 @@ access). Users can request access from <https://github.com/settings/connections/
 
 ### Duplicating a repository
 
-The site template has a **Duplicate** button. It calls
+**Create my site** on the dashboard duplicates the site template. It calls
 `POST /api/repos/:owner/:repo/duplicate` with `{ name, private }`, and Express:
 
 1. creates the new repo in the user's account (`POST /user/repos`),
@@ -74,20 +74,26 @@ host needs `git` installed. Git LFS objects, issues, PRs, wikis and settings are
 
 ### Site manager
 
-Copies of the site template have a **Manage site** button (`/sites/:owner/:repo`). For a copy that
-has `site.config.json` and `scripts/build.js`, it runs the site's `npm run` commands from a web page:
+Each copy of the site template has an **Open editor** button on the dashboard (`/sites/:owner/:repo`). New
+copies are made with **Create my site**, which duplicates the template. For a copy that has
+`site.config.json` and `scripts/build.js`, the editor runs the site's `npm run` commands from a web page,
+in plain language for people who don't know git:
 
-| Tab | Site command |
-| --- | --- |
-| Build & preview | `check`, `build --drafts` (shown in an iframe), `npm ci`, `changelog` |
-| Pages | `new <type> "Title" [--draft] [--slug=]` |
-| SEO | `seo` (scores every page and lists what to fix), each page as a Google result (desktop and mobile) and a shared link, updating as you type; set a page's title, description, focus keyphrase, social image (picked from the site's images, uploaded, or a URL), canonical and noindex (`seo <page> --title=…`), have Claude suggest them for one page and apply or edit the suggestion (`seo <page> --claude --dry-run`), or write them for every page (`seo --all --claude`). Older copies get the SEO files from the template with one button |
-| Header & footer | A live preview (desktop and mobile; click any part to edit it) and an editor for `content/data/navigation.json`: menu items (links, dropdowns, automatic collection menus) in any order, the header button, footer columns and legal links, plus the header and footer colours, menu position, sticky header, what the footer shows and its copyright line. Links to pages the site doesn't have yet are flagged. **Add a new section** still runs `nav:add` to set up a new collection |
-| Site info | edits `site.config.json` (name, taglines, contact, social, SEO settings) and `content/data/*.json` (company facts, FAQ, testimonials, homepage sections, redirects) in forms |
-| Edit with Claude | **Write & generate**: write a page's `.md` yourself (rough copy, notes, images inserted at the cursor from uploads, `assets/img/` or URLs) and `page:generate` has Claude turn that draft into the finished page, keeping your facts and adding none. **Edit by instruction**: `page:edit` on one `.md` page, with optional images. **Convert HTML**: upload an existing `.html` page and pick the page it becomes. The old site's header, footer, navigation and sidebars are removed, and Claude converts the rest to markdown, keeping its wording and the page's frontmatter. Tick "Keep the old page's styling" (and add the `.css` files the page links) to copy the page as-is with its own CSS, scoped to that page, instead. Whichever mode you use, the preview shows the complete proposed file with any problems or warnings, and it can be edited and then applied without calling Claude again. Below the changes, the page itself is shown as it would be built with the change applied (nothing is saved), at desktop or phone width; after editing the text, **Update the preview** rebuilds it with your edits. |
-| Site tree | edits `scripts/site-tree.md`, then `scaffold` / `scaffold:preview` / `--force` |
-| Schedule | edits the job list in `scripts/scaffold-schedule.md`, then `scaffold:schedule` / preview |
-| Changes | diff, discard, commit, push |
+| Screen | What it does | Site command |
+| --- | --- | --- |
+| Home | The site's live address and deploy status, next steps, and a preview (computer or phone width) that rebuilds by itself after every change | `build --drafts` |
+| Pages | Every page; **Add a page** (type, title, and how to fill it: write it yourself, Claude writes it from your notes, or bring in a page from another website); the page editor | `new <type> "Title" [--draft] [--slug=]` |
+| Page editor → Content | **Write it yourself**: the page's text (its frontmatter folded away as "Page settings"), photos inserted at the cursor, saved as is or polished by Claude. **Ask Claude to change it**: an instruction, with optional photos. **Bring in a page from another website**: upload a saved `.html` page (and optionally its `.css`/`.js`); the old header, footer and navigation are removed and the rest is kept as it looked, or rewritten in the site's design. Claude's version is shown with what it did, any problems, and the built page; keep it, throw it away, or edit the text first (nothing calls Claude again) | `page:generate`, `page:edit`, `page:convert` |
+| Page editor → Search and sharing | The page as a Google result (desktop and mobile) and a shared link, updating as you type; its title, description, focus keyphrase, social image, canonical and noindex, or a suggestion from Claude | `seo <page> --title=…`, `seo <page> --claude --dry-run` |
+| Design | Logo, and a live preview and editor of the header and footer (`content/data/navigation.json`): menu items, dropdowns, automatic collection menus, the header button, footer columns, legal links, colours and layout. **Add a new section** sets up a new collection | `nav:add` |
+| Site details | `site.config.json` (name, taglines, contact, social, SEO settings) and `content/data/*.json` (company facts, FAQ, testimonials, homepage sections, redirects) in forms | |
+| Publish | Every change since the last publish, in plain words, with undo; **Publish now** commits and pushes straight to the live branch, or **Send for review** opens a pull request (under More options). Also a custom domain | git |
+| Advanced → Search overview | Every page's SEO score and what to fix; Claude writes search text for every page | `seo`, `seo --all --claude` |
+| Advanced → Site plan, Scheduled pages | `scripts/site-tree.md` and `scripts/scaffold-schedule.md` | `scaffold`, `scaffold:schedule` |
+| Advanced → What Claude remembers, Styles (CSS) | `knowledge/notes.md` and the work log; the site's stylesheets | |
+| Advanced → Build tools and log | Build and check, rebuild the preview, install dependencies, changelog, the full command output, and the branch and commit status | `check`, `npm ci`, `changelog` |
+
+Older copies that lack newer template files get them from one **Update site tools** button on Home.
 
 How it works:
 
@@ -97,7 +103,7 @@ How it works:
   polls for output. Only a short list of variables like `PATH` and `HOME` is passed to the scripts.
   The GitHub token and server secrets are never passed. `ANTHROPIC_API_KEY` is passed only to the
   Claude commands.
-- Claude commands use **the user's own Anthropic key**. It's entered on the dashboard, checked with
+- Claude commands use **the user's own Anthropic key**. It's entered in Settings, checked with
   Anthropic, and stored encrypted in MongoDB. The browser only ever gets the masked hint back.
 - By default, publishing creates a branch (`twinstack/<date>-<time>`), pushes it and opens a pull
   request into the default branch. Later commits on that branch update the same PR. Pushing directly

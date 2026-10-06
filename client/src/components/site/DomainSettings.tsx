@@ -70,17 +70,17 @@ export function DomainSettings({ publishing, onChange }: { publishing: Publishin
   }
 
   return (
-    <div className="mt-2 border-t border-zinc-200 pt-2 dark:border-zinc-800">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 text-xs font-medium" aria-expanded={open}>
+    <div>
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 text-sm font-medium" aria-expanded={open}>
         <span
           aria-hidden="true"
           className={`inline-block text-2xl leading-none transition-transform duration-200 ease-out motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
         >
           ▸
         </span>
-        <span>Custom domain</span>
+        <span>Use my own domain name</span>
         <span className="font-normal text-zinc-500">
-          {domain ? `${domain}${publishing.httpsEnforced ? " · HTTPS" : ""}` : "none, using github.io"}
+          {domain ? `${domain}${publishing.httpsEnforced ? " · secure (HTTPS)" : ""}` : "not set up"}
         </span>
       </button>
 

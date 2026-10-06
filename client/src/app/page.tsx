@@ -1,52 +1,62 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
 import { getUser } from "@/lib/session";
 
 const STEPS = [
-  { id: "get-access", title: "Get access", text: "Create an account, connect GitHub, add your Anthropic key." },
-  { id: "copy", title: "Copy the site", text: "Duplicate twinstack-site into your account." },
-  { id: "work", title: "Work on it", text: "Pages, navigation, Claude edits and previews." },
-  { id: "publish", title: "Publish", text: "Review the changes and open a pull request." },
+  {
+    title: "Sign up and connect GitHub",
+    text: "Create your account, then connect GitHub: the free service that stores your site and puts it on the web.",
+  },
+  {
+    title: "Create your site",
+    text: "Give it a name. You get your own copy of the TwinStack website with its own web address.",
+  },
+  {
+    title: "Make it yours and publish",
+    text: "Add your logo and pages, check the preview, and press Publish. Your site is live a minute later.",
+  },
 ];
 
-const TABS = [
-  ["Build & preview", "Build the site and check it for broken links, or build a preview that includes drafts.", "npm run check"],
-  ["Pages", "Create a page, product, service, blog post or case study, and see every page in the site.", "npm run new"],
-  ["Navigation", "Add or remove header links, including menus that list a collection automatically.", "nav:add, nav:remove"],
-  ["Edit with Claude", "Write a page's draft yourself (text, images, image URLs) and Claude turns it into the finished page, or change a page from a plain-English instruction. Preview first.", "page:generate, page:edit"],
-  ["Site tree", "Edit the list of pages the site should have, then create the ones that are missing.", "scaffold"],
-  ["Schedule", "Plan pages for a date: Claude writes them from your brief, or a finished file is moved into place.", "scaffold:schedule"],
-  ["Changes", "See every changed file, discard what you don't want, and publish the rest.", "git"],
+const FEATURES = [
+  ["Pages", "Add pages, blog posts, services and products, and write them in plain text."],
+  ["Design", "Upload your logo, pick colours, and arrange the menu and footer with a live preview."],
+  ["Claude, if you want it", "Give Claude your notes and it writes the page, or ask it to change a page in your own words. You always see the result first."],
+  ["Bring your old site", "Upload pages saved from your old website and Claude fits them into the new one."],
+  ["Found on Google", "See how each page shows up in search results and when it's shared, and improve it."],
+  ["One-click publishing", "See every change before it goes live, undo what you don't want, and publish with one button."],
 ];
 
 const HELP = [
   {
-    q: "It says my GitHub access has expired, or asks me to reconnect GitHub",
-    a: "Click Reconnect GitHub. GitHub access can expire, and an older connection may lack a permission the app now needs. Your account and Anthropic key are kept.",
+    q: "Do I need to know how to code?",
+    a: "No. You write text, pick colours and press buttons. The technical parts are tucked away under Advanced for anyone who wants them.",
   },
   {
-    q: "A repository I expect is missing from the dashboard",
-    a: "Check the Private / Public / All filter. For an organisation's repository, the organisation has to allow this app under Settings → Third-party access. You can request that from your GitHub application settings.",
+    q: "What is GitHub, and why do I need it?",
+    a: "GitHub is a free service that stores your site's files and publishes your site on the web. You create a GitHub account once and connect it; after that, Twinstack does everything there for you.",
   },
   {
-    q: "“Only sites duplicated from … in this app can be managed here”",
-    a: "The site manager only opens copies made with the Duplicate button on the dashboard. Duplicate the site template to get one. If you can't see the template, ask its owner to give your GitHub account access to it.",
+    q: "What does Claude cost?",
+    a: "Claude is optional. To use it, add your own Anthropic API key in Settings; its use is billed to your Anthropic account. Everything else works without it.",
   },
   {
-    q: "“This isn't a TwinStack site repository”",
-    a: "The site manager only opens copies of the template that have site.config.json and scripts/build.js on the default branch. Duplicate the template and manage the copy.",
+    q: "It says my GitHub connection has expired",
+    a: "Click Reconnect GitHub. Connections can expire, and an older one may lack a permission the app now needs. Your account, sites and settings are kept.",
   },
   {
-    q: "“The workspace is busy”",
-    a: "Only one command runs at a time. Watch the Output panel. You can cancel the running command there.",
+    q: "I can't create a site",
+    a: "Your GitHub account needs access to the TwinStack template. Ask its owner to share it with you, then refresh the page.",
   },
   {
-    q: "The Claude buttons are disabled",
-    a: "Add your Anthropic API key on the dashboard. The previews for scheduled pages work without one.",
+    q: "A button is greyed out while something is happening",
+    a: "One thing runs at a time on a site. A message at the bottom of the screen says what's happening, and you can cancel it there.",
   },
   {
-    q: "Publishing failed",
-    a: "Your commit is kept in the workspace. Fix the cause shown, then press Push on the Changes tab to try again.",
+    q: "Publishing didn't work",
+    a: "Nothing is lost: your changes stay on the Publish screen. Fix what the message says (often reconnecting GitHub), then press Publish again.",
+  },
+  {
+    q: "Can someone check changes before they go live?",
+    a: "Yes. On the Publish screen, open More options and choose Send for review. The changes go live once the review is approved on GitHub.",
   },
 ];
 
@@ -54,248 +64,93 @@ export default async function Home() {
   const user = await getUser();
 
   return (
-    <main className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24">
+    <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24">
       {/* Hero */}
-      <section className="py-16 text-center sm:py-20">
-        <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Run the TwinStack site from your browser</h1>
-        <p className="mx-auto mt-4 max-w-xl text-zinc-500">
-          Copy twinstack-site into your GitHub account, then add pages, edit them with Claude, preview the result and publish it.
-          No terminal needed.
+      <section className="py-16 text-center sm:py-24">
+        <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Build your website, step by step</h1>
+        <p className="mx-auto mt-4 max-w-xl text-lg text-zinc-500">
+          Start from a ready-made site, make it yours, and publish it with one click. No code, no technical setup.
         </p>
-
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           {user ? (
             <Link
               href="/dashboard"
-              className="inline-flex items-center justify-center rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-90"
+              className="inline-flex items-center justify-center rounded-md bg-foreground px-6 py-3 text-sm font-medium text-background hover:opacity-90"
             >
-              Go to your dashboard
+              Go to your sites
             </Link>
           ) : (
             <>
               <Link
                 href="/register"
-                className="inline-flex items-center justify-center rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-90"
+                className="inline-flex items-center justify-center rounded-md bg-foreground px-6 py-3 text-sm font-medium text-background hover:opacity-90"
               >
-                Create an account
+                Get started
               </Link>
               <Link
                 href="/login"
-                className="inline-flex items-center justify-center rounded-md border border-zinc-300 px-5 py-2.5 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+                className="inline-flex items-center justify-center rounded-md border border-zinc-300 px-6 py-3 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
               >
                 Log in
               </Link>
             </>
           )}
-          <a
-            href="#guide"
-            className="inline-flex items-center justify-center rounded-md border border-zinc-300 px-5 py-2.5 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
-          >
-            Read the guide
-          </a>
         </div>
       </section>
 
-      {/* Step overview */}
-      <section id="guide" aria-labelledby="guide-heading">
-        <h2 id="guide-heading" className="text-sm font-medium uppercase tracking-wide text-zinc-500">
+      <section id="how" aria-labelledby="how-heading" className="scroll-mt-20">
+        <h2 id="how-heading" className="text-center text-2xl font-semibold tracking-tight">
           How it works
         </h2>
-        <ol className="mt-4 grid gap-3 sm:grid-cols-2">
+        <ol className="mt-8 grid gap-4 sm:grid-cols-3">
           {STEPS.map((step, index) => (
-            <li key={step.id}>
-              <a
-                href={`#${step.id}`}
-                className="flex h-full gap-3 rounded-lg border border-zinc-200 p-4 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
-              >
-                <StepNumber>{index + 1}</StepNumber>
-                <span>
-                  <span className="block font-medium">{step.title}</span>
-                  <span className="block text-sm text-zinc-500">{step.text}</span>
-                </span>
-              </a>
+            <li key={step.title} className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
+              <span className="grid size-8 place-items-center rounded-full bg-foreground text-sm font-medium text-background">
+                {index + 1}
+              </span>
+              <p className="mt-4 font-medium">{step.title}</p>
+              <p className="mt-1 text-sm text-zinc-500">{step.text}</p>
             </li>
           ))}
         </ol>
       </section>
 
-      <Step id="get-access" number={1} title="Get access">
-        <ol className="list-decimal space-y-3 pl-5">
-          <li>
-            <strong>
-              <Link href="/register" className="underline">
-                Create an account
-              </Link>
-            </strong>{" "}
-            with your name, email and a password of at least 8 characters, or{" "}
-            <Link href="/login" className="underline">
-              log in
-            </Link>{" "}
-            if you already have one.
-          </li>
-          <li>
-            <strong>Connect GitHub</strong> from the dashboard. GitHub asks you to approve four permissions: read your profile,
-            read your email address, access your repositories (public and private, read and write) and update GitHub Actions
-            workflows. The app needs repository access to list, copy and push your repositories. It needs the workflow permission
-            because the site includes a deploy workflow, and GitHub refuses pushes that contain workflow files without it. The
-            connection stays with your account, so you only do this once. You can disconnect it from the dashboard at any time.
-          </li>
-          <li>
-            <strong>Check that you can see the site template.</strong> It&apos;s a private repository, so it only appears on your
-            dashboard once its owner has given the GitHub account you connected access to it.
-          </li>
-          <li>
-            <strong>Add your Anthropic API key</strong> on the{" "}
-            <Link href="/dashboard#anthropic-key" className="underline">
-              dashboard
-            </Link>{" "}
-            if you want to use Claude (Edit with Claude and scheduled pages). The key is checked with Anthropic, then stored
-            encrypted on the server for your account. Usage is billed to your Anthropic account, and you can remove the key any
-            time. Everything else works without a key.
-          </li>
-        </ol>
-        <Tip>
-          Repositories that belong to an organisation only appear if the organisation allows this app, under Settings →
-          Third-party access.
-        </Tip>
-      </Step>
-
-      <Step id="copy" number={2} title="Copy the site to your account">
-        <ol className="list-decimal space-y-3 pl-5">
-          <li>
-            Open the{" "}
-            <Link href="/dashboard#repositories" className="underline">
-              dashboard
-            </Link>{" "}
-            and find <code className="font-mono text-sm">twinstack-site</code>. Use the filter box and the Private / Public / All
-            switch.
-          </li>
-          <li>
-            Click <strong>Duplicate</strong>, choose a name for your copy and whether it&apos;s private, then click{" "}
-            <strong>Create &amp; push</strong>.
-          </li>
-          <li>
-            The new repository is created in your account with every branch, tag and commit. Once it&apos;s done, it&apos;s added to your list.
-          </li>
-        </ol>
-        <Tip>
-          Issues, pull requests, wikis, repository settings and Git LFS files aren&apos;t copied. If copying fails partway, try
-          again with the same name: the empty repository that was left behind is reused. The template itself can&apos;t be managed. Your changes always go into your own copy.
-        </Tip>
-      </Step>
-
-      <Step id="work" number={3} title="Work on your site">
-        <p>
-          Click <strong>Manage site</strong> next to your copy. The first time, the server clones the repository and installs its
-          dependencies, which takes about a minute. After that, opening the site fetches the latest from GitHub. Work you
-          haven&apos;t published yet is kept, even if you close the page.
-        </p>
-        <div className="mt-5 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900">
-              <tr>
-                <th className="px-3 py-2 font-medium">Tab</th>
-                <th className="px-3 py-2 font-medium">What you can do</th>
-                <th className="px-3 py-2 font-medium">Same as</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-              {TABS.map(([tab, what, command]) => (
-                <tr key={tab}>
-                  <td className="whitespace-nowrap px-3 py-2 font-medium">{tab}</td>
-                  <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{what}</td>
-                  <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-zinc-500">{command}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <Tip>
-          One command runs at a time. Its output appears in the Output panel, where you can also cancel it. Claude edits have a
-          Preview button that shows the proposed file without writing it.
-        </Tip>
-      </Step>
-
-      <Step id="publish" number={4} title="Publish your changes">
-        <ol className="list-decimal space-y-3 pl-5">
-          <li>
-            Open the <strong>Changes</strong> tab. Expand a file to see its diff, or select files and discard them.
-          </li>
-          <li>
-            Write a commit message and choose how to publish:
-            <ul className="mt-2 list-disc space-y-2 pl-5">
-              <li>
-                <strong>New branch and pull request</strong> (recommended). Your changes go to a new branch, named{" "}
-                <code className="font-mono text-sm">twinstack/&lt;date&gt;-&lt;time&gt;</code> unless you pick a name, and a pull
-                request is opened into the default branch. Review and merge it on GitHub. Later commits on that branch update the
-                same pull request.
-              </li>
-              <li>
-                <strong>Push directly</strong> to the current branch. This skips review. If the site&apos;s deploy workflow builds
-                from that branch, the live site changes straight away.
-              </li>
-            </ul>
-          </li>
-          <li>
-            When the pull request is merged, click <strong>Start a new change</strong> to go back to the default branch. If GitHub
-            has newer commits, click <strong>Update to latest</strong>. Both are available once there are no unpublished changes.
-          </li>
-        </ol>
-      </Step>
-
-      <section id="help" className="mt-16 border-t border-zinc-200 pt-10 dark:border-zinc-800">
-        <h2 className="text-2xl font-semibold tracking-tight">Troubleshooting</h2>
-        <dl className="mt-6 space-y-5">
-          {HELP.map((item) => (
-            <div key={item.q}>
-              <dt className="font-medium">{item.q}</dt>
-              <dd className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{item.a}</dd>
-            </div>
+      <section aria-labelledby="features-heading" className="mt-20">
+        <h2 id="features-heading" className="text-center text-2xl font-semibold tracking-tight">
+          What you can do
+        </h2>
+        <ul className="mt-8 grid gap-x-8 gap-y-6 sm:grid-cols-2">
+          {FEATURES.map(([title, text]) => (
+            <li key={title}>
+              <p className="font-medium">{title}</p>
+              <p className="mt-1 text-sm text-zinc-500">{text}</p>
+            </li>
           ))}
-        </dl>
+        </ul>
+      </section>
+
+      <section id="help" aria-labelledby="help-heading" className="mt-20 scroll-mt-20 border-t border-zinc-200 pt-12 dark:border-zinc-800">
+        <h2 id="help-heading" className="text-2xl font-semibold tracking-tight">
+          Questions and help
+        </h2>
+        <div className="mt-6 divide-y divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+          {HELP.map((item) => (
+            <details key={item.q} className="group px-4 py-3">
+              <summary className="cursor-pointer list-none font-medium">
+                <span className="mr-2 inline-block text-zinc-400 transition-transform group-open:rotate-90">▸</span>
+                {item.q}
+              </summary>
+              <p className="mt-2 pl-5 text-sm text-zinc-600 dark:text-zinc-400">{item.a}</p>
+            </details>
+          ))}
+        </div>
       </section>
 
       <div className="mt-16 text-center">
-        {user ? (
-          <Link href="/dashboard" className="text-sm font-medium underline">
-            Go to your dashboard →
-          </Link>
-        ) : (
-          <Link href="/register" className="text-sm font-medium underline">
-            Create an account to start →
-          </Link>
-        )}
+        <Link href={user ? "/dashboard" : "/register"} className="text-sm font-medium underline">
+          {user ? "Go to your sites →" : "Create your free account →"}
+        </Link>
       </div>
     </main>
-  );
-}
-
-function StepNumber({ children }: { children: ReactNode }) {
-  return (
-    <span className="grid size-7 shrink-0 place-items-center rounded-full bg-foreground text-sm font-medium text-background">
-      {children}
-    </span>
-  );
-}
-
-function Step({ id, number, title, children }: { id: string; number: number; title: string; children: ReactNode }) {
-  return (
-    <section id={id} aria-labelledby={`${id}-heading`} className="mt-16">
-      <div className="flex items-center gap-3">
-        <StepNumber>{number}</StepNumber>
-        <h2 id={`${id}-heading`} className="text-2xl font-semibold tracking-tight">
-          {title}
-        </h2>
-      </div>
-      <div className="mt-5 leading-relaxed text-zinc-700 dark:text-zinc-300">{children}</div>
-    </section>
-  );
-}
-
-function Tip({ children }: { children: ReactNode }) {
-  return (
-    <p className="mt-5 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-      {children}
-    </p>
   );
 }

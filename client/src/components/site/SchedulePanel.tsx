@@ -28,7 +28,7 @@ function jobState(job: ScheduleJob) {
 }
 
 export function SchedulePanel() {
-  const { owner, repo, overview, busy, run, hasKey, version } = useSite();
+  const { owner, repo, overview, busy, run, claude, version } = useSite();
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
@@ -140,11 +140,11 @@ export function SchedulePanel() {
           <Button disabled={disabled} onClick={() => run("schedule", { dryRun: true })}>
             Preview due jobs
           </Button>
-          <Button variant="primary" disabled={disabled || !hasKey} onClick={() => run("schedule")}>
+          <Button variant="primary" disabled={disabled || !claude.ready} onClick={() => run("schedule")}>
             Run due jobs
           </Button>
           <span className="text-xs text-zinc-500">
-            The preview prints what Claude would be sent, without calling it.{!hasKey && " Running generate jobs needs your Anthropic key."}
+            The preview prints what Claude would be sent, without calling it.{!claude.ready && ` Writing pages needs Claude: ${claude.setupLabel.toLowerCase()} in Settings.`}
           </span>
         </div>
       </Section>

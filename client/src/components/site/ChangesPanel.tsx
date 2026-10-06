@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { describeChange, summarizeChanges } from "@/lib/change-labels";
 import { api, workspacePath, type FileDiff, type WorkspaceStatus } from "@/lib/site-api";
+import { DomainSettings } from "./DomainSettings";
 import { useSite } from "./site-context";
-import { Badge, Button, ErrorText, Field, Notice, Section, inputClass } from "./ui";
+import { Badge, Button, Details, EmptyState, ErrorText, Field, Notice, ScreenHeader, Section, inputClass } from "./ui";
 
 type CommitResult = {
   branch: string;
@@ -20,47 +22,37 @@ function lineClass(line: string) {
   return "";
 }
 
+/**
+ * The Publish screen: what's changed since the last publish, in plain words, with undo, and one
+ * button that commits everything and pushes it. Straight to the default branch (live) by default;
+ * a pull request for review is an option.
+ */
 export function ChangesPanel() {
-  const { owner, repo, status, busy, setStatus, refresh, version } = useSite();
+  const { owner, repo, status, overview, busy, setStatus, refresh, version, publishing } = useSite();
   const [files, setFiles] = useState<FileDiff[] | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<unknown>(null);
   const [working, setWorking] = useState<"discard" | "commit" | null>(null);
   const [message, setMessage] = useState("");
-  const [mode, setMode] = useState<"pr" | "direct">("pr");
+  const [mode, setMode] = useState<"pr" | "direct">(status.onDefaultBranch ? "direct" : "pr");
   const [branch, setBranch] = useState("");
-  const [result, setResult] = useState<CommitResult | null>(null);
+  const [result, setResult] = useState<(CommitResult & { mode: "pr" | "direct" }) | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     api<{ files: FileDiff[] }>(workspacePath(owner, repo, "/diff"))
-      .then(({ files: next }) => {
-        if (cancelled) return;
-        setFiles(next);
-        setSelected((prev) => new Set([...prev].filter((p) => next.some((f) => f.path === p))));
-      })
+      .then(({ files: next }) => !cancelled && setFiles(next))
       .catch((err) => !cancelled && setError(err));
     return () => {
       cancelled = true;
     };
   }, [owner, repo, version]);
 
-  function toggle(path: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }
-
-  async function discard() {
-    if (!confirm(`Discard changes to ${selected.size} file${selected.size === 1 ? "" : "s"}? This can't be undone.`)) return;
+  async function discard(paths: string[], what: string) {
+    if (!confirm(`Undo ${what}? This can't be undone.`)) return;
     setWorking("discard");
     setError(null);
     try {
-      setStatus(await api<WorkspaceStatus>(workspacePath(owner, repo, "/discard"), { method: "POST", body: { paths: [...selected] } }));
-      setSelected(new Set());
+      setStatus(await api<WorkspaceStatus>(workspacePath(owner, repo, "/discard"), { method: "POST", body: { paths } }));
       await refresh();
     } catch (err) {
       setError(err);
@@ -75,12 +67,14 @@ export function ChangesPanel() {
     setError(null);
     setResult(null);
     try {
-      const body = { message, mode, ...(mode === "pr" && status.onDefaultBranch && branch.trim() && { branch: branch.trim() }) };
+      const note = message.trim() || summarizeChanges(status.changes, overview) || "Update the site";
+      const body = { message: note, mode, ...(mode === "pr" && status.onDefaultBranch && branch.trim() && { branch: branch.trim() }) };
       const committed = await api<CommitResult>(workspacePath(owner, repo, "/commit"), { method: "POST", body });
-      setResult(committed);
+      setResult({ ...committed, mode });
       setStatus(committed.status);
       setMessage("");
       setBranch("");
+      publishing.watch();
       await refresh();
     } catch (err) {
       setError(err);
@@ -95,116 +89,182 @@ export function ChangesPanel() {
   // With nothing new to commit, publishing still retries an earlier failed push.
   const canPublish = hasChanges || Boolean(status.ahead) || !status.onDefaultBranch;
   const disabled = busy || working !== null;
+  const liveUrl = publishing.publishing?.enabled ? publishing.publishing.url : null;
+  const goesLive = mode === "direct" && status.onDefaultBranch;
 
   return (
-    <>
-      <Section title="Changed files" description="Everything commands and edits have changed in this workspace since the last commit.">
-        <ErrorText error={error} />
-        {!files && !error && <p className="text-sm text-zinc-500">Loading…</p>}
-        {files?.length === 0 && <p className="text-sm text-zinc-500">No changes.</p>}
-        {files && files.length > 0 && (
-          <>
-            <ul className="space-y-2 overflow-y-auto max-h-96">
-              {files.map((file) => (
-                <li key={file.path} className="rounded-md border border-zinc-200 dark:border-zinc-800">
-                  <details>
-                    <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(file.path)}
-                        onChange={() => toggle(file.path)}
-                        onClick={(e) => e.stopPropagation()}
-                        disabled={disabled}
-                        aria-label={`Select ${file.path}`}
-                      />
-                      <span className="font-mono text-xs">{file.path}</span>
-                      <Badge>{file.status}</Badge>
-                      <span className="ml-auto text-xs text-zinc-500">Show diff</span>
-                    </summary>
-                    <pre className="max-h-96 overflow-auto border-t border-zinc-200 py-2 font-mono text-xs dark:border-zinc-800">
-                      {file.diff.split("\n").map((line, i) => (
-                        <div key={i} className={`px-3 ${lineClass(line)}`}>
-                          {line || " "}
-                        </div>
-                      ))}
-                    </pre>
-                  </details>
-                </li>
-              ))}
-            </ul>
-            <div className="mt-3 flex gap-2">
-              <Button variant="ghost" disabled={disabled} onClick={() => setSelected(new Set(files.map((f) => f.path)))}>
-                Select all
-              </Button>
-              <Button variant="danger" disabled={disabled || selected.size === 0} onClick={discard}>
-                {working === "discard" ? "Discarding…" : `Discard selected (${selected.size})`}
-              </Button>
-            </div>
-          </>
-        )}
-      </Section>
+    <div className="space-y-6">
+      <ScreenHeader
+        title="Publish"
+        description="Everything you've changed since you last published. Publish to put it on your live site, or undo anything you don't want."
+      />
 
-      <Section title="Publish" description="Commits every change above and pushes it to GitHub.">
-        {result && (
-          <div className="mb-4">
-            <Notice tone="success">
-              Pushed <code className="font-mono">{result.commit.slice(0, 7)}</code> to{" "}
-              <code className="font-mono">{result.branch}</code>.{" "}
-              {result.pullRequest && (
-                <a href={result.pullRequest.url} target="_blank" rel="noreferrer" className="font-medium underline">
-                  Pull request #{result.pullRequest.number} ↗
+      {result && (
+        <Notice tone="success">
+          {result.mode === "direct" && result.branch === status.defaultBranch ? (
+            <>
+              <span className="font-medium">Published.</span> Your live site updates in about a minute.{" "}
+              {liveUrl && (
+                <a href={liveUrl} target="_blank" rel="noreferrer" className="font-medium underline">
+                  View your site ↗
                 </a>
               )}
-            </Notice>
-          </div>
-        )}
-        <form onSubmit={commit} className="space-y-3">
-          <Field label="Commit message">
-            <input
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              required={hasChanges}
-              maxLength={5000}
-              placeholder="Add the partners page"
-              className={inputClass}
-              disabled={disabled}
-            />
-          </Field>
-          <fieldset className="space-y-1.5 text-sm">
-            <label className="flex items-start gap-2">
-              <input type="radio" checked={mode === "pr"} onChange={() => setMode("pr")} disabled={disabled} className="mt-1" />
-              <span>
-                {status.onDefaultBranch ? (
-                  <>New branch and pull request into {status.defaultBranch} (recommended)</>
-                ) : (
-                  <>
-                    Commit to <code className="font-mono">{status.branch}</code> and update its pull request
-                  </>
+            </>
+          ) : (
+            <>
+              <span className="font-medium">Sent for review.</span> Your site changes once the review is approved on GitHub.{" "}
+              {result.pullRequest && (
+                <a href={result.pullRequest.url} target="_blank" rel="noreferrer" className="font-medium underline">
+                  Open the review ↗
+                </a>
+              )}
+            </>
+          )}
+        </Notice>
+      )}
+
+      <ErrorText error={error} />
+
+      {!hasChanges && !canPublish && !result && (
+        <EmptyState
+          title="Everything is published"
+          action={
+            liveUrl ? (
+              <a
+                href={liveUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+              >
+                View your site ↗
+              </a>
+            ) : null
+          }
+        >
+          When you change something, it shows up here until you publish it.
+        </EmptyState>
+      )}
+
+      {hasChanges && (
+        <Section title={`Your changes (${status.changes.length})`}>
+          <ul className="divide-y divide-zinc-200 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+            {status.changes.map((change) => {
+              const { what, status: label } = describeChange(change, overview);
+              const diff = files?.find((f) => f.path === change.path)?.diff;
+              return (
+                <li key={change.path} className="px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge>{label}</Badge>
+                    <span className="min-w-0 flex-1 text-sm font-medium">{what}</span>
+                    <Button variant="ghost" className="px-2 py-0.5 text-xs" disabled={disabled} onClick={() => void discard([change.path], `the change to "${what}"`)}>
+                      Undo
+                    </Button>
+                  </div>
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-xs text-zinc-500">Technical details</summary>
+                    <p className="mt-1 font-mono text-xs text-zinc-500">{change.path}</p>
+                    {diff && (
+                      <pre className="mt-1 max-h-96 overflow-auto rounded border border-zinc-200 py-2 font-mono text-xs dark:border-zinc-800">
+                        {diff.split("\n").map((line, i) => (
+                          <div key={i} className={`px-3 ${lineClass(line)}`}>
+                            {line || " "}
+                          </div>
+                        ))}
+                      </pre>
+                    )}
+                  </details>
+                </li>
+              );
+            })}
+          </ul>
+          {status.changes.length > 1 && (
+            <div className="mt-3">
+              <Button
+                variant="danger"
+                disabled={disabled}
+                onClick={() => void discard(status.changes.map((c) => c.path), `all ${status.changes.length} changes`)}
+              >
+                {working === "discard" ? "Undoing…" : "Undo all changes"}
+              </Button>
+            </div>
+          )}
+        </Section>
+      )}
+
+      {canPublish && (
+        <Section title={goesLive ? "Put your changes live" : "Send your changes"}>
+          {!hasChanges && Boolean(status.ahead) && (
+            <div className="mb-3">
+              <Notice tone="warning">Your last publish didn&apos;t reach GitHub. Publish again to finish it.</Notice>
+            </div>
+          )}
+          <form onSubmit={commit} className="space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="submit" variant="primary" className="px-5 py-2" disabled={disabled}>
+                {working === "commit" ? "Publishing…" : goesLive ? "Publish now" : status.onDefaultBranch ? "Send for review" : "Add to the review"}
+              </Button>
+              <span className="text-sm text-zinc-500">
+                {goesLive
+                  ? "Your live site updates about a minute later."
+                  : "Nothing changes on your live site until the review is approved on GitHub."}
+              </span>
+            </div>
+
+            <Details summary="More options">
+              <div className="space-y-3">
+                <Field label="A note about this version (optional)" hint="Kept in your site's history. Made from your changes if you leave it empty.">
+                  <input
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    maxLength={5000}
+                    placeholder={summarizeChanges(status.changes, overview) || "Update the site"}
+                    className={inputClass}
+                    disabled={disabled}
+                  />
+                </Field>
+                <fieldset className="space-y-1.5 text-sm">
+                  <legend className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">How to publish</legend>
+                  <label className="flex items-start gap-2">
+                    <input type="radio" checked={mode === "direct"} onChange={() => setMode("direct")} disabled={disabled} className="mt-1" />
+                    <span>
+                      {status.onDefaultBranch ? (
+                        "Publish straight away (recommended)"
+                      ) : (
+                        <>
+                          Save straight to <code className="font-mono">{status.branch}</code>
+                        </>
+                      )}
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2">
+                    <input type="radio" checked={mode === "pr"} onChange={() => setMode("pr")} disabled={disabled} className="mt-1" />
+                    <span>
+                      {status.onDefaultBranch
+                        ? "Send for review first: someone approves it on GitHub before it goes live"
+                        : "Add to the review that's already open"}
+                    </span>
+                  </label>
+                </fieldset>
+                {mode === "pr" && status.onDefaultBranch && (
+                  <Field label="Review name (optional)" hint="Defaults to twinstack/<date>-<time>.">
+                    <input value={branch} onChange={(e) => setBranch(e.target.value)} className={`${inputClass} font-mono`} disabled={disabled} />
+                  </Field>
                 )}
-              </span>
-            </label>
-            <label className="flex items-start gap-2">
-              <input type="radio" checked={mode === "direct"} onChange={() => setMode("direct")} disabled={disabled} className="mt-1" />
-              <span>
-                Push directly to <code className="font-mono">{status.branch}</code>
-              </span>
-            </label>
-          </fieldset>
-          {mode === "pr" && status.onDefaultBranch && (
-            <Field label="Branch name (optional)" hint="Defaults to twinstack/<date>-<time>.">
-              <input value={branch} onChange={(e) => setBranch(e.target.value)} className={`${inputClass} font-mono`} disabled={disabled} />
-            </Field>
-          )}
-          {mode === "direct" && status.onDefaultBranch && (
-            <Notice tone="warning">
-              This skips review. If your deploy workflow builds from {status.defaultBranch}, the live site changes straight away.
-            </Notice>
-          )}
-          <Button type="submit" variant="primary" disabled={disabled || !canPublish || (hasChanges && !message.trim())}>
-            {working === "commit" ? "Publishing…" : hasChanges ? "Commit and push" : "Push"}
-          </Button>
-        </form>
-      </Section>
-    </>
+              </div>
+            </Details>
+          </form>
+        </Section>
+      )}
+
+      {publishing.publishing?.enabled && publishing.publishing.canConfigure && (
+        <Section title="Your web address" description="Your site is on a free github.io address. You can use your own domain name instead.">
+          <DomainSettings publishing={publishing.publishing} onChange={(next) => {
+            publishing.setPublishing(next);
+            // A domain change starts a redeploy: watch it closely.
+            publishing.watch();
+          }} />
+        </Section>
+      )}
+    </div>
   );
 }

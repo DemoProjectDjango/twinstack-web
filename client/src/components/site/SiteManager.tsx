@@ -2,93 +2,148 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, workspacePath, type EditMode, type Job, type Overview, type WorkspaceStatus } from "@/lib/site-api";
+import { claudeAccess } from "@/lib/claude";
+import { ApiError, api, setBeforeChange, workspacePath, type Job, type Overview, type WorkspaceStatus } from "@/lib/site-api";
 import { BrandPanel } from "./BrandPanel";
 import { BuildPanel } from "./BuildPanel";
 import { ChangesPanel } from "./ChangesPanel";
-import { EditPanel } from "./EditPanel";
 import { HeaderFooterPanel } from "./HeaderFooterPanel";
-import { PublishBar } from "./PublishBar";
-import { JobLog } from "./JobLog";
+import { HomePanel } from "./HomePanel";
 import { MemoryPanel } from "./MemoryPanel";
 import { PagesPanel } from "./PagesPanel";
 import { SchedulePanel } from "./SchedulePanel";
 import { SeoPanel } from "./SeoPanel";
-import { SiteContext, type SiteContextValue } from "./site-context";
+import { SiteContext, useSite, type PageEditMode, type SiteContextValue, type SiteSection } from "./site-context";
+import { usePublishing, useSiteTools } from "./site-hooks";
 import { StaticInfoPanel } from "./StaticInfoPanel";
+import { StatusStrip } from "./StatusStrip";
 import { StylesPanel } from "./StylesPanel";
 import { TreePanel } from "./TreePanel";
-import { Badge, Button, ErrorText, Notice } from "./ui";
+import { Button, ErrorText, Notice, ScreenHeader, Spinner } from "./ui";
 
-const TABS = [
-  { id: "build", label: "Build & preview" },
-  { id: "pages", label: "Pages" },
-  { id: "seo", label: "SEO" },
-  { id: "navigation", label: "Header & footer" },
-  { id: "info", label: "Site info" },
-  { id: "edit", label: "Edit with Claude" },
-  { id: "memory", label: "Claude memory" },
-  { id: "tree", label: "Site tree" },
-  { id: "styles", label: "Styles" },
-  { id: "schedule", label: "Schedule" },
-  { id: "changes", label: "Changes" },
-] as const;
+const MAIN: { id: SiteSection; label: string; hint: string }[] = [
+  { id: "home", label: "Home", hint: "Your site at a glance" },
+  { id: "pages", label: "Pages", hint: "Add and write pages" },
+  { id: "design", label: "Design", hint: "Logo, menu and footer" },
+  { id: "details", label: "Site details", hint: "Name, contact details and more" },
+  { id: "publish", label: "Publish", hint: "Put your changes live" },
+];
 
-type Tab = (typeof TABS)[number]["id"];
-
-const FULL_WIDTH = new Set<Tab>(["edit", "navigation"]);
+const ADVANCED: { id: SiteSection; label: string }[] = [
+  { id: "seo", label: "Search overview" },
+  { id: "tree", label: "Site plan" },
+  { id: "schedule", label: "Scheduled pages" },
+  { id: "memory", label: "What Claude remembers" },
+  { id: "styles", label: "Styles (CSS)" },
+  { id: "tools", label: "Build tools and log" },
+];
 
 const POLL_MS = 700;
 const MAX_LOG_CHARS = 500_000;
+// The preview rebuilds this long after the last change, so a burst of saves builds once.
+const AUTO_PREVIEW_DELAY_MS = 1500;
+/** Commands that never change the site's files, so they don't make the preview out of date. */
+const READ_ONLY_COMMANDS = new Set(["preview", "check", "proposal-preview", "seo-audit", "changelog"]);
 
 function runningJob(active: NonNullable<WorkspaceStatus["activeJob"]>): Job {
   return { ...active, status: "running", exitCode: null, output: "", truncated: false, next: 0 };
 }
 
 export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
-  const [status, setStatus] = useState<WorkspaceStatus | null>(null);
+  const [status, setRawStatus] = useState<WorkspaceStatus | null>(null);
   const [openError, setOpenError] = useState<unknown>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [hasKey, setHasKey] = useState(false);
+  const [anthropicKey, setAnthropicKey] = useState<string | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [runError, setRunError] = useState<unknown>(null);
   const [version, setVersion] = useState(0);
-  const [tab, setTab] = useState<Tab>("build");
-  const [editTarget, setEditTarget] = useState<{ file: string; mode: EditMode } | null>(null);
-  // Once opened, the Claude tab stays mounted, so a hand-written draft survives visits to other tabs.
-  const [editOpened, setEditOpened] = useState(false);
-  // The header and footer editor stays mounted too, so unsaved edits survive other tabs.
-  const [navOpened, setNavOpened] = useState(false);
+  const [section, setSection] = useState<SiteSection>("home");
+  const [openPage, setOpenPage] = useState<{ file: string; mode: PageEditMode } | null>(null);
+  // Once opened, Pages and Design stay mounted, so a hand-written draft or unsaved menu survives visits elsewhere.
+  const [pagesOpened, setPagesOpened] = useState(false);
+  const [designOpened, setDesignOpened] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const unsavedDraft = useRef(false);
   const [resetting, setResetting] = useState(false);
+  // Something changed the site's files since the preview was last built.
+  const [previewStale, setPreviewStale] = useState(false);
+  // Whether the running job was a dry run (a Claude preview), which changes nothing.
+  const dryRunJob = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     const [nextStatus, nextOverview] = await Promise.all([
       api<WorkspaceStatus>(workspacePath(owner, repo)),
       api<Overview>(workspacePath(owner, repo, "/overview")).catch(() => null),
     ]);
-    setStatus(nextStatus);
+    setRawStatus(nextStatus);
     setOverview(nextOverview);
     setVersion((v) => v + 1);
   }, [owner, repo]);
 
-  const run = useCallback(
-    async (command: string, input: Record<string, unknown> = {}) => {
-      setRunError(null);
+  // The editor's own preview rebuild, if one is running: it never makes the editor busy, and
+  // gives way to anything the user starts. The ref is for callbacks, the state for rendering.
+  const autoJob = useRef<string | null>(null);
+  const [autoJobId, setAutoJobId] = useState<string | null>(null);
+  const currentJob = useRef<Job | null>(null);
+  useEffect(() => {
+    currentJob.current = job;
+  }, [job]);
+
+  const start = useCallback(
+    async (command: string, input: Record<string, unknown>, quiet: boolean) => {
+      if (!quiet) setRunError(null);
       try {
         const { job: started } = await api<{ job: Job }>(workspacePath(owner, repo, `/commands/${command}`), {
           method: "POST",
           body: { input },
         });
+        dryRunJob.current = input.dryRun ? started.id : null;
+        autoJob.current = quiet ? started.id : null;
+        setAutoJobId(autoJob.current);
         setJob(started);
-        return true;
+        return null;
       } catch (err) {
-        setRunError(err);
-        return false;
+        if (!quiet) setRunError(err);
+        return err;
       }
     },
     [owner, repo],
   );
+
+  /** Stops the editor's own preview rebuild so a command the user asked for can start; it runs again afterwards. */
+  const stopAutoPreview = useCallback(async () => {
+    const id = autoJob.current;
+    if (!id || currentJob.current?.id !== id || currentJob.current.status !== "running") return;
+    await api(`/api/jobs/${id}/cancel`, { method: "POST", body: {} }).catch(() => {});
+    for (let i = 0; i < 40; i++) {
+      const latest = await api<{ job: Job }>(`/api/jobs/${id}`).catch(() => null);
+      if (!latest || latest.job.status !== "running") break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    setPreviewStale(true);
+  }, []);
+
+  // Every change the user makes (a command, a save, a publish) goes first.
+  useEffect(() => {
+    setBeforeChange(stopAutoPreview);
+    return () => setBeforeChange(null);
+  }, [stopAutoPreview]);
+
+  const run = useCallback(
+    async (command: string, input: Record<string, unknown> = {}) => (await start(command, input, false)) === null,
+    [start],
+  );
+
+  // A change made outside a command (a save, a discard) hands back the new status, or asks for a
+  // refresh. Panels only do either after changing files, so both mark the preview out of date.
+  const setStatus = useCallback((next: WorkspaceStatus) => {
+    setRawStatus(next);
+    setPreviewStale(true);
+  }, []);
+  const refreshAfterChange = useCallback(async () => {
+    setPreviewStale(true);
+    await refresh();
+  }, [refresh]);
 
   // Open (clone or fetch) once, then install dependencies if the lockfile changed.
   useEffect(() => {
@@ -100,13 +155,14 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
           api<{ anthropicKey: string | null }>("/api/settings"),
         ]);
         if (cancelled) return;
-        setStatus(opened);
-        setHasKey(Boolean(settings.anthropicKey));
+        setRawStatus(opened);
+        setAnthropicKey(settings.anthropicKey);
         api<Overview>(workspacePath(owner, repo, "/overview"))
           .then((o) => !cancelled && setOverview(o))
           .catch(() => {});
         if (opened.activeJob) setJob(runningJob(opened.activeJob));
         else if (opened.needsInstall) void run("install");
+        else if (opened.build === "none") setPreviewStale(true);
       } catch (err) {
         if (!cancelled) setOpenError(err);
       }
@@ -129,7 +185,12 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
           const output = prev.output + (update.truncated ? "\n[… earlier output trimmed …]\n" : "") + update.output;
           return { ...update, output: output.slice(-MAX_LOG_CHARS) };
         });
-        if (update.status !== "running") await refresh().catch(() => {});
+        if (update.status !== "running") {
+          if (update.status === "succeeded" && !READ_ONLY_COMMANDS.has(update.command) && dryRunJob.current !== update.id) {
+            setPreviewStale(true);
+          }
+          await refresh().catch(() => {});
+        }
       } catch (err) {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
@@ -152,10 +213,32 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     return () => clearTimeout(timer);
   }, [busyElsewhere, status, refresh]);
 
-  const openTab = useCallback((next: Tab) => {
-    setTab(next);
-    if (next === "edit") setEditOpened(true);
-    if (next === "navigation") setNavOpened(true);
+  const autoRunning = job?.status === "running" && job.id === autoJobId;
+  const busy = (job?.status === "running" && !autoRunning) || (Boolean(status?.busy) && !autoRunning) || resetting;
+
+  // Rebuild the preview by itself once the workspace is free, so nobody has to press Build.
+  // If another command got there first it waits for the next free moment; any other failure
+  // is left for the status strip and the Build tools screen.
+  const canAutoPreview = previewStale && !busy && !autoRunning && Boolean(status) && !status?.needsInstall;
+  useEffect(() => {
+    if (!canAutoPreview) return;
+    const timer = setTimeout(async () => {
+      setPreviewStale(false);
+      const err = await start("preview", {}, true);
+      if (err instanceof ApiError && err.status === 409) setPreviewStale(true);
+    }, AUTO_PREVIEW_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [canAutoPreview, start]);
+
+  const publishing = usePublishing(owner, repo, version);
+  const tools = useSiteTools({ owner, repo, version, overview, publishing: publishing.publishing, setStatus, refresh: refreshAfterChange });
+
+  const showSection = useCallback((next: SiteSection) => {
+    setSection(next);
+    setMenuOpen(false);
+    if (next === "pages") setPagesOpened(true);
+    if (next === "design") setDesignOpened(true);
+    window.scrollTo({ top: 0 });
   }, []);
 
   const setUnsavedDraft = useCallback((unsaved: boolean) => {
@@ -177,14 +260,20 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   }, []);
 
   const editFile = useCallback(
-    (file: string, mode: EditMode = "edit") => {
+    (file: string, mode: PageEditMode = "edit") => {
       if (!confirmDiscardDraft()) return;
       unsavedDraft.current = false;
-      setEditTarget({ file, mode });
-      openTab("edit");
+      setOpenPage({ file, mode });
+      showSection("pages");
     },
-    [confirmDiscardDraft, openTab],
+    [confirmDiscardDraft, showSection],
   );
+
+  const closePage = useCallback(() => {
+    if (!confirmDiscardDraft()) return;
+    unsavedDraft.current = false;
+    setOpenPage(null);
+  }, [confirmDiscardDraft]);
 
   async function resetToDefault() {
     setResetting(true);
@@ -201,9 +290,12 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
 
   if (openError) {
     return (
-      <Shell owner={owner} repo={repo}>
-        <div className="mt-8">
+      <Shell title={repo}>
+        <div className="mt-8 space-y-3">
           <ErrorText error={openError} />
+          <Link href="/dashboard" className="text-sm underline">
+            Back to your sites
+          </Link>
         </div>
       </Shell>
     );
@@ -211,159 +303,208 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
 
   if (!status) {
     return (
-      <Shell owner={owner} repo={repo}>
-        <p className="mt-8 text-sm text-zinc-500">Opening the site. The first open clones the repository…</p>
+      <Shell title={repo}>
+        <div className="mt-10 flex items-center gap-3 text-sm text-zinc-500">
+          <Spinner />
+          Opening your site. The first time takes about a minute while it&apos;s set up.
+        </div>
       </Shell>
     );
   }
 
-  const busy = job?.status === "running" || Boolean(status.busy) || resetting;
   const context: SiteContextValue = {
     owner,
     repo,
     status,
     overview,
-    hasKey,
+    claude: claudeAccess({ anthropicKey }),
     job,
     busy,
     version,
     run,
     setStatus,
-    refresh,
+    refresh: refreshAfterChange,
     editFile,
     setUnsavedDraft,
     confirmDiscardDraft,
-    showTab: openTab,
+    showSection,
+    publishing,
+    tools,
   };
+
+  const liveUrl = publishing.publishing?.enabled ? publishing.publishing.url : null;
+  const changes = status.changes.length;
+  const current = [...MAIN, ...ADVANCED].find((s) => s.id === section);
 
   return (
     <SiteContext.Provider value={context}>
-      <Shell owner={owner} repo={repo} status={status}>
-        <div className="mt-6 space-y-3">
-          <PublishBar />
-          {!hasKey && (
-            <Notice>
-              Claude commands (Edit with Claude, running scheduled jobs) need your Anthropic API key.{" "}
-              <Link href="/dashboard#anthropic-key" className="font-medium underline">
-                Add it on the dashboard
-              </Link>
-            </Notice>
-          )}
-          {!status.onDefaultBranch && (
-            <Notice>
-              You&apos;re working on branch <code className="font-mono">{status.branch}</code>. New commits go to this branch
-              and update its pull request.{" "}
-              {status.changes.length === 0 && (
-                <Button variant="ghost" className="ml-1 underline" disabled={busy} onClick={resetToDefault}>
-                  Start a new change from {status.defaultBranch}
-                </Button>
-              )}
-            </Notice>
-          )}
-          {status.onDefaultBranch && Boolean(status.behind) && (
-            <Notice tone="warning">
-              GitHub has {status.behind} newer commit{status.behind === 1 ? "" : "s"} on {status.defaultBranch}.{" "}
-              {status.changes.length === 0 ? (
-                <Button variant="ghost" className="ml-1 underline" disabled={busy} onClick={resetToDefault}>
-                  Update to latest
-                </Button>
-              ) : (
-                "Commit or discard your changes to update."
-              )}
-            </Notice>
-          )}
-          <ErrorText error={runError} />
-        </div>
-
-        <nav className="mt-6 flex flex-wrap gap-1 border-b border-zinc-200 dark:border-zinc-800" aria-label="Site sections">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => openTab(t.id)}
-              aria-current={tab === t.id ? "page" : undefined}
-              className={`-mb-px border-b-2 px-3 py-2 text-sm ${
-                tab === t.id
-                  ? "border-foreground font-medium"
-                  : "border-transparent text-zinc-500 hover:text-foreground"
-              }`}
+      <Shell
+        title={overview?.site.name || repo}
+        actions={
+          liveUrl ? (
+            <a
+              href={liveUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
             >
-              {t.label}
-              {t.id === "changes" && status.changes.length > 0 && (
-                <span className="ml-1.5 rounded-full bg-foreground px-1.5 text-xs text-background">
-                  {status.changes.length}
-                </span>
-              )}
+              View live site ↗
+            </a>
+          ) : null
+        }
+      >
+        <div className="mt-6 grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
+          <nav aria-label="Site editor" className="lg:sticky lg:top-20 lg:self-start">
+            {/* Small screens: one button opens the list, so the menu doesn't push the page down. */}
+            <button
+              type="button"
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-expanded={menuOpen}
+              className="flex w-full items-center justify-between rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium lg:hidden dark:border-zinc-700"
+            >
+              <span>{current?.label ?? "Menu"}</span>
+              <span aria-hidden="true">{menuOpen ? "▴" : "▾"}</span>
             </button>
-          ))}
-        </nav>
+            <div className={`${menuOpen ? "mt-2 block" : "hidden"} rounded-lg border border-zinc-200 p-2 lg:mt-0 lg:block lg:border-0 lg:p-0 dark:border-zinc-800`}>
+              <ul className="space-y-0.5">
+                {MAIN.map((item) => (
+                  <li key={item.id}>
+                    <NavButton
+                      active={section === item.id}
+                      // Pages again, while a page is open: back to the list.
+                      onClick={() => (item.id === "pages" && section === "pages" && openPage ? closePage() : showSection(item.id))}
+                      hint={item.hint}
+                    >
+                      {item.label}
+                      {item.id === "publish" && changes > 0 && (
+                        <span className="ml-auto rounded-full bg-foreground px-1.5 text-xs text-background" title={`${changes} unpublished change${changes === 1 ? "" : "s"}`}>
+                          {changes}
+                        </span>
+                      )}
+                    </NavButton>
+                  </li>
+                ))}
+              </ul>
+              <p className="mb-1 mt-5 px-3 text-xs font-medium uppercase tracking-wide text-zinc-500">Advanced</p>
+              <ul className="space-y-0.5">
+                {ADVANCED.map((item) => (
+                  <li key={item.id}>
+                    <NavButton active={section === item.id} onClick={() => showSection(item.id)} small>
+                      {item.label}
+                    </NavButton>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </nav>
 
-        <div className={`mt-6 grid gap-6 ${FULL_WIDTH.has(tab) ? "" : "lg:grid-cols-[minmax(0,1fr)_22rem]"}`}>
           <div className="min-w-0 space-y-6">
-            {tab === "build" && <BuildPanel />}
-            {tab === "pages" && <PagesPanel />}
-            {tab === "seo" && <SeoPanel />}
-            {navOpened && (
-              <div hidden={tab !== "navigation"}>
+            <SiteNotices onReset={resetToDefault} />
+            <ErrorText error={runError} />
+
+            {section === "home" && <HomePanel />}
+            {pagesOpened && (
+              <div hidden={section !== "pages"}>
+                <PagesPanel openPage={openPage} onClose={closePage} />
+              </div>
+            )}
+            {designOpened && (
+              <div hidden={section !== "design"} className="space-y-6">
+                <ScreenHeader title="Design" description="Your logo, colours, menu and footer. They appear on every page of your site." />
+                <BrandPanel />
                 <HeaderFooterPanel />
               </div>
             )}
-            {tab === "info" && <BrandPanel />}
-            {tab === "info" && <StaticInfoPanel />}
-            {editOpened && (
-              <div hidden={tab !== "edit"} className="space-y-6">
-                <EditPanel
-                  key={editTarget ? `${editTarget.mode}:${editTarget.file}` : ""}
-                  initialFile={editTarget?.file ?? null}
-                  initialMode={editTarget?.mode ?? null}
-                />
-              </div>
-            )}
-            {tab === "memory" && <MemoryPanel />}
-            {tab === "tree" && <TreePanel />}
-            {tab === "styles" && <StylesPanel />}
-            {tab === "schedule" && <SchedulePanel />}
-            {tab === "changes" && <ChangesPanel />}
+            {section === "details" && <StaticInfoPanel />}
+            {section === "publish" && <ChangesPanel />}
+            {section === "seo" && <SeoPanel />}
+            {section === "tree" && <TreePanel />}
+            {section === "schedule" && <SchedulePanel />}
+            {section === "memory" && <MemoryPanel />}
+            {section === "styles" && <StylesPanel />}
+            {section === "tools" && <BuildPanel />}
           </div>
-          {/* The Claude tab uses the full width for the editor and its live diff, the header and footer tab for its preview. */}
-          {!FULL_WIDTH.has(tab) && <JobLog />}
         </div>
+        <StatusStrip onShowLog={() => showSection("tools")} />
       </Shell>
     </SiteContext.Provider>
   );
 }
 
-function Shell({
-  owner,
-  repo,
-  status,
+/** The few states that change what every screen means: an unfinished review, or newer work on GitHub. */
+function SiteNotices({ onReset }: { onReset: () => void }) {
+  const { status, busy } = useSite();
+  const noChanges = status.changes.length === 0;
+
+  if (!status.onDefaultBranch) {
+    return (
+      <Notice>
+        You&apos;re working on changes that were sent for review. Publishing adds to that review instead of going straight live.{" "}
+        {noChanges && (
+          <Button variant="ghost" className="ml-1 underline" disabled={busy} onClick={onReset}>
+            Go back to the live version
+          </Button>
+        )}
+      </Notice>
+    );
+  }
+  if (status.behind) {
+    return (
+      <Notice tone="warning">
+        Your site was changed somewhere else since you opened it.{" "}
+        {noChanges ? (
+          <Button variant="ghost" className="ml-1 underline" disabled={busy} onClick={onReset}>
+            Get the latest version
+          </Button>
+        ) : (
+          "Publish or undo your changes to get the latest version."
+        )}
+      </Notice>
+    );
+  }
+  return null;
+}
+
+function NavButton({
+  active,
+  onClick,
+  hint,
+  small = false,
   children,
 }: {
-  owner: string;
-  repo: string;
-  status?: WorkspaceStatus;
+  active: boolean;
+  onClick: () => void;
+  hint?: string;
+  small?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10">
+    <button
+      type="button"
+      onClick={onClick}
+      title={hint}
+      aria-current={active ? "page" : undefined}
+      className={`flex w-full items-center gap-2 rounded-md px-3 text-left ${small ? "py-1.5 text-sm" : "py-2 text-sm font-medium"} ${
+        active ? "bg-zinc-100 text-foreground dark:bg-zinc-900" : "text-zinc-600 hover:bg-zinc-50 hover:text-foreground dark:text-zinc-400 dark:hover:bg-zinc-900"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Shell({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <main className="mx-auto w-full max-w-7xl flex-1 px-4 pb-24 pt-8">
       <Link href="/dashboard" className="text-sm text-zinc-500 hover:underline">
-        ← Dashboard
+        ← Your sites
       </Link>
-      <header className="mt-3 flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">{status?.fullName ?? `${owner}/${repo}`}</h1>
-        {status && (
-          <>
-            <Badge>
-              <span className="font-mono">{status.branch}</span>
-            </Badge>
-            {status.ahead ? <Badge>{status.ahead} unpushed</Badge> : null}
-            <a href={status.htmlUrl} target="_blank" rel="noreferrer" className="ml-auto text-sm text-zinc-500 hover:underline">
-              View on GitHub ↗
-            </a>
-          </>
-        )}
+      <header className="mt-2 flex flex-wrap items-center gap-3">
+        <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{title}</h1>
+        <div className="ml-auto">{actions}</div>
       </header>
       {children}
     </main>
   );
 }
+

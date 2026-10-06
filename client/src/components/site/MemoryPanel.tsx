@@ -41,7 +41,7 @@ export function MemoryPanel() {
   const { overview } = useSite();
   if (overview && !overview.features.memory) {
     return (
-      <Section title="Claude memory">
+      <Section title="What Claude remembers">
         <Notice>
           This site&apos;s scripts were copied before Claude&apos;s memory existed, so Claude doesn&apos;t keep notes or a work log
           here yet. A copy needs <code className="font-mono">scripts/lib/knowledge.js</code> and the updated scripts from the

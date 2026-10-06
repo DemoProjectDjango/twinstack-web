@@ -63,10 +63,11 @@ export function TreePanel() {
 
   return (
     <Section
-      title="Site tree"
+      title="Site plan"
       description={
         <>
-          scripts/site-tree.md lists every page the site should have, one path per bullet. Anything after &quot; — &quot; is the
+          The list of every page your site should have. &quot;Create missing pages&quot; adds the ones that don&apos;t exist
+          yet. Technical: scripts/site-tree.md lists every page the site should have, one path per bullet. Anything after &quot; — &quot; is the
           instruction for that page. Scaffolding creates only the pages that are missing, using
           scripts/site-tree-content/&lt;path&gt;.md verbatim when one exists. A bullet ending in .css (- css/style.css)
           declares a global stylesheet: it&apos;s scaffolded to styles/global/&lt;path&gt;, and every page converted with
@@ -97,10 +98,10 @@ export function TreePanel() {
               {saving ? "Saving…" : "Save"}
             </Button>
             <Button disabled={busy || saving} onClick={() => scaffold(true)}>
-              Preview plan
+              Show what it would do
             </Button>
             <Button variant="primary" disabled={busy || saving} onClick={() => scaffold(false)}>
-              Scaffold missing pages
+              Create missing pages
             </Button>
             <label className="ml-2 flex items-center gap-1.5 text-sm">
               <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} disabled={busy || saving} />
@@ -109,7 +110,7 @@ export function TreePanel() {
           </div>
           {force && (
             <div className="mt-3">
-              <Notice tone="warning">Overwriting replaces the existing files&apos; content with skeletons. You can still discard it on the Changes tab before committing.</Notice>
+              <Notice tone="warning">Overwriting replaces the existing files&apos; content with skeletons. You can still undo it on the Publish screen before publishing.</Notice>
             </div>
           )}
         </>

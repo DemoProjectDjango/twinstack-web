@@ -49,14 +49,14 @@ function Score({ value, large = false }: { value: number; large?: boolean }) {
 
 const levelCount = (page: SeoPage, level: SeoIssue["level"]) => page.issues.filter((i) => i.level === level).length;
 
-export function SeoPanel() {
-  const { owner, repo, busy, version, run, hasKey, setStatus, refresh } = useSite();
+/**
+ * The copy's latest SEO audit, re-run by itself when there's none or a page changed since. Once
+ * per audit: if the check fails, the user re-runs it with the button rather than in a loop.
+ */
+function useSeoInfo() {
+  const { owner, repo, busy, version, run, setStatus, refresh } = useSite();
   const [info, setInfo] = useState<SeoInfo | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [open, setOpen] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
-  const [direction, setDirection] = useState("");
-  const [force, setForce] = useState(false);
   const [installing, setInstalling] = useState(false);
   const autoChecked = useRef<string | null>(null);
 
@@ -74,8 +74,6 @@ export function SeoPanel() {
     };
   }, [owner, repo, version]);
 
-  // Measure the pages when there's no audit yet, or a page changed since the last one. Once per
-  // audit: if the check fails, the user re-runs it with the button rather than in a loop.
   useEffect(() => {
     if (!info?.available || busy || (info.report && !info.stale)) return;
     const stamp = info.report?.createdAt ?? "none";
@@ -101,6 +99,66 @@ export function SeoPanel() {
     }
   }
 
+  return { info, error, installing, install };
+}
+
+/** For copies made before SEO: adds it from the template. */
+function InstallSeo({ installing, install, error }: { installing: boolean; install: () => void; error: unknown }) {
+  const { busy } = useSite();
+  return (
+    <>
+      <Notice>
+        Your site&apos;s tools are older than the search settings. Update them to choose how each page shows up on Google and
+        when it&apos;s shared. You&apos;ll publish the update like any other change.
+        <span className="mt-1 block text-xs opacity-80">
+          Technical: copies scripts/seo.js, scripts/lib/seo.js and the template&apos;s build, check, content loader and page shell
+          (templates/partials/base.html) into this site, replacing those files.
+        </span>
+      </Notice>
+      <div className="mt-3 flex items-center gap-3">
+        <Button variant="primary" disabled={busy || installing} onClick={install}>
+          {installing ? "Updating…" : "Update the site tools"}
+        </Button>
+        <ErrorText error={error} />
+      </div>
+    </>
+  );
+}
+
+/** One page's search and sharing settings, for the page editor. */
+export function PageSeo({ file }: { file: string }) {
+  const { busy } = useSite();
+  const { info, error, installing, install } = useSeoInfo();
+  const page = info?.report?.pages.find((p) => p.file === file);
+
+  return (
+    <Section
+      title="How this page shows up on Google and when shared"
+      description="Choose the title and short description people see in search results, and the picture shown when someone shares the page. Leave a field empty to use the page's own."
+    >
+      {!info ? (
+        error ? <ErrorText error={error} /> : <p className="text-sm text-zinc-500">Loading…</p>
+      ) : !info.available ? (
+        <InstallSeo installing={installing} install={install} error={error} />
+      ) : page && info.report ? (
+        <SeoEditor key={`${page.file}:${JSON.stringify(page.fields)}`} page={page} report={info.report} />
+      ) : (
+        <p className="text-sm text-zinc-500">
+          {busy || !info.report || info.stale ? "Checking your pages…" : "This page isn't in the latest check. Hidden pages are left out."}
+        </p>
+      )}
+    </Section>
+  );
+}
+
+export function SeoPanel() {
+  const { busy, run, claude } = useSite();
+  const { info, error, installing, install } = useSeoInfo();
+  const [open, setOpen] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [direction, setDirection] = useState("");
+  const [force, setForce] = useState(false);
+
   const report = info?.report ?? null;
   const pages = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -111,7 +169,7 @@ export function SeoPanel() {
 
   if (!info) {
     return (
-      <Section title="Search engine optimisation">
+      <Section title="Search overview">
         {error ? <ErrorText error={error} /> : <p className="text-sm text-zinc-500">Loading…</p>}
       </Section>
     );
@@ -120,21 +178,10 @@ export function SeoPanel() {
   if (!info.available) {
     return (
       <Section
-        title="Search engine optimisation"
-        description="Set each page's search title, description, focus keyphrase and social image, by hand or with Claude, and preview how it shows up in search results."
+        title="Search overview"
+        description="How every page shows up on Google and when it's shared, with a score for each."
       >
-        <Notice>
-          This site was copied before SEO was added to the template. Adding it copies <code className="font-mono">scripts/seo.js</code>,{" "}
-          <code className="font-mono">scripts/lib/seo.js</code> and the template&apos;s build, check, content loader and page shell (
-          <code className="font-mono">templates/partials/base.html</code>) into this site, replacing those files. You review them on the
-          Changes tab before publishing.
-        </Notice>
-        <div className="mt-3 flex items-center gap-3">
-          <Button variant="primary" disabled={busy || installing} onClick={install}>
-            {installing ? "Adding…" : "Add SEO from the template"}
-          </Button>
-          <ErrorText error={error} />
-        </div>
+        <InstallSeo installing={installing} install={install} error={error} />
       </Section>
     );
   }
@@ -145,16 +192,15 @@ export function SeoPanel() {
   return (
     <>
       <Section
-        title="Search engine optimisation"
-        description="How every page shows up in search results and when it's shared. Write a page's title, description and focus keyphrase yourself, or let Claude write them from what the page says."
+        title="Search overview"
+        description="How every page shows up on Google and when it's shared, scored out of 100. Open a page to improve it, or let Claude write the search text for every page at once."
       >
         {!info.template && (
           <div className="mb-4">
             <Notice tone="warning">
-              This site&apos;s page shell (<code className="font-mono">templates/partials/base.html</code>) doesn&apos;t output the SEO
-              tags yet, so saved fields won&apos;t reach the built pages.{" "}
+              Your site&apos;s tools are too old for these settings to reach the published pages.{" "}
               <Button variant="ghost" className="underline" disabled={busy || installing} onClick={install}>
-                Update it from the template
+                Update the site tools
               </Button>
             </Notice>
           </div>
@@ -182,8 +228,8 @@ export function SeoPanel() {
           <p className="text-sm font-medium">Write every page&apos;s SEO with Claude</p>
           <p className="mt-0.5 text-xs text-zinc-500">
             Claude writes the title, description and focus keyphrase of {force ? "every page" : `the ${missing} page${missing === 1 ? "" : "s"} without their own`}{" "}
-            from what each page says, one request per page, and checks each against the others so none repeat. The changes appear on the
-            Changes tab. To review one page first, open it below.
+            from what each page says, one request per page, and checks each against the others so none repeat. The changes are added to
+            your list of changes to publish. To check one page first, open it below.
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <input
@@ -200,7 +246,7 @@ export function SeoPanel() {
             </label>
             <Button
               variant="primary"
-              disabled={busy || !hasKey || (!force && missing === 0)}
+              disabled={busy || !claude.ready || (!force && missing === 0)}
               onClick={() => run("seo-claude", { all: true, force, instruction: direction.trim() || undefined })}
             >
               Write with Claude
@@ -267,7 +313,7 @@ export function SeoPanel() {
 const FIELD_ORDER: (keyof SeoFields)[] = ["metaTitle", "metaDescription", "focusKeyword", "ogImage", "ogImageAlt", "canonical", "noindex"];
 
 function SeoEditor({ page, report }: { page: SeoPage; report: SeoReport }) {
-  const { owner, repo, busy, version, run, job, hasKey, setStatus, refresh } = useSite();
+  const { owner, repo, busy, version, run, job, claude, setStatus, refresh } = useSite();
   const [fields, setFields] = useState<SeoFields>(page.fields);
   const [direction, setDirection] = useState("");
   const [proposal, setProposal] = useState<Proposal | null>(null);
@@ -416,7 +462,7 @@ function SeoEditor({ page, report }: { page: SeoPage; report: SeoReport }) {
             className={`${inputClass} min-w-48 flex-1`}
             disabled={busy}
           />
-          <Button disabled={busy || !hasKey} onClick={() => run("seo-claude", { page: page.file, instruction: direction.trim() || undefined, dryRun: true })}>
+          <Button disabled={busy || !claude.ready} onClick={() => run("seo-claude", { page: page.file, instruction: direction.trim() || undefined, dryRun: true })}>
             {claudeRunning ? "Claude is writing…" : "Suggest"}
           </Button>
         </div>
@@ -453,7 +499,7 @@ function readAsBase64(file: File) {
 
 /**
  * The social image: pick one of the site's images from thumbnails, upload a new one (saved to
- * assets/img/uploads/ like the Claude tab's uploads), or type a path or https URL. The value is
+ * assets/img/uploads/ like the page editor's uploads), or type a path or https URL. The value is
  * the site path ("/assets/img/…") or the URL; "" uses `fallback`.
  */
 function SocialImageField({ value, fallback, onChange, disabled }: { value: string; fallback: string; onChange: (value: string) => void; disabled: boolean }) {

@@ -307,7 +307,7 @@ export type HtmlSource = {
 /** A page's markdown; `version` must come back with a save. */
 export type PageSource = { file: string; content: string; version: string };
 
-/** The two ways the Claude tab works on a page. */
+/** The two ways Claude works on a page's own text in the page editor. */
 export type EditMode = "generate" | "edit";
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
@@ -337,7 +337,16 @@ export class ApiError extends Error {
   }
 }
 
+// Runs before every request that changes something (not job polling or cancelling): the site
+// editor uses it to stop its own preview rebuild, which would otherwise hold the workspace lock.
+let beforeChange: (() => Promise<void>) | null = null;
+
+export function setBeforeChange(hook: (() => Promise<void>) | null) {
+  beforeChange = hook;
+}
+
 export async function api<T>(path: string, { method = "GET", body }: { method?: string; body?: unknown } = {}): Promise<T> {
+  if (method !== "GET" && beforeChange && !path.startsWith("/api/jobs/")) await beforeChange();
   let res: Response;
   try {
     res = await fetch(path, {

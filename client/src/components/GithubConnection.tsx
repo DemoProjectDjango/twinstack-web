@@ -12,13 +12,13 @@ const ERRORS: Record<string, string> = {
 };
 
 /** Connect or disconnect the GitHub account the site features act as. */
-export function GithubConnection({ github, error, justConnected }: { github: GithubAccount | null; error?: string; justConnected: boolean }) {
+export function GithubConnection({ github, error, justConnected = false }: { github: GithubAccount | null; error?: string; justConnected?: boolean }) {
   const router = useRouter();
   const [working, setWorking] = useState(false);
   const [failed, setFailed] = useState(false);
 
   async function disconnect() {
-    if (!confirm("Disconnect GitHub? You can connect it again at any time.")) return;
+    if (!confirm("Disconnect GitHub? You won't be able to open or publish your sites until you connect it again. Your sites stay on GitHub.")) return;
     setWorking(true);
     setFailed(false);
     const res = await fetch("/auth/github/disconnect", {
@@ -34,6 +34,7 @@ export function GithubConnection({ github, error, justConnected }: { github: Git
   return (
     <section id="github" className="mt-6 rounded-lg border border-zinc-200 p-6 dark:border-zinc-800">
       <h2 className="text-lg font-semibold">GitHub</h2>
+      <p className="mt-1 text-sm text-zinc-500">Where your sites are stored and published from.</p>
 
       {error && (
         <p role="alert" className="mt-3 rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
@@ -68,9 +69,9 @@ export function GithubConnection({ github, error, justConnected }: { github: Git
         </div>
       ) : (
         <>
-          <p className="mt-1 text-sm text-zinc-500">
-            Connect GitHub to copy the TwinStack site into your account and manage it. GitHub will ask you to allow access to
-            your profile, email, repositories and Actions workflows.
+          <p className="mt-3 text-sm text-zinc-500">
+            Connect GitHub to create and publish your site. GitHub asks you to allow access to your profile, email, repositories
+            and workflows: the site is stored in a repository, and its workflow is what publishes it.
           </p>
           {/* Plain <a>: a full-page navigation to the Express OAuth route. */}
           <a

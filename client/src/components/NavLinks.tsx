@@ -5,13 +5,15 @@ import { usePathname } from "next/navigation";
 
 type NavLink = { href: string; label: string; match: (pathname: string) => boolean };
 
-const GUEST_LINKS: NavLink[] = [{ href: "/#guide", label: "Guide", match: () => false }];
+const GUEST_LINKS: NavLink[] = [
+  { href: "/#how", label: "How it works", match: () => false },
+  { href: "/#help", label: "Help", match: () => false },
+];
 
 const USER_LINKS: NavLink[] = [
-  { href: "/#guide", label: "Guide", match: () => false },
-  { href: "/dashboard", label: "Dashboard", match: (p) => p.startsWith("/dashboard") },
-  { href: "/dashboard#repositories", label: "Sites", match: (p) => p.startsWith("/sites") },
-  { href: "/dashboard#anthropic-key", label: "API key", match: () => false },
+  { href: "/dashboard", label: "Your sites", match: (p) => p.startsWith("/dashboard") || p.startsWith("/sites") },
+  { href: "/settings", label: "Settings", match: (p) => p.startsWith("/settings") },
+  { href: "/#help", label: "Help", match: () => false },
 ];
 
 export function NavLinks({ signedIn }: { signedIn: boolean }) {

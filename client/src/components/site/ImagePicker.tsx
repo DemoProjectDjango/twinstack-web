@@ -101,7 +101,7 @@ export function ImagePicker({
         <label
           className={`flex items-center justify-center rounded-md border border-dashed border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 ${off || uploading ? "opacity-50" : "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900"}`}
         >
-          {uploading ? "Uploading…" : "Upload images (PNG, JPEG, GIF, WebP, 5 MB max)"}
+          {uploading ? "Uploading…" : "Upload photos from your computer (up to 5 MB each)"}
           <input
             type="file"
             accept={IMAGE_ACCEPT}
@@ -120,7 +120,7 @@ export function ImagePicker({
           className={inputClass}
           disabled={off || siteImages.length === 0}
         >
-          <option value="">{siteImages.length ? "Or pick an image already in the site…" : "No images in assets/img yet"}</option>
+          <option value="">{siteImages.length ? "Or pick a photo already in the site…" : "No photos in the site yet"}</option>
           {siteImages.map((image) => (
             <option key={image} value={image}>
               {image}
@@ -132,12 +132,12 @@ export function ImagePicker({
         <input
           value={imageUrl}
           onChange={(e) => setImageUrl(e.target.value)}
-          placeholder="Or paste an image URL (https://…)"
+          placeholder="Or paste a link to a photo online (https://…)"
           className={inputClass}
           disabled={off}
         />
         <Button type="submit" className="shrink-0" disabled={off || !imageUrl.trim()}>
-          Add URL
+          Add
         </Button>
       </form>
       {hint && <p className="mt-1 text-xs text-zinc-500">{hint}</p>}

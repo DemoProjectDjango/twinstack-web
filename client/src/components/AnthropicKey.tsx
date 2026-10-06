@@ -33,18 +33,37 @@ export function AnthropicKey() {
   }
 
   return (
-    <section id="anthropic-key" className="mt-10 rounded-lg border border-zinc-200 p-6 dark:border-zinc-800">
-      <h2 className="text-lg font-semibold">Anthropic API key</h2>
+    <section id="claude" className="mt-6 scroll-mt-20 rounded-lg border border-zinc-200 p-6 dark:border-zinc-800">
+      <h2 className="text-lg font-semibold">
+        Claude <span className="text-sm font-normal text-zinc-500">(optional)</span>
+      </h2>
       <p className="mt-1 text-sm text-zinc-500">
-        Used for Claude commands in the site manager and billed to your Anthropic account. It&apos;s checked with Anthropic, then
-        stored encrypted on the server for your account, so it works on any device you sign in from. Only the masked value
-        is ever shown again. Remove it any time.
+        Claude can write pages from your notes, change pages when you ask, and write your search settings. Everything else
+        works without it.
+      </p>
+      {saved === null && (
+        <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-zinc-600 dark:text-zinc-400">
+          <li>
+            Sign in at{" "}
+            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer" className="underline">
+              console.anthropic.com
+            </a>{" "}
+            (or create an account) and add some credit.
+          </li>
+          <li>Create an API key and copy it.</li>
+          <li>Paste it below and save.</li>
+        </ol>
+      )}
+      <p className="mt-3 text-xs text-zinc-500">
+        Claude&apos;s use is billed to your Anthropic account. The key is checked with Anthropic, then stored encrypted for your
+        account, so it works on any device you sign in from. Only a masked version is ever shown again. Remove it any time.
       </p>
 
       {saved === undefined ? (
         <p className="mt-4 text-sm text-zinc-500">Loading…</p>
       ) : saved ? (
         <div className="mt-4 flex flex-wrap items-center gap-3">
+          <span className="text-sm text-green-700 dark:text-green-400">✓ Claude is set up</span>
           <code className="rounded bg-zinc-100 px-2 py-1 font-mono text-sm dark:bg-zinc-900">{saved}</code>
           <button
             type="button"
