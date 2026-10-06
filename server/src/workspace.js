@@ -229,15 +229,25 @@ async function listChanges(dir) {
   return changes;
 }
 
-export function previewPath(key) {
-  const signature = createHmac("sha256", config.sessionKey).update(`preview:${key}`).digest("base64url").slice(0, 32);
+// What a signed preview URL serves: "site" is the last build (dist/), "proposal" the site built
+// with the pending Claude proposal applied (the proposal-preview command in commands.js).
+export const PREVIEW_ROOTS = { site: "dist", proposal: ".git/twinstack-proposal-site" };
+
+export function previewPath(key, kind = "site") {
+  // The site's signature is unchanged from before there were two kinds, so its URLs keep working.
+  const scope = kind === "site" ? `preview:${key}` : `preview-${kind}:${key}`;
+  const signature = createHmac("sha256", config.sessionKey).update(scope).digest("base64url").slice(0, 32);
   return `/api/preview/${key}/${signature}/`;
 }
 
+/** The kind of preview the signature is for ("site" or "proposal"), or null. */
 export function verifyPreviewSignature(key, signature) {
-  const expected = Buffer.from(previewPath(key).split("/").at(-2));
   const given = Buffer.from(String(signature));
-  return expected.length === given.length && timingSafeEqual(expected, given);
+  for (const kind of Object.keys(PREVIEW_ROOTS)) {
+    const expected = Buffer.from(previewPath(key, kind).split("/").at(-2));
+    if (expected.length === given.length && timingSafeEqual(expected, given)) return kind;
+  }
+  return null;
 }
 
 export async function getStatus(key) {

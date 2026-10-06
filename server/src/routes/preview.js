@@ -2,9 +2,9 @@ import { existsSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Router } from "express";
-import { WorkspaceError, assertRepoRef, previewPath, verifyPreviewSignature, workspaceDir } from "../workspace.js";
+import { PREVIEW_ROOTS, WorkspaceError, assertRepoRef, previewPath, verifyPreviewSignature, workspaceDir } from "../workspace.js";
 
-// Serves a workspace's built dist/ for the preview iframe. The signed URL is
+// Serves a workspace's built dist/ (or the site built with a pending Claude proposal) for the preview iframe. The signed URL is
 // the credential (no cookie), because the iframe is sandboxed into an opaque
 // origin: the site's scripts then can't call this app's API as the user.
 
@@ -45,10 +45,13 @@ previewRouter.get("/:userId/:owner/:repo/:signature{/*path}", async (req, res) =
     return res.status(404).send("Not found");
   }
   const key = `${userId}/${owner.toLowerCase()}/${repo.toLowerCase()}`;
-  if (!verifyPreviewSignature(key, signature)) return res.status(404).send("Not found");
+  const kind = verifyPreviewSignature(key, signature);
+  if (!kind) return res.status(404).send("Not found");
 
-  const dist = path.join(workspaceDir(key), "dist");
+  const dist = path.join(workspaceDir(key), PREVIEW_ROOTS[kind]);
   const segments = req.params.path ?? [];
+  // Never dot-files: a proposal build keeps its working files (.proposal-sources/…) beside the site.
+  if (segments.some((segment) => segment.startsWith("."))) return res.status(404).set(HEADERS).type("text/plain").send("Not found");
   const relative = segments.length && !req.path.endsWith("/") ? segments.join("/") : path.join(...segments, "index.html");
   const file = resolveFile(dist, relative);
   res.set(HEADERS);
@@ -56,7 +59,7 @@ previewRouter.get("/:userId/:owner/:repo/:signature{/*path}", async (req, res) =
 
   const extension = path.extname(file).toLowerCase();
   if (extension === ".html" || extension === ".css") {
-    const prefix = previewPath(key).slice(0, -1);
+    const prefix = previewPath(key, kind).slice(0, -1);
     return res.type(extension).send(rebase(await fs.readFile(file, "utf8"), prefix));
   }
   res.sendFile(file, { dotfiles: "deny" });

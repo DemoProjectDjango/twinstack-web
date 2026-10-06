@@ -23,9 +23,11 @@ function extraFileRole(file: string) {
 }
 
 export function ProposalReview() {
-  const { owner, repo, busy, version, job, setStatus, refresh } = useSite();
+  const { owner, repo, busy, version, job, overview, run, setStatus, refresh } = useSite();
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [draft, setDraft] = useState("");
+  // The text the page preview was last built from, to say when the draft has moved on since.
+  const [previewedDraft, setPreviewedDraft] = useState<string | null>(null);
   const loadedAt = useRef<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -44,6 +46,7 @@ export function ProposalReview() {
         if (stamp !== loadedAt.current) {
           loadedAt.current = stamp;
           setDraft(next?.content ?? "");
+          setPreviewedDraft(null);
           if (next) setApplied(null);
         }
       })
@@ -85,6 +88,29 @@ export function ProposalReview() {
       setError(err);
     }
   }
+
+  // The page itself, built with this proposal applied (the edited text, if edited), shown under the diff.
+  const canPreview = Boolean(overview?.features.proposalPreview);
+  const pageProposal = Boolean(proposal) && proposal?.mode !== "markdown";
+  const previewJob = job?.command === "proposal-preview" ? job : null;
+  const building = previewJob?.status === "running";
+
+  async function previewPage() {
+    if (!proposal) return;
+    setError(null);
+    // Only edited text is sent: Claude's own version is already on the server.
+    if (await run("proposal-preview", draft !== proposal.content ? { content: draft } : {})) setPreviewedDraft(draft);
+  }
+
+  // Build it as soon as a new proposal arrives, once per proposal: a failed build isn't retried by itself.
+  const autoBuilt = useRef<string | null>(null);
+  useEffect(() => {
+    if (!proposal || proposal.mode === "markdown" || !canPreview || proposal.preview || busy) return;
+    const stamp = `${proposal.file}@${proposal.createdAt}`;
+    if (autoBuilt.current === stamp) return;
+    autoBuilt.current = stamp;
+    void run("proposal-preview", {}).then((started) => started && setPreviewedDraft(proposal.content));
+  }, [proposal, canPreview, busy, run]);
 
   const claudeJob = job && CLAUDE_PAGE_COMMANDS.includes(job.command) ? job : null;
   const generated = proposal?.mode === "generate";
@@ -213,6 +239,17 @@ export function ProposalReview() {
               />
               <LiveDiff before={proposal.original ?? ""} after={draft} label={`Changes to ${proposal.file}`} />
             </div>
+            {pageProposal && (
+              <PagePreview
+              proposal={proposal}
+              supported={canPreview}
+              building={building}
+              failedOutput={previewJob?.status === "failed" ? previewJob.output : null}
+              outdated={previewedDraft !== null && draft !== previewedDraft}
+              disabled={applying || busy || !draft.trim()}
+              onBuild={previewPage}
+              />
+            )}
             <ErrorText error={error} />
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="primary" disabled={applying || busy || !draft.trim()} onClick={apply}>
@@ -234,5 +271,125 @@ export function ProposalReview() {
         </Section>
       )}
     </>
+  );
+}
+
+/**
+ * The proposed page as the site would build it, under the diff. Sites whose scripts/build.js
+ * predates --proposal get an explanation and the template's build files instead.
+ */
+function PagePreview({
+  proposal,
+  supported,
+  building,
+  failedOutput,
+  outdated,
+  disabled,
+  onBuild,
+}: {
+  proposal: Proposal;
+  supported: boolean;
+  building: boolean;
+  failedOutput: string | null;
+  outdated: boolean;
+  disabled: boolean;
+  onBuild: () => void;
+}) {
+  const { owner, repo, busy, setStatus, refresh } = useSite();
+  const [width, setWidth] = useState<"desktop" | "phone">("desktop");
+  const [updating, setUpdating] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const preview = proposal.preview ?? null;
+
+  async function updateBuildFiles() {
+    setUpdating(true);
+    setError(null);
+    try {
+      const result = await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/install/publishing"), { method: "POST", body: {} });
+      setStatus(result.status);
+      await refresh();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 className="text-sm font-medium">The page with this change</h4>
+        {preview && (
+          <span className="text-xs text-zinc-500">
+            {preview.edited ? "built from your edited text" : "built from Claude's version"}, not saved
+          </span>
+        )}
+        {supported && (
+          <span className="ml-auto flex items-center gap-1">
+            {(["desktop", "phone"] as const).map((w) => (
+              <button
+                key={w}
+                type="button"
+                onClick={() => setWidth(w)}
+                aria-pressed={width === w}
+                className={`rounded px-2.5 py-1 text-xs font-medium ${width === w ? "bg-foreground text-background" : "hover:bg-zinc-100 dark:hover:bg-zinc-900"}`}
+              >
+                {w === "desktop" ? "Desktop" : "Phone"}
+              </button>
+            ))}
+            {preview && (
+              <a href={preview.url} target="_blank" rel="noreferrer" className="ml-2 text-sm text-zinc-500 hover:underline">
+                Open in a new tab ↗
+              </a>
+            )}
+          </span>
+        )}
+      </div>
+
+      {!supported ? (
+        <Notice>
+          This site&apos;s build script is older than page previews, so only the text changes are shown above. Update its build files
+          from the template (<code className="font-mono">scripts/build.js</code>, <code className="font-mono">check.js</code>,{" "}
+          <code className="font-mono">lib/content.js</code>, <code className="font-mono">lib/seo.js</code> and the deploy workflow,
+          as uncommitted changes you review on the Changes tab), then preview the change again.{" "}
+          <Button variant="ghost" className="underline" disabled={busy || updating} onClick={updateBuildFiles}>
+            {updating ? "Updating…" : "Update the build files"}
+          </Button>
+          <ErrorText error={error} />
+        </Notice>
+      ) : (
+        <>
+          {failedOutput !== null && !building && (
+            <Notice tone="warning">
+              The page couldn&apos;t be built:
+              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">
+                {failedOutput.trim().split("\n").slice(-12).join("\n")}
+              </pre>
+            </Notice>
+          )}
+          {(outdated || (!preview && !building)) && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-zinc-500">
+                {outdated ? "You've edited the text since this was built." : "Not built yet."}
+              </span>
+              <Button disabled={disabled} onClick={onBuild}>
+                {outdated ? "Update the preview" : "Build the page"}
+              </Button>
+            </div>
+          )}
+          {building && <p className="text-sm text-zinc-500">Building the page with this change…</p>}
+          {preview && (
+            // Sandboxed without allow-same-origin, like the Build tab's preview.
+            <iframe
+              key={preview.builtAt}
+              src={preview.url}
+              title={`Preview of ${proposal.file} with the change`}
+              sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+              className={`mx-auto block h-[40rem] rounded-md border border-zinc-200 bg-white dark:border-zinc-800 ${building ? "opacity-50" : ""} ${width === "phone" ? "w-[390px] max-w-full" : "w-full"}`}
+            />
+          )}
+        </>
+      )}
+    </div>
   );
 }

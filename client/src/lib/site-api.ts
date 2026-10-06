@@ -121,6 +121,8 @@ export type Overview = {
     memory: boolean;
     seo?: boolean;
     seoTemplate?: boolean;
+    /** Its build.js takes --proposal, so a Claude proposal can be shown as the built page. */
+    proposalPreview?: boolean;
   };
   /** Markdown files outside content/ that the "md-edit" command may change. Empty without mdEdit. */
   markdownFiles: string[];
@@ -209,6 +211,11 @@ export type Proposal = {
    * current text, null if it doesn't exist yet (older servers send none).
    */
   files: { file: string; content: string; original?: string | null }[];
+  /**
+   * The site built with this proposal applied ("proposal-preview"): `url` opens the page in the
+   * sandboxed preview, `edited` when it was built from the user's edited text. Null until built.
+   */
+  preview?: { url: string; edited: boolean; builtAt: string } | null;
   /** For mode "seo" (the SEO tab's suggestion for a page): the fields Claude suggests. Older servers send none. */
   seo?: SeoSuggestion | null;
   /** What an HTML conversion tested before showing this ("attempt 1: …", "pass 2, 1280px wide: …"). */

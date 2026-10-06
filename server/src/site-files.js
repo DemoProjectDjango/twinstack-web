@@ -10,7 +10,7 @@ import {
   recentWorkLogLines,
   replaceWorkLogLine,
 } from "./db.js";
-import { WorkspaceError, acquire, siteIdFor, workspaceDir } from "./workspace.js";
+import { PREVIEW_ROOTS, WorkspaceError, acquire, previewPath, siteIdFor, workspaceDir } from "./workspace.js";
 
 // Reads and writes the site's own data files. Everything here parses files
 // directly; repo code is never imported into the server process.
@@ -150,6 +150,8 @@ export async function getOverview(key) {
   const editScript = (await readText(path.join(dir, "scripts/edit-page.js"))) ?? "";
   // Copies made before scripts/edit-md.js existed can't edit other markdown.
   const mdEdit = existsSync(path.join(dir, "scripts/edit-md.js"));
+  // Copies made before build.js --proposal can't show a proposal as the built page.
+  const buildScript = (await readText(path.join(dir, "scripts/build.js"))) ?? "";
   // Copies made before the site tree could declare global stylesheets ignore its .css lines.
   const globalCss = editScript.includes("globalStylesheets");
   // Copies made before SEO have no scripts/seo.js, and older page shells don't render its tags.
@@ -169,6 +171,7 @@ export async function getOverview(key) {
       mdEdit,
       seo,
       seoTemplate,
+      proposalPreview: buildScript.includes("--proposal="),
       // Copies made before knowledge/ existed have no notes or work log for Claude.
       memory: existsSync(path.join(dir, KNOWLEDGE_SCRIPT)),
     },
@@ -285,7 +288,63 @@ export const PROPOSAL_FILE = ".git/twinstack-proposal.json";
 const MARKDOWN_PAGE = /^content\/[\w./-]+\.md$/;
 
 export async function clearProposal(key) {
-  await fs.rm(path.join(workspaceDir(key), PROPOSAL_FILE), { force: true });
+  const dir = workspaceDir(key);
+  await fs.rm(path.join(dir, PROPOSAL_FILE), { force: true });
+  await clearProposalPreview(dir);
+}
+
+// "Preview the page": the copy's build.js --proposal builds the whole site with the proposal
+// applied (the user's edited text in place of Claude's) into PREVIEW_ROOTS.proposal, served under
+// its own signed preview URL. Copies whose build.js predates --proposal can't
+// (overview.features.proposalPreview).
+export const PROPOSAL_PREVIEW_INPUT = ".git/twinstack-proposal-preview.json";
+export const PROPOSAL_SITE_DIR = PREVIEW_ROOTS.proposal;
+
+async function clearProposalPreview(dir) {
+  await fs.rm(path.join(dir, PROPOSAL_SITE_DIR), { recursive: true, force: true });
+  await fs.rm(path.join(dir, PROPOSAL_PREVIEW_INPUT), { force: true });
+}
+
+/** Writes what the proposal-preview build reads: the pending proposal, with `content` (the user's edits) when given. */
+export async function prepareProposalPreview(key, content) {
+  const dir = workspaceDir(key);
+  let proposal;
+  try {
+    proposal = JSON.parse((await readText(path.join(dir, PROPOSAL_FILE))) ?? "null");
+  } catch {
+    proposal = null;
+  }
+  if (!proposal || typeof proposal.file !== "string" || typeof proposal.content !== "string") {
+    throw new WorkspaceError("There's no proposal to preview. Ask Claude again.", 409);
+  }
+  if (!MARKDOWN_PAGE.test(proposal.file) || proposal.file.split("/").includes("..")) {
+    throw new WorkspaceError("Only a page under content/ can be previewed.", 400);
+  }
+  if (content !== undefined && (typeof content !== "string" || !content.trim() || Buffer.byteLength(content) > MAX_FILE_BYTES)) {
+    throw new WorkspaceError("The page content is empty or too large.", 400);
+  }
+  await clearProposalPreview(dir);
+  const input = { ...proposal, content: (content ?? proposal.content).replace(/\r\n/g, "\n") };
+  await fs.writeFile(path.join(dir, PROPOSAL_PREVIEW_INPUT), JSON.stringify(input));
+}
+
+/** The built preview of the pending proposal, if it was built from this proposal: { url, edited, builtAt }. */
+async function proposalPreview(key, proposal) {
+  const dir = workspaceDir(key);
+  try {
+    const built = JSON.parse((await readText(path.join(dir, PROPOSAL_SITE_DIR, ".proposal.json"))) ?? "null");
+    if (!built || built.file !== proposal.file || (built.createdAt ?? null) !== (proposal.createdAt ?? null) || typeof built.url !== "string") return null;
+    const input = JSON.parse((await readText(path.join(dir, PROPOSAL_PREVIEW_INPUT))) ?? "null");
+    const stat = await fs.stat(path.join(dir, PROPOSAL_SITE_DIR, ".proposal.json"));
+    return {
+      url: `${previewPath(key, "proposal")}${built.url.replace(/^\/+/, "")}`,
+      // Built from the user's edited text rather than Claude's.
+      edited: typeof input?.content === "string" && input.content !== proposal.content.replace(/\r\n/g, "\n"),
+      builtAt: stat.mtime.toISOString(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Whether a proposal of this mode may write this file. */
@@ -374,6 +433,8 @@ export async function readProposal(key) {
       checks: Array.isArray(proposal.checks) ? proposal.checks.map(String).slice(0, 20) : [],
       // An SEO proposal's fields (scripts/seo.js --claude): the title, description and keyphrase it sets.
       seo: mode === "seo" ? seoFields(proposal.seo) : null,
+      // The site built with this proposal applied ("Preview the page"), or null.
+      preview: mode === "markdown" ? null : await proposalPreview(key, proposal),
       // The work-log summary Claude wrote for this change, recorded when it's applied.
       summary: cleanSummary(proposal.summary),
       content: proposal.content,

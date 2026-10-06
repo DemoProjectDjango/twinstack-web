@@ -6,7 +6,10 @@ import {
   IMAGE_PATH,
   JS_SOURCE_PATH,
   PROPOSAL_FILE,
+  PROPOSAL_PREVIEW_INPUT,
+  PROPOSAL_SITE_DIR,
   clearProposal,
+  prepareProposalPreview,
   htmlSourceExists,
   isEditableMarkdown,
 } from "./site-files.js";
@@ -306,6 +309,14 @@ export const COMMANDS = {
       }
       if (flag(input, "dryRun")) await clearProposal(key);
     },
+  },
+
+  // The whole site built with the pending proposal applied (the user's edited text, `content`, in
+  // place of Claude's when given), without touching the files, for "Preview the page".
+  "proposal-preview": {
+    label: "Build the proposed page",
+    steps: () => [script("build.js", [`--proposal=${PROPOSAL_PREVIEW_INPUT}`, `--out=${PROPOSAL_SITE_DIR}`])],
+    prepare: (key, input) => prepareProposalPreview(key, input?.content),
   },
 
   // Markdown outside content/ (the site tree, the schedule, the docs), via the copy's scripts/edit-md.js.
