@@ -13,6 +13,7 @@ import { JobLog } from "./JobLog";
 import { MemoryPanel } from "./MemoryPanel";
 import { PagesPanel } from "./PagesPanel";
 import { SchedulePanel } from "./SchedulePanel";
+import { SeoPanel } from "./SeoPanel";
 import { SiteContext, type SiteContextValue } from "./site-context";
 import { StaticInfoPanel } from "./StaticInfoPanel";
 import { StylesPanel } from "./StylesPanel";
@@ -22,6 +23,7 @@ import { Badge, Button, ErrorText, Notice } from "./ui";
 const TABS = [
   { id: "build", label: "Build & preview" },
   { id: "pages", label: "Pages" },
+  { id: "seo", label: "SEO" },
   { id: "navigation", label: "Header & footer" },
   { id: "info", label: "Site info" },
   { id: "edit", label: "Edit with Claude" },
@@ -300,6 +302,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
           <div className="min-w-0 space-y-6">
             {tab === "build" && <BuildPanel />}
             {tab === "pages" && <PagesPanel />}
+            {tab === "seo" && <SeoPanel />}
             {navOpened && (
               <div hidden={tab !== "navigation"}>
                 <HeaderFooterPanel />

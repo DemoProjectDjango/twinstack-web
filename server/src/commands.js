@@ -11,6 +11,7 @@ import {
   isEditableMarkdown,
 } from "./site-files.js";
 import { WorkspaceError, markInstalled } from "./workspace.js";
+import { SEO_REPORT } from "./seo.js";
 
 // Every command the site manager can run, mapped to the same scripts the
 // site's package.json runs. User input only ever becomes separate argv
@@ -134,6 +135,45 @@ function images(input) {
     }
     return value;
   });
+}
+
+// The SEO fields the seo-set command takes, the flag the copy's scripts/seo.js reads for each,
+// and the longest value accepted. An empty string removes the field (the site's default applies).
+const SEO_FIELDS = {
+  metaTitle: { flag: "title", label: "SEO title", max: 200 },
+  metaDescription: { flag: "description", label: "Meta description", max: 400 },
+  focusKeyword: { flag: "keyword", label: "Focus keyphrase", max: 100 },
+  ogImage: { flag: "image", label: "Social image", max: 500 },
+  ogImageAlt: { flag: "image-alt", label: "Social image alt text", max: 300 },
+  canonical: { flag: "canonical", label: "Canonical URL", max: 500 },
+};
+
+function seoFieldFlags(input) {
+  const fields = input?.fields;
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) throw new WorkspaceError("Nothing to save.", 400);
+  const args = [];
+  for (const [name, spec] of Object.entries(SEO_FIELDS)) {
+    const value = fields[name];
+    if (value === undefined) continue;
+    if (typeof value !== "string") throw new WorkspaceError(`${spec.label} must be text.`, 400);
+    const clean = value.replace(/\s+/g, " ").trim();
+    if (clean.length > spec.max) throw new WorkspaceError(`${spec.label} must be at most ${spec.max} characters.`, 400);
+    if (clean.includes("\0")) throw new WorkspaceError(`${spec.label} has an invalid character.`, 400);
+    if (name === "ogImage" && clean && !/^(\/(?!\/)|https?:\/\/)\S+$/.test(clean)) {
+      throw new WorkspaceError("Social image must be a site path (/assets/img/…) or an http(s) URL.", 400);
+    }
+    if (name === "canonical" && clean && !/^(\/(?!\/)|https?:\/\/)\S+$/.test(clean)) {
+      throw new WorkspaceError("Canonical URL must start with / or http(s)://.", 400);
+    }
+    // One argv entry: the value can't be read as a separate flag whatever it starts with.
+    args.push(`--${spec.flag}=${clean}`);
+  }
+  if (fields.noindex !== undefined) {
+    if (typeof fields.noindex !== "boolean") throw new WorkspaceError("Hide from search engines must be yes or no.", 400);
+    args.push(fields.noindex ? "--noindex" : "--index");
+  }
+  if (!args.length) throw new WorkspaceError("Nothing to save.", 400);
+  return args;
 }
 
 export const COMMANDS = {
@@ -283,6 +323,42 @@ export const COMMANDS = {
       return [script("edit-md.js", args)];
     },
     prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
+  },
+
+  // SEO (scripts/seo.js): every run also saves the audit where the SEO tab reads it (readSeo in seo.js).
+  "seo-audit": {
+    label: "Check SEO",
+    steps: () => [script("seo.js", [`--report=${SEO_REPORT}`])],
+  },
+
+  "seo-set": {
+    label: "Save SEO",
+    steps: (input) => [script("seo.js", [markdownPage(input), ...seoFieldFlags(input), `--report=${SEO_REPORT}`])],
+  },
+
+  // One page (with a preview proposal, mode "seo"), or every page without its own SEO title or
+  // description (all: true; force: true for every page). Claude only writes the title, the
+  // description and the focus keyphrase.
+  "seo-claude": {
+    label: "Write SEO with Claude",
+    claude: true,
+    needsKey: () => true,
+    steps: (input) => {
+      const direction = text(input, "instruction", "Direction", { max: 2000, multiline: true, optional: true });
+      if (flag(input, "all")) {
+        const args = ["--all", "--claude"];
+        if (direction) args.push(direction);
+        if (flag(input, "force")) args.push("--force");
+        if (flag(input, "dryRun")) args.push("--dry-run");
+        // A request per page, and up to two corrections each.
+        return [script("seo.js", [...args, `--report=${SEO_REPORT}`], 30 * MINUTE)];
+      }
+      const args = [markdownPage(input), "--claude"];
+      if (direction) args.push(direction);
+      if (flag(input, "dryRun")) args.push("--dry-run", `--proposal-out=${PROPOSAL_FILE}`);
+      return [script("seo.js", [...args, `--report=${SEO_REPORT}`])];
+    },
+    prepare: (key, input) => (flag(input, "dryRun") && !flag(input, "all") ? clearProposal(key) : undefined),
   },
 
   scaffold: {

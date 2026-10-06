@@ -107,6 +107,8 @@ export type Overview = {
    * globalCss: --keep-styles applies the site tree's global stylesheets (listed in globalStylesheets).
    * mdEdit: it has scripts/edit-md.js (edit markdown outside content/, listed in markdownFiles).
    * memory: it has scripts/lib/knowledge.js (Claude reads knowledge/notes.md and the work log first).
+   * seo: it has scripts/seo.js (the SEO tab). seoTemplate: its base.html renders the tags seo.js sets.
+   * Older servers send neither.
    */
   features: {
     pageEditImages: boolean;
@@ -117,6 +119,8 @@ export type Overview = {
     globalCss: boolean;
     mdEdit: boolean;
     memory: boolean;
+    seo?: boolean;
+    seoTemplate?: boolean;
   };
   /** Markdown files outside content/ that the "md-edit" command may change. Empty without mdEdit. */
   markdownFiles: string[];
@@ -192,7 +196,7 @@ export type Proposal = {
    * "convert": converted from an uploaded HTML page. "markdown": a markdown file outside
    * content/ changed by an instruction.
    */
-  mode: "edit" | "generate" | "convert" | "markdown";
+  mode: "edit" | "generate" | "convert" | "markdown" | "seo";
   /** The file as it is on disk now, to diff the proposal against. Null if it's gone. */
   original: string | null;
   instruction: string;
@@ -205,6 +209,8 @@ export type Proposal = {
    * current text, null if it doesn't exist yet (older servers send none).
    */
   files: { file: string; content: string; original?: string | null }[];
+  /** For mode "seo" (the SEO tab's suggestion for a page): the fields Claude suggests. Older servers send none. */
+  seo?: SeoSuggestion | null;
   /** What an HTML conversion tested before showing this ("attempt 1: …", "pass 2, 1280px wide: …"). */
   checks: string[];
   /** Claude's summary of the change, recorded in the work log when it's applied. */
@@ -224,6 +230,61 @@ export type Proposal = {
  * to Claude. `available` is false for copies whose scripts predate it.
  */
 export type Memory = { available: boolean; lines: string[]; sent: number };
+
+/** A page's own SEO fields (frontmatter); "" means not set, so the site's default applies. */
+export type SeoFields = {
+  metaTitle: string;
+  metaDescription: string;
+  focusKeyword: string;
+  ogImage: string;
+  ogImageAlt: string;
+  canonical: string;
+  noindex: boolean;
+};
+export type SeoSuggestion = Pick<SeoFields, "metaTitle" | "metaDescription" | "focusKeyword">;
+export type SeoIssue = { level: "error" | "warning" | "tip" | "note"; field: string; message: string };
+/** One page in the copy's SEO audit (scripts/seo.js --report). `seo` is what search engines get. */
+export type SeoPage = {
+  file: string;
+  url: string;
+  absoluteUrl: string;
+  collection: string;
+  title: string;
+  draft: boolean;
+  date: string | null;
+  fields: SeoFields;
+  seo: {
+    title: string;
+    /** The title when metaTitle is empty, from the site's title template. */
+    defaultTitle: string;
+    description: string;
+    /** The description when metaDescription is empty: the page's description, or the start of its text. */
+    defaultDescription: string;
+    descriptionSource: "seo" | "page" | "body";
+    socialTitle: string;
+    image: string;
+    imagePath: string;
+    /** The social image when ogImage is empty: the page's image, or the site's default. Older copies send none. */
+    defaultImagePath?: string;
+    imageAlt: string;
+    canonical: string;
+    robots: string;
+    type: "article" | "website";
+  };
+  score: number;
+  issues: SeoIssue[];
+};
+export type SeoReport = {
+  createdAt: string;
+  site: { name: string; shortName: string; url: string };
+  summary: { pages: number; average: number; errors: number; warnings: number };
+  pages: SeoPage[];
+};
+/**
+ * The SEO tab's data. `available`: the copy has scripts/seo.js. `template`: its base.html renders
+ * the tags. `report` is the latest audit (null before the first), `stale` once a page changed since.
+ */
+export type SeoInfo = { available: boolean; template: boolean; report: SeoReport | null; stale: boolean };
 
 /** An uploaded HTML page, saved inside .git for the "page-convert" command. */
 export type HtmlSource = {

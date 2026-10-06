@@ -9,8 +9,9 @@ import { WorkspaceError } from "./workspace.js";
 export const DEPLOY_WORKFLOW = "deploy.yml";
 const WORKFLOW_PATH = `.github/workflows/${DEPLOY_WORKFLOW}`;
 // Files a copy needs from the template to publish under /<repo> on github.io.
-// Copies made before that support get them with "Update publishing files".
-export const PUBLISHING_FILES = [WORKFLOW_PATH, "scripts/build.js", "scripts/check.js", "scripts/lib/content.js"];
+// Copies made before that support get them with "Update publishing files". The template's
+// build.js and check.js import scripts/lib/seo.js, so it goes with them.
+export const PUBLISHING_FILES = [WORKFLOW_PATH, "scripts/build.js", "scripts/check.js", "scripts/lib/content.js", "scripts/lib/seo.js"];
 
 async function json(path, accessToken, options) {
   const res = await githubFetch(path, accessToken, options);

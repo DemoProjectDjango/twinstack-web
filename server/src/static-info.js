@@ -12,9 +12,9 @@ const SECTIONS = [
     id: "site",
     label: "Site details",
     file: "site.config.json",
-    description: "Name, taglines, description, contact details and social links, used in the header, footer and page metadata.",
+    description: "Name, taglines, description, contact details, social links and search engine settings (seo: the title format, X handle and verification codes), used in the header, footer and page metadata.",
     // Collections, deploy and automation settings stay out of reach: changing them can break the build.
-    keys: ["name", "shortName", "tagline", "footerTagline", "description", "contact", "social"],
+    keys: ["name", "shortName", "tagline", "footerTagline", "description", "contact", "social", "seo"],
   },
   {
     id: "company",

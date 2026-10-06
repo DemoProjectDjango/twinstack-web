@@ -35,8 +35,10 @@ export function ProposalReview() {
   useEffect(() => {
     let cancelled = false;
     api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal"))
-      .then(({ proposal: next }) => {
+      .then(({ proposal: found }) => {
         if (cancelled) return;
+        // The SEO tab shows its own suggestions.
+        const next = found?.mode === "seo" ? null : found;
         setProposal(next);
         const stamp = next ? `${next.file}@${next.createdAt}` : null;
         if (stamp !== loadedAt.current) {

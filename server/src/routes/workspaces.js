@@ -49,6 +49,7 @@ import {
 import { getStaticInfo, saveStaticInfo } from "../static-info.js";
 import { getBrand, saveBrand, saveBrandImage } from "../brand.js";
 import { APPEARANCE_MARKER, HEADER_FOOTER_FILES, getNavigation, saveNavigation } from "../navigation.js";
+import { SEO_FILES, SEO_MARKERS, installSeo, readSeo } from "../seo.js";
 import {
   WorkspaceError,
   acquire,
@@ -366,6 +367,31 @@ workspacesRouter.post(
       files[file] = content;
     }
     const result = await updateFromTemplate(key, files, "updating the publishing files");
+    res.json({ ...result, status: await getStatus(key) });
+  }),
+);
+
+/* SEO: the audit scripts/seo.js saved, and the files older copies need for it. */
+
+workspacesRouter.get(
+  "/:owner/:repo/seo",
+  handle(async (req, res) => res.json(await readSeo(keyFor(req)))),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/install/seo",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const accessToken = await getAccessToken(req, res);
+    const files = {};
+    for (const file of SEO_FILES) {
+      const content = await readRepoFile(accessToken, config.siteTemplate, file);
+      if (content === null || (SEO_MARKERS[file] && !content.includes(SEO_MARKERS[file]))) {
+        throw new WorkspaceError(`The template (${config.siteTemplate}) doesn't have the new ${file} yet. Push it to GitHub first.`, 409);
+      }
+      files[file] = content;
+    }
+    const result = await installSeo(key, files);
     res.json({ ...result, status: await getStatus(key) });
   }),
 );

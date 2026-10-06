@@ -152,6 +152,9 @@ export async function getOverview(key) {
   const mdEdit = existsSync(path.join(dir, "scripts/edit-md.js"));
   // Copies made before the site tree could declare global stylesheets ignore its .css lines.
   const globalCss = editScript.includes("globalStylesheets");
+  // Copies made before SEO have no scripts/seo.js, and older page shells don't render its tags.
+  const seo = existsSync(path.join(dir, "scripts/seo.js"));
+  const seoTemplate = ((await readText(path.join(dir, "templates/partials/base.html"))) ?? "").includes("page.seo.");
 
   return {
     site: { name: site.name, url: site.url, model: site.automation?.model ?? null },
@@ -164,6 +167,8 @@ export async function getOverview(key) {
       pageConvertScripts: editScript.includes("--js="),
       globalCss,
       mdEdit,
+      seo,
+      seoTemplate,
       // Copies made before knowledge/ existed have no notes or work log for Claude.
       memory: existsSync(path.join(dir, KNOWLEDGE_SCRIPT)),
     },
@@ -337,6 +342,9 @@ async function globalStylesheets(dir) {
   return out;
 }
 
+const seoFields = (fields) =>
+  Object.fromEntries(["metaTitle", "metaDescription", "focusKeyword"].map((name) => [name, typeof fields?.[name] === "string" ? fields[name].slice(0, 400) : ""]));
+
 /** The pending proposal with the file's current text as `original` (null if it's gone), or null. */
 export async function readProposal(key) {
   const text = await readText(path.join(workspaceDir(key), PROPOSAL_FILE));
@@ -345,7 +353,7 @@ export async function readProposal(key) {
     const proposal = JSON.parse(text);
     if (typeof proposal.file !== "string" || typeof proposal.content !== "string") return null;
     // Older copies write no mode: their proposals are always instruction edits.
-    const mode = ["generate", "convert", "markdown"].includes(proposal.mode) ? proposal.mode : "edit";
+    const mode = ["generate", "convert", "markdown", "seo"].includes(proposal.mode) ? proposal.mode : "edit";
     const original = proposalAllowed(mode, proposal.file)
       ? await readText(inside(workspaceDir(key), proposal.file))
       : null;
@@ -364,6 +372,8 @@ export async function readProposal(key) {
       ),
       // What a conversion tested before showing this: Claude's attempts, content and render passes.
       checks: Array.isArray(proposal.checks) ? proposal.checks.map(String).slice(0, 20) : [],
+      // An SEO proposal's fields (scripts/seo.js --claude): the title, description and keyphrase it sets.
+      seo: mode === "seo" ? seoFields(proposal.seo) : null,
       // The work-log summary Claude wrote for this change, recorded when it's applied.
       summary: cleanSummary(proposal.summary),
       content: proposal.content,
@@ -674,10 +684,11 @@ export async function applyProposal(key, content) {
     await clearProposal(key);
     const defaultInstruction = {
       generate: "turned the draft into the finished page",
+      seo: "wrote the SEO title, description and focus keyphrase",
       convert: `converted ${proposal.source ?? "an HTML page"} into the page${proposal.files.length ? ", keeping its styles" : ""}`,
     };
     await logAppliedChange(key, {
-      command: { generate: "page:generate", convert: "page:convert", markdown: "md:edit" }[proposal.mode] ?? "page:edit",
+      command: { generate: "page:generate", convert: "page:convert", markdown: "md:edit", seo: "seo:claude" }[proposal.mode] ?? "page:edit",
       file: proposal.file,
       instruction: proposal.instruction || (defaultInstruction[proposal.mode] ?? ""),
       summary: proposal.summary,
