@@ -109,7 +109,7 @@ export function DomainSettings({ publishing, onChange }: { publishing: Publishin
                   autoCapitalize="off"
                 />
               </label>
-              <Button type="submit" variant="primary" className="text-xs" disabled={locked || !typed.includes(".")}>
+              <Button type="submit" variant="primary" className="text-xs py-2" disabled={locked || !typed.includes(".")}>
                 {working === "save" ? "Connecting…" : "Connect domain"}
               </Button>
             </form>

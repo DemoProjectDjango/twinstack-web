@@ -15,6 +15,7 @@ import {
 } from "./site-files.js";
 import { WorkspaceError, markInstalled } from "./workspace.js";
 import { SEO_REPORT } from "./seo.js";
+import { saveCheckReport } from "./site-check.js";
 
 // Every command the site manager can run, mapped to the same scripts the
 // site's package.json runs. User input only ever becomes separate argv
@@ -195,9 +196,12 @@ export const COMMANDS = {
     onSuccess: markInstalled,
   },
 
+  // The deploy workflow's own check. What it finds, passed or failed, is saved for the Publish
+  // screen and Claude (site-check.js).
   check: {
     label: "Build and check",
     steps: () => [script("build.js"), script("check.js")],
+    onEnd: saveCheckReport,
   },
 
   preview: {

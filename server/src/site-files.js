@@ -720,6 +720,20 @@ async function logAppliedChange(key, change) {
   }
 }
 
+/** Logs a change the assistant made that the user applied (see logAppliedChange). Never throws. */
+export async function logWork(key, change) {
+  await logAppliedChange(key, change);
+}
+
+/**
+ * The site's latest work log as Claude gets it before every request (the newest LOG_ROTATE_AT
+ * entries, merged from the database and the checked-out branch), for the assistant, which calls
+ * Claude from the server rather than through the copy's scripts.
+ */
+export async function recentWorkLog(key) {
+  return mergedWorkLog(workspaceDir(key), await siteIdFor(key), LOG_ROTATE_AT);
+}
+
 /** Writes the proposal (or the user's edited version of it) to its page and clears it. */
 export async function applyProposal(key, content) {
   if (typeof content !== "string" || !content.trim() || Buffer.byteLength(content) > MAX_FILE_BYTES) {
@@ -801,6 +815,134 @@ export async function savePage(key, file, content, version) {
     release();
   }
   return readPage(key, file);
+}
+
+/** Removes one page's file. Like any change, it can be undone on the Publish screen until it's published. */
+export async function deletePage(key, file) {
+  const target = pageFile(key, file);
+  const release = acquire(key, `deleting ${file}`);
+  try {
+    if (!existsSync(target)) throw new WorkspaceError(`${file} doesn't exist.`, 404);
+    await fs.rm(target);
+  } finally {
+    release();
+  }
+}
+
+/* --------------------------------------------- the homepage and listing pages */
+
+// Pages "Add a page" can't make, because their address doesn't come from their name: the homepage
+// ("/") and a collection's listing page (its index.url, e.g. /blog.html). They're made the way the
+// site plan's index.html and <folder>/index.html lines make them (scripts/lib/scaffold-tree-runner.js),
+// from the template's own scripts/site-tree-content/<path>.md when it has one for that address.
+
+/** A new page as the site plan scaffolds one: the site's page skeleton (scripts/lib/scaffold-templates.js) with its address and layout. */
+function pageSkeleton({ title, slug, url, layout }) {
+  const value = /^[\w ,.!&'()-]+$/.test(title) ? title : JSON.stringify(title);
+  return `---
+title: ${value}
+slug: ${slug}
+url: ${url}
+${layout ? `layout: ${layout}\n` : ""}order: 50
+kicker:
+heroHeading: ${value}
+heroText: One sentence on what this page is for.
+description: Under 160 characters, written for search results.
+---
+
+## First section
+
+Replace this with the real content.
+`;
+}
+
+const addressOf = (url) => (url.endsWith("/") || path.posix.extname(url) ? url : `${url}/`);
+
+function checkTitle(title) {
+  if (title !== undefined && title !== null && (typeof title !== "string" || title.length > 200 || /[\r\n]/.test(title))) {
+    throw new WorkspaceError("The title must be a single line of up to 200 characters.", 400);
+  }
+}
+
+/** Writes the first of `names` that's free in the pages collection, unless a page is already at `url`. Returns its file. */
+async function addAddressedPage(key, { label, url, names, predefinedPath, skeleton, taken }) {
+  const dir = workspaceDir(key);
+  const release = acquire(key, label);
+  try {
+    const overview = await getOverview(key);
+    const existing = overview.collections.flatMap((c) => c.pages).find((p) => p.url && addressOf(p.url) === addressOf(url));
+    if (existing) throw new WorkspaceError(taken(existing), 409);
+    const pagesDir = overview.collections.find((c) => c.name === "pages")?.dir;
+    if (!pagesDir) throw new WorkspaceError("This site has no collection of pages to add it to.", 422);
+    const slug = names.find((name) => !existsSync(inside(dir, `${pagesDir}/${name}.md`)));
+    if (!slug) throw new WorkspaceError(`Rename ${pagesDir}/${names[0]}.md first: a page already has that name.`, 409);
+    const file = `${pagesDir}/${slug}.md`;
+
+    const predefined = await readText(path.join(dir, "scripts/site-tree-content", predefinedPath));
+    const declaresUrl = (text) => frontmatter(text).url === url;
+    const content = predefined && declaresUrl(predefined) ? predefined : skeleton(slug, (layout) => existsSync(path.join(dir, `templates/layouts/${layout}.html`)));
+    await fs.mkdir(path.dirname(inside(dir, file)), { recursive: true });
+    await fs.writeFile(inside(dir, file), content);
+    return { file };
+  } finally {
+    release();
+  }
+}
+
+/** site.config.json, parsed. */
+export async function readSiteConfig(key) {
+  try {
+    return JSON.parse((await readText(path.join(workspaceDir(key), "site.config.json"))) ?? "{}");
+  } catch (err) {
+    throw new WorkspaceError(`Couldn't parse the site's JSON config: ${err.message}`, 422);
+  }
+}
+
+/** Gives a site with no homepage one: a page at "/" with the home layout (content/pages/home.md). */
+export async function createHomepage(key, { title } = {}) {
+  checkTitle(title);
+  const site = await readSiteConfig(key);
+  return addAddressedPage(key, {
+    label: "adding the homepage",
+    url: "/",
+    // home.md may already be an ordinary page at /home.html.
+    names: ["home", "index", "homepage"],
+    predefinedPath: "index.md",
+    skeleton: (slug, hasLayout) =>
+      pageSkeleton({ title: title?.trim() || site.tagline || site.name || "Home", slug, url: "/", layout: hasLayout("home") ? "home" : null }),
+    taken: (page) => `Your site already has a homepage: "${page.title}".`,
+  });
+}
+
+/** A collection's listing page (the Blog page at /blog.html lists the posts), as the site config describes it; null if it has none. */
+export function listingOf(site, name) {
+  const config = site.collections?.[name];
+  if (typeof config?.dir !== "string" || !config.index) return null;
+  const folder = path.posix.basename(config.dir);
+  return {
+    collection: name,
+    folder,
+    url: config.index.url || `/${folder}.html`,
+    layout: config.index.layout || `list-${folder}`,
+    label: config.index.label || folder.charAt(0).toUpperCase() + folder.slice(1).replaceAll("-", " "),
+  };
+}
+
+/** Gives a collection its listing page (content/pages/<folder>.md at the collection's index.url). */
+export async function createListingPage(key, collection, { title } = {}) {
+  checkTitle(title);
+  const site = await readSiteConfig(key);
+  const listing = typeof collection === "string" && Object.hasOwn(site.collections ?? {}, collection) ? listingOf(site, collection) : null;
+  if (!listing) throw new WorkspaceError("That kind of page has no listing page.", 404);
+  return addAddressedPage(key, {
+    label: `adding the ${listing.label} page`,
+    url: listing.url,
+    names: [listing.folder],
+    predefinedPath: `${listing.folder}/index.md`,
+    skeleton: (slug, hasLayout) =>
+      pageSkeleton({ title: title?.trim() || listing.label, slug, url: listing.url, layout: hasLayout(listing.layout) ? listing.layout : null }),
+    taken: (page) => `Your site already has its ${listing.label} page: "${page.title}".`,
+  });
 }
 
 /* -------------------------------------------------------------------- CSS */
@@ -892,7 +1034,7 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_TYPES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
 
 /** Detects the real type from the file's first bytes; the browser's claim isn't trusted. */
-function sniffImage(buffer) {
+export function sniffImage(buffer) {
   if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "png";
   if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "jpg";
   if (buffer.subarray(0, 4).toString("latin1") === "GIF8") return "gif";

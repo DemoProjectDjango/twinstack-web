@@ -2,7 +2,7 @@
 
 import { createContext, useContext } from "react";
 import type { ClaudeAccess } from "@/lib/claude";
-import type { EditMode, Job, Overview, Publishing, WorkspaceStatus } from "@/lib/site-api";
+import type { EditMode, Job, Overview, Publishing, SiteCheckReport, WorkspaceStatus } from "@/lib/site-api";
 
 /** The site editor's screens: the everyday ones first, then the ones under Advanced. */
 export type SiteSection =
@@ -32,6 +32,20 @@ export type PublishingState = {
   watch: () => void;
 };
 
+/**
+ * The deploy's own check ("check" command), which the editor runs by itself while the Publish
+ * screen is open and after each change (see SiteProblems).
+ */
+export type SiteCheckState = {
+  report: SiteCheckReport | null;
+  /** Nothing has changed since `report`. */
+  fresh: boolean;
+  /** A check is running or about to. */
+  checking: boolean;
+  /** Runs the check now. */
+  checkNow: () => void;
+};
+
 /** Template files an older copy lacks, which "Update site tools" copies in (see useSiteTools). */
 export type SiteTools = {
   /** What's out of date, in words ("search settings"). Empty when everything is current or not yet known. */
@@ -57,6 +71,8 @@ export type SiteContextValue = {
   version: number;
   /** Starts a command; resolves to false (and shows the error) if it didn't start. */
   run: (command: string, input?: Record<string, unknown>) => Promise<boolean>;
+  /** Starts a command and resolves with the finished job (its whole output); throws if it couldn't start. */
+  runAndWait: (command: string, input?: Record<string, unknown>) => Promise<Job>;
   /** Takes the status a change returned; the preview then rebuilds by itself. */
   setStatus: (status: WorkspaceStatus) => void;
   /** Re-reads status and overview after a change made outside a command; the preview then rebuilds by itself. */
@@ -71,6 +87,7 @@ export type SiteContextValue = {
   showSection: (section: SiteSection) => void;
   publishing: PublishingState;
   tools: SiteTools;
+  siteCheck: SiteCheckState;
 };
 
 export const SiteContext = createContext<SiteContextValue | null>(null);

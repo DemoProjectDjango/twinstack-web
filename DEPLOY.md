@@ -384,8 +384,9 @@ server {
     listen [::]:80;
     server_name builder.mydomain.com;
 
-    # Image uploads for Claude edits (up to 5 MB, sent base64-encoded).
-    client_max_body_size 10m;
+    # Uploads are sent base64-encoded: files attached to "Ask Claude" (up to 10 MB, so about 14 MB
+    # on the wire), images for Claude edits (up to 5 MB) and HTML pages to convert.
+    client_max_body_size 16m;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -412,7 +413,7 @@ server {
     listen [::]:80;
     server_name api.mydomain.com;
 
-    client_max_body_size 10m;
+    client_max_body_size 16m;
 
     location / {
         proxy_pass http://127.0.0.1:4000;

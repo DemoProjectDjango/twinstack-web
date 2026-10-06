@@ -6,6 +6,7 @@ import { confirmModal } from "@/lib/confirm";
 import { api, workspacePath, type FileDiff, type WorkspaceStatus } from "@/lib/site-api";
 import { DomainSettings } from "./DomainSettings";
 import { useSite } from "./site-context";
+import { SiteProblems } from "./SiteProblems";
 import { Badge, Button, Details, EmptyState, ErrorText, Field, Notice, ScreenHeader, Section, inputClass } from "./ui";
 
 type CommitResult = {
@@ -29,7 +30,7 @@ function lineClass(line: string) {
  * a pull request for review is an option.
  */
 export function ChangesPanel() {
-  const { owner, repo, status, overview, busy, setStatus, refresh, version, publishing } = useSite();
+  const { owner, repo, status, overview, busy, setStatus, refresh, version, publishing, siteCheck } = useSite();
   const [files, setFiles] = useState<FileDiff[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [working, setWorking] = useState<"discard" | "commit" | null>(null);
@@ -64,6 +65,19 @@ export function ChangesPanel() {
 
   async function commit(e: React.FormEvent) {
     e.preventDefault();
+    const { report, fresh } = siteCheck;
+    if (
+      fresh &&
+      report &&
+      !report.ok &&
+      !(await confirmModal("Your site still has problems that stop it from updating. If you publish now, your changes are saved, but your live site stays as it is until they're fixed.", {
+        title: "Publish with problems?",
+        confirmLabel: "Publish anyway",
+        danger: true,
+      }))
+    ) {
+      return;
+    }
     setWorking("commit");
     setError(null);
     setResult(null);
@@ -92,6 +106,9 @@ export function ChangesPanel() {
   const disabled = busy || working !== null;
   const liveUrl = publishing.publishing?.enabled ? publishing.publishing.url : null;
   const goesLive = mode === "direct" && status.onDefaultBranch;
+  // GitHub didn't put the last publish live (usually a problem the check below finds).
+  const run = publishing.publishing?.run;
+  const deployFailed = run?.status === "completed" && run.conclusion !== "success" && run.conclusion !== "cancelled";
 
   return (
     <div className="space-y-6">
@@ -126,7 +143,27 @@ export function ChangesPanel() {
 
       <ErrorText error={error} />
 
-      {!hasChanges && !canPublish && !result && (
+      {!canPublish && deployFailed && !result && (
+        <Section title="Your last publish didn't go live" description="Your changes reached GitHub, but your live site couldn't be updated with them.">
+          <div className="space-y-3">
+            <SiteProblems />
+            {siteCheck.fresh && siteCheck.report?.ok && publishing.publishing?.workflowReady && (
+              <div className="flex flex-wrap items-center gap-3">
+                <Button variant="primary" disabled={busy || publishing.working !== null} onClick={() => void publishing.act("deploy")}>
+                  {publishing.working === "deploy" ? "Starting…" : "Try again"}
+                </Button>
+                {run?.url && (
+                  <a href={run.url} target="_blank" rel="noreferrer" className="text-sm text-zinc-500 hover:underline">
+                    What GitHub said ↗
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {!hasChanges && !canPublish && !deployFailed && !result && (
         <EmptyState
           title="Everything is published"
           action={
@@ -199,6 +236,14 @@ export function ChangesPanel() {
               <Notice tone="warning">Your last publish didn&apos;t reach GitHub. Publish again to finish it.</Notice>
             </div>
           )}
+          {deployFailed && !result && (
+            <div className="mb-3">
+              <Notice tone="warning">Your last publish didn&apos;t go live. Fix anything listed below, then publish again.</Notice>
+            </div>
+          )}
+          <div className="mb-4">
+            <SiteProblems />
+          </div>
           <form onSubmit={commit} className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">
               <Button type="submit" variant="primary" className="px-5 py-2" disabled={disabled}>

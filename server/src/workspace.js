@@ -229,6 +229,21 @@ async function listChanges(dir) {
   return changes;
 }
 
+/**
+ * Changes whenever a file the site is built from does: the commit, plus each changed file's size
+ * and time. Builds write only ignored files (dist/), so building leaves it as it was.
+ */
+export async function workingTreeFingerprint(key) {
+  const dir = workspaceDir(key);
+  const [head, changes] = await Promise.all([tryGit(dir, ["rev-parse", "HEAD"]), listChanges(dir)]);
+  const hash = createHash("sha256").update(head ?? "");
+  for (const change of changes) {
+    const stat = await fs.stat(path.join(dir, change.path)).catch(() => null);
+    hash.update(`\0${change.path}\0${stat ? `${stat.size}:${stat.mtimeMs}` : "gone"}`);
+  }
+  return hash.digest("hex").slice(0, 16);
+}
+
 // What a signed preview URL serves: "site" is the last build (dist/), "proposal" the site built
 // with the pending Claude proposal applied (the proposal-preview command in commands.js).
 export const PREVIEW_ROOTS = { site: "dist", proposal: ".git/twinstack-proposal-site" };

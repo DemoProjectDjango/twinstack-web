@@ -142,7 +142,7 @@ function deployLabel(p: Publishing): { text: string; tone: string } | null {
 
 /** Where the site is on the web, and whether the latest version has gone out. */
 function LiveCard() {
-  const { busy, publishing: state } = useSite();
+  const { busy, publishing: state, showSection } = useSite();
   const { publishing, error, working, act } = state;
 
   if (!publishing) {
@@ -168,6 +168,11 @@ function LiveCard() {
               <p className="mt-1 text-sm text-zinc-500">Not published yet. Publish your changes to put it online.</p>
             )}
           </div>
+          {failed && publishing.run?.conclusion !== "cancelled" && (
+            <Button variant="primary" onClick={() => showSection("publish")}>
+              See why
+            </Button>
+          )}
           {failed && publishing.workflowReady && (
             <Button disabled={locked} onClick={() => void act("deploy")}>
               {working === "deploy" ? "Starting…" : "Try again"}

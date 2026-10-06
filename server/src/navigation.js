@@ -74,8 +74,8 @@ function applyUrlPattern(pattern, slug) {
   return url.endsWith("/") || url.endsWith(".html") ? url : `${url}/`;
 }
 
-/** Every page the site builds, with its address, for the editor's link picker and its missing-page hints. */
-async function sitePages(dir, site) {
+/** Every page the site builds, with its address, for the editor's link picker and its missing-page hints (and the site check, site-check.js). */
+export async function sitePages(dir, site) {
   const pages = [];
   for (const [name, collection] of Object.entries(site.collections ?? {})) {
     if (typeof collection?.dir !== "string" || typeof collection.urlPattern !== "string") continue;
@@ -88,6 +88,7 @@ async function sitePages(dir, site) {
       const base = path.posix.basename(file, ".md").replace(/^\d{4}-\d{2}-\d{2}-/, "");
       const slug = fields.slug || (folder === "." ? base : `${folder}/${base}`);
       pages.push({
+        file: `${collection.dir}/${file}`,
         url: fields.url || applyUrlPattern(collection.urlPattern, slug),
         title: fields.title || slug,
         collection: name,

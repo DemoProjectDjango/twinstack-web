@@ -2,9 +2,7 @@ import express, { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
 import { config } from "../config.js";
 import { getAnthropicKey } from "../db.js";
-import { isTemplate } from "../sites.js";
-import { MissingScopeError } from "../duplicate.js";
-import { ReauthRequiredError, getAccessToken, readRepoFile } from "../github.js";
+import { getAccessToken, readRepoFile } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
 import {
   PUBLISHING_FILES,
@@ -17,11 +15,15 @@ import {
   startDeploy,
 } from "../publishing.js";
 import { requireAuth, requireGithub } from "../session.js";
+import { assistantRouter } from "./assistant.js";
+import { handle, keyFor, requireJson } from "./helpers.js";
 import {
   applyProposal,
   clearMemory,
   clearProposal,
   collectWorkLog,
+  createHomepage,
+  createListingPage,
   forgetMemoryLine,
   MD_EDIT_FILES,
   getOverview,
@@ -50,10 +52,10 @@ import { getStaticInfo, saveStaticInfo } from "../static-info.js";
 import { getBrand, saveBrand, saveBrandImage } from "../brand.js";
 import { APPEARANCE_MARKER, HEADER_FOOTER_FILES, getNavigation, saveNavigation } from "../navigation.js";
 import { SEO_FILES, SEO_MARKERS, installSeo, readSeo } from "../seo.js";
+import { readCheckReport } from "../site-check.js";
 import {
   WorkspaceError,
   acquire,
-  assertRepoRef,
   commitAndPush,
   discardChanges,
   getDiff,
@@ -61,42 +63,7 @@ import {
   openWorkspace,
   resetToDefault,
   workspaceDir,
-  workspaceKey,
 } from "../workspace.js";
-
-// JSON-only: plain HTML forms from other sites can't send this content type.
-function requireJson(req, res, next) {
-  if ((req.method === "POST" || req.method === "PUT") && !req.is("application/json")) {
-    return res.status(415).json({ error: "Expected JSON" });
-  }
-  next();
-}
-
-function handle(fn) {
-  return async (req, res) => {
-    try {
-      await fn(req, res);
-    } catch (err) {
-      if (err instanceof ReauthRequiredError) return res.status(401).json({ error: "reauth_required" });
-      if (err instanceof MissingScopeError) {
-        return res.status(401).json({ error: "reauth_required", message: err.message });
-      }
-      if (err instanceof WorkspaceError) return res.status(err.status).json({ error: err.message });
-      console.error(`${req.method} ${req.originalUrl} failed:`, err);
-      res.status(500).json({ error: "Something went wrong on the server." });
-    }
-  };
-}
-
-function keyFor(req) {
-  assertRepoRef(req.params.owner, req.params.repo);
-  // Also blocks a workspace for the template that was opened before this rule existed.
-  if (isTemplate(`${req.params.owner}/${req.params.repo}`)) throw templateError();
-  return workspaceKey(req.user.id, req.params.owner, req.params.repo);
-}
-
-const templateError = () =>
-  new WorkspaceError("This is the site template. Duplicate it, then manage your copy.", 403);
 
 /* ------------------------------------------------------------- workspaces */
 
@@ -104,6 +71,8 @@ export const workspacesRouter = Router();
 // Who may open which site is decided in openWorkspace: a copy recorded by
 // Duplicate (see sites.js) that the user can push to on GitHub.
 workspacesRouter.use(requireAuth, requireGithub, requireJson);
+// "Ask Claude": the site's conversation and the changes it proposes (routes/assistant.js).
+workspacesRouter.use("/:owner/:repo/assistant", assistantRouter);
 
 workspacesRouter.post(
   "/:owner/:repo/open",
@@ -210,6 +179,7 @@ workspacesRouter.post(
       // failed queue run may still have written (and logged) the edits before it failed.
       release: workLog ? () => collectWorkLog(key, workLog).finally(release) : release,
       onSuccess: command.onSuccess && (() => command.onSuccess(key)),
+      onEnd: command.onEnd && ((result) => command.onEnd(key, result)),
     });
     res.status(202).json({ job });
   }),
@@ -240,6 +210,33 @@ workspacesRouter.put(
     const page = await savePage(key, file, content, version);
     res.json({ page, status: await getStatus(key) });
   }),
+);
+
+/* The homepage and collection listing pages (the Blog page), which "Add a page" can't make: their address isn't their name. */
+
+workspacesRouter.post(
+  "/:owner/:repo/pages/homepage",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const { file } = await createHomepage(key, { title: req.body?.title });
+    res.json({ file, status: await getStatus(key) });
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/pages/listing",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const { file } = await createListingPage(key, req.body?.collection, { title: req.body?.title });
+    res.json({ file, status: await getStatus(key) });
+  }),
+);
+
+/* What the last "Build and check" found (the deploy's own check), and whether the site changed since. */
+
+workspacesRouter.get(
+  "/:owner/:repo/check",
+  handle(async (req, res) => res.json(await readCheckReport(keyFor(req)))),
 );
 
 /* Stylesheets: the Tailwind source, the site tree's global stylesheets, converted pages' own. */

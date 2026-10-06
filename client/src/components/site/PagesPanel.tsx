@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { isHomePage, type SitePage } from "@/lib/site-api";
+import { api, isHomePage, workspacePath, type SitePage, type WorkspaceStatus } from "@/lib/site-api";
 import { PageContentEditor } from "./EditPanel";
 import { markVisited } from "./HomePanel";
 import { PageSeo } from "./SeoPanel";
 import { useSite, type PageEditMode } from "./site-context";
-import { Badge, Button, Details, EmptyState, Field, ScreenHeader, Segmented, inputClass } from "./ui";
+import { Badge, Button, Details, EmptyState, ErrorText, Field, Notice, ScreenHeader, Segmented, inputClass } from "./ui";
 
 const TYPES = [
   { value: "page", label: "Page", text: "A regular page, like About us or Contact." },
@@ -32,10 +32,29 @@ export function PagesPanel({ openPage, onClose }: { openPage: { file: string; mo
 }
 
 function PageList() {
-  const { overview, editFile, showSection, busy, run } = useSite();
+  const { owner, repo, overview, editFile, showSection, busy, run, setStatus, refresh } = useSite();
   const [adding, setAdding] = useState(false);
+  const [addingHome, setAddingHome] = useState(false);
+  const [homeError, setHomeError] = useState<unknown>(null);
   const collections = overview?.collections ?? [];
   const pageCount = collections.reduce((n, c) => n + c.pages.length, 0);
+  const hasHomepage = collections.some((c) => c.pages.some(isHomePage));
+
+  // "Add a page" can't make it: the homepage's address is "/", not its name.
+  async function addHomepage() {
+    setAddingHome(true);
+    setHomeError(null);
+    try {
+      const { file, status } = await api<{ file: string; status: WorkspaceStatus }>(workspacePath(owner, repo, "/pages/homepage"), { method: "POST", body: {} });
+      setStatus(status);
+      await refresh();
+      await editFile(file, "generate");
+    } catch (err) {
+      setHomeError(err);
+    } finally {
+      setAddingHome(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -50,6 +69,17 @@ function PageList() {
       {adding && <AddPage onDone={() => setAdding(false)} />}
 
       {!overview && <p className="text-sm text-zinc-500">Loading…</p>}
+
+      {overview && pageCount > 0 && !hasHomepage && (
+        <Notice tone="warning">
+          <span className="font-medium">Your site has no homepage,</span> the page people see first at your address. Your site can&apos;t go live
+          without one.{" "}
+          <Button variant="ghost" className="ml-1 underline" disabled={busy || addingHome} onClick={() => void addHomepage()}>
+            {addingHome ? "Adding…" : "Add a homepage"}
+          </Button>
+          <ErrorText error={homeError} />
+        </Notice>
+      )}
 
       {overview && pageCount === 0 && !adding && (
         <EmptyState

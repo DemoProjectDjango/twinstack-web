@@ -56,9 +56,10 @@ function runStep(job, { file, args, display, timeoutMs }, { cwd, env }) {
 /**
  * Starts `steps` in order, stopping at the first non-zero exit. `release` is
  * always called (and awaited, if it returns a promise) when the job ends;
- * `onSuccess` runs before it's marked done.
+ * `onSuccess` runs before it's marked done, and `onEnd({ exitCode, output })`
+ * after any run that wasn't cancelled, before `release`.
  */
-export function startJob({ key, userId, command, label, steps, cwd, env, release, onSuccess }) {
+export function startJob({ key, userId, command, label, steps, cwd, env, release, onSuccess, onEnd }) {
   const job = {
     id: randomUUID(),
     key,
@@ -88,6 +89,13 @@ export function startJob({ key, userId, command, label, steps, cwd, env, release
       append(job, `\n${err.message}\n`);
       exitCode = exitCode || 1;
     } finally {
+      if (onEnd && !job.cancelled) {
+        try {
+          await onEnd({ exitCode, output: job.text });
+        } catch (err) {
+          append(job, `\n${err.message}\n`);
+        }
+      }
       // May be async (saving the work log): the job only reads as finished once it's done.
       try {
         await release();

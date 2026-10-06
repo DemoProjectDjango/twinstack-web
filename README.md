@@ -87,13 +87,27 @@ in plain language for people who don't know git:
 | Page editor → Search and sharing | The page as a Google result (desktop and mobile) and a shared link, updating as you type; its title, description, focus keyphrase, social image, canonical and noindex, or a suggestion from Claude | `seo <page> --title=…`, `seo <page> --claude --dry-run` |
 | Design | Logo, and a live preview and editor of the header and footer (`content/data/navigation.json`): menu items, dropdowns, automatic collection menus, the header button, footer columns, legal links, colours and layout. **Add a new section** sets up a new collection | `nav:add` |
 | Site details | `site.config.json` (name, taglines, contact, social, SEO settings) and `content/data/*.json` (company facts, FAQ, testimonials, homepage sections, redirects) in forms | |
-| Publish | Every change since the last publish, in plain words, with undo; **Publish now** commits and pushes straight to the live branch, or **Send for review** opens a pull request (under More options). Also a custom domain | git |
+| Publish | Every change since the last publish, in plain words, with undo; **Publish now** commits and pushes straight to the live branch, or **Send for review** opens a pull request (under More options). Beside the button, the site is checked the way the live site's deploy checks it (broken links, a missing homepage or listing page, two pages at one address, a failing build), with a fix for each problem and **Fix with Claude**; a failed deploy says why. Also a custom domain | git; `build` + `check` |
 | Advanced → Search overview | Every page's SEO score and what to fix; Claude writes search text for every page | `seo`, `seo --all --claude` |
 | Advanced → Site plan, Scheduled pages | `scripts/site-tree.md` and `scripts/scaffold-schedule.md` | `scaffold`, `scaffold:schedule` |
 | Advanced → What Claude remembers, Styles (CSS) | `knowledge/notes.md` and the work log; the site's stylesheets | |
 | Advanced → Build tools and log | Build and check, rebuild the preview, install dependencies, changelog, the full command output, and the branch and commit status | `check`, `npm ci`, `changelog` |
 
 Older copies that lack newer template files get them from one **Update site tools** button on Home.
+
+**Ask Claude.** Every screen has a box where you describe what you want in your own words, for example:
+
+- "Add a Careers page with two open roles"
+- "Plan a site for a bakery"
+- "Write search titles for every page"
+- "Add our Blog to the menu"
+
+The conversation continues in a side panel and remembers what was said. Claude looks at the site first, then proposes each change as a card showing what will change. Nothing happens until you press **Apply** (or **Apply all**), and a page Claude writes is shown before you keep it. When a step needs the result of an earlier one (the plan, then the new pages, then their wording), Claude carries on once you've applied it. Claude runs on the server with your own Anthropic key.
+
+You can **attach files** to a message (the paperclip, drag and drop, or paste; up to 5 at a time, 10 MB each):
+
+- **What Claude can read:** photos, PDFs, Word documents and text files such as an old web page or a price list, so it can use what's in them.
+- **What can go on your site:** any file. A photo can be placed on a page, a PDF offered as a download, and a saved web page brought in as one of your pages.
 
 How it works:
 

@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { claudeAccess } from "@/lib/claude";
 import { confirmModal } from "@/lib/confirm";
-import { ApiError, api, setBeforeChange, workspacePath, type Job, type Overview, type WorkspaceStatus } from "@/lib/site-api";
+import { ApiError, api, setBeforeChange, workspacePath, type Job, type Overview, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
+import { AskClaude } from "./assistant/AskClaude";
+import { AssistantPanel } from "./assistant/AssistantPanel";
+import { AssistantProvider, useAssistant, useOptionalAssistant } from "./assistant/AssistantProvider";
 import { BrandPanel } from "./BrandPanel";
 import { BuildPanel } from "./BuildPanel";
 import { ChangesPanel } from "./ChangesPanel";
@@ -68,6 +71,12 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   const [resetting, setResetting] = useState(false);
   // Something changed the site's files since the preview was last built.
   const [previewStale, setPreviewStale] = useState(false);
+  // The deploy's own check (SiteProblems), loaded while the Publish screen is open and run by itself
+  // once after each change: `changeTick` counts changes to the site's files, `checkedTick` is the
+  // one the last automatic check started after. `version` and `tick` say what the report was loaded for.
+  const [siteCheck, setSiteCheck] = useState<SiteCheck & { version: number; tick: number }>({ report: null, fresh: false, version: -1, tick: -1 });
+  const [changeTick, setChangeTick] = useState(0);
+  const [checkedTick, setCheckedTick] = useState(-1);
   // Whether the running job was a dry run (a Claude preview), which changes nothing.
   const dryRunJob = useRef<string | null>(null);
 
@@ -102,19 +111,20 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
         autoJob.current = quiet ? started.id : null;
         setAutoJobId(autoJob.current);
         setJob(started);
-        return null;
+        return { job: started };
       } catch (err) {
         if (!quiet) setRunError(err);
-        return err;
+        return { error: err };
       }
     },
     [owner, repo],
   );
 
-  /** Stops the editor's own preview rebuild so a command the user asked for can start; it runs again afterwards. */
+  /** Stops the editor's own preview rebuild (or check) so a command the user asked for can start; it runs again afterwards. */
   const stopAutoPreview = useCallback(async () => {
     const id = autoJob.current;
     if (!id || currentJob.current?.id !== id || currentJob.current.status !== "running") return;
+    const wasCheck = currentJob.current.command === "check";
     await api(`/api/jobs/${id}/cancel`, { method: "POST", body: {} }).catch(() => {});
     for (let i = 0; i < 40; i++) {
       const latest = await api<{ job: Job }>(`/api/jobs/${id}`).catch(() => null);
@@ -122,6 +132,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
       await new Promise((r) => setTimeout(r, 250));
     }
     setPreviewStale(true);
+    if (wasCheck) setCheckedTick(-1);
   }, []);
 
   // Every change the user makes (a command, a save, a publish) goes first.
@@ -131,7 +142,18 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   }, [stopAutoPreview]);
 
   const run = useCallback(
-    async (command: string, input: Record<string, unknown> = {}) => (await start(command, input, false)) === null,
+    async (command: string, input: Record<string, unknown> = {}) => "job" in (await start(command, input, false)),
+    [start],
+  );
+
+  // Callers waiting for a job to finish (runAndWait), by job id.
+  const waiters = useRef(new Map<string, (job: Job) => void>());
+  const runAndWait = useCallback(
+    async (command: string, input: Record<string, unknown> = {}) => {
+      const started = await start(command, input, false);
+      if ("error" in started) throw started.error;
+      return new Promise<Job>((resolve) => waiters.current.set(started.job.id, resolve));
+    },
     [start],
   );
 
@@ -140,9 +162,11 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   const setStatus = useCallback((next: WorkspaceStatus) => {
     setRawStatus(next);
     setPreviewStale(true);
+    setChangeTick((t) => t + 1);
   }, []);
   const refreshAfterChange = useCallback(async () => {
     setPreviewStale(true);
+    setChangeTick((t) => t + 1);
     await refresh();
   }, [refresh]);
 
@@ -173,6 +197,12 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     };
   }, [owner, repo, run]);
 
+  const finished = useCallback((done: Job) => {
+    const waiter = waiters.current.get(done.id);
+    waiters.current.delete(done.id);
+    waiter?.(done);
+  }, []);
+
   // Poll the running job for new output; each update schedules the next poll.
   useEffect(() => {
     if (!job || job.status !== "running") return;
@@ -187,23 +217,27 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
           return { ...update, output: output.slice(-MAX_LOG_CHARS) };
         });
         if (update.status !== "running") {
-          if (update.status === "succeeded" && !READ_ONLY_COMMANDS.has(update.command) && dryRunJob.current !== update.id) {
-            setPreviewStale(true);
-          }
+          // Even a failed command may have changed files first.
+          const changed = !READ_ONLY_COMMANDS.has(update.command) && dryRunJob.current !== update.id;
+          if (changed) setChangeTick((t) => t + 1);
+          // A check builds the site without its hidden pages, over the preview.
+          if ((update.status === "succeeded" && changed) || update.command === "check") setPreviewStale(true);
           await refresh().catch(() => {});
+          finished({ ...update, output: (job.output + update.output).slice(-MAX_LOG_CHARS) });
         }
       } catch (err) {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
         setJob((prev) => (prev ? { ...prev, status: "failed", output: `${prev.output}\n${message}\n` } : prev));
         await refresh().catch(() => {});
+        finished({ ...job, status: "failed", output: `${job.output}\n${message}\n` });
       }
     }, POLL_MS);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [job, refresh]);
+  }, [job, refresh, finished]);
 
   // Busy with something this page isn't tracking (a sync or save from another
   // tab): re-check until it's free, so the buttons don't stay disabled.
@@ -217,21 +251,48 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   const autoRunning = job?.status === "running" && job.id === autoJobId;
   const busy = (job?.status === "running" && !autoRunning) || (Boolean(status?.busy) && !autoRunning) || resetting;
 
-  // Rebuild the preview by itself once the workspace is free, so nobody has to press Build.
-  // If another command got there first it waits for the next free moment; any other failure
-  // is left for the status strip and the Build tools screen.
-  const canAutoPreview = previewStale && !busy && !autoRunning && Boolean(status) && !status?.needsInstall;
+  // The latest check, while the Publish screen is open: again after every change or command.
   useEffect(() => {
-    if (!canAutoPreview) return;
+    if (section !== "publish") return;
+    let cancelled = false;
+    api<SiteCheck>(workspacePath(owner, repo, "/check"))
+      .then((next) => !cancelled && setSiteCheck({ ...next, version, tick: changeTick }))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [owner, repo, section, version, changeTick]);
+  const checkFresh = siteCheck.fresh && siteCheck.tick === changeTick;
+  const checkLoaded = siteCheck.version === version && siteCheck.tick === changeTick;
+  // On the Publish screen, check the site once after each change, as the deploy will.
+  const checkDue = section === "publish" && !checkFresh && checkedTick !== changeTick && !status?.needsInstall;
+
+  // Rebuild the preview (or run that check, first) by itself once the workspace is free, so nobody
+  // has to press Build. If another command got there first it waits for the next free moment; any
+  // other failure is left for the status strip and the Build tools screen.
+  const wantCheck = checkDue && checkLoaded;
+  const canAutoRun = (previewStale || wantCheck) && !busy && !autoRunning && Boolean(status) && !status?.needsInstall;
+  useEffect(() => {
+    if (!canAutoRun) return;
     const timer = setTimeout(async () => {
+      const conflict = (started: { error?: unknown }) => started.error instanceof ApiError && started.error.status === 409;
+      if (wantCheck) {
+        setCheckedTick(changeTick);
+        if (conflict(await start("check", {}, true))) setCheckedTick(-1);
+        return;
+      }
       setPreviewStale(false);
-      const err = await start("preview", {}, true);
-      if (err instanceof ApiError && err.status === 409) setPreviewStale(true);
+      if (conflict(await start("preview", {}, true))) setPreviewStale(true);
     }, AUTO_PREVIEW_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [canAutoPreview, start]);
+  }, [canAutoRun, wantCheck, changeTick, start]);
 
   const publishing = usePublishing(owner, repo, version);
+  // Where the owner is, for Claude: the screen, and the page when one is open.
+  const assistantContext = useMemo(
+    () => ({ screen: section, page: section === "pages" ? (openPage?.file ?? null) : null }),
+    [section, openPage],
+  );
   const tools = useSiteTools({ owner, repo, version, overview, publishing: publishing.publishing, setStatus, refresh: refreshAfterChange });
 
   const showSection = useCallback((next: SiteSection) => {
@@ -325,6 +386,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     busy,
     version,
     run,
+    runAndWait,
     setStatus,
     refresh: refreshAfterChange,
     editFile,
@@ -333,6 +395,15 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     showSection,
     publishing,
     tools,
+    siteCheck: {
+      report: siteCheck.report,
+      fresh: checkFresh,
+      checking: (job?.status === "running" && job.command === "check") || checkDue,
+      checkNow: () => {
+        setCheckedTick(changeTick);
+        void run("check");
+      },
+    },
   };
 
   const liveUrl = publishing.publishing?.enabled ? publishing.publishing.url : null;
@@ -341,19 +412,23 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
 
   return (
     <SiteContext.Provider value={context}>
+      <AssistantProvider context={assistantContext}>
       <Shell
         title={overview?.site.name || repo}
         actions={
-          liveUrl ? (
-            <a
-              href={liveUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
-            >
-              View live site ↗
-            </a>
-          ) : null
+          <span className="flex flex-wrap items-center gap-2">
+            {liveUrl && (
+              <a
+                href={liveUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+              >
+                View live site ↗
+              </a>
+            )}
+            <AskClaudeButton />
+          </span>
         }
       >
         <div className="mt-6 grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
@@ -404,6 +479,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
           <div className="min-w-0 space-y-6">
             <SiteNotices onReset={resetToDefault} />
             <ErrorText error={runError} />
+            {section !== "tools" && <AskClaude />}
 
             {section === "home" && <HomePanel />}
             {pagesOpened && (
@@ -430,6 +506,8 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
         </div>
         <StatusStrip onShowLog={() => showSection("tools")} />
       </Shell>
+      <AssistantPanel />
+      </AssistantProvider>
     </SiteContext.Provider>
   );
 }
@@ -496,9 +574,27 @@ function NavButton({
   );
 }
 
-function Shell({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) {
+/** Opens and closes the conversation with Claude. */
+function AskClaudeButton() {
+  const { open, setOpen, turn } = useAssistant();
   return (
-    <main className="mx-auto w-full max-w-7xl flex-1 px-4 pb-24 pt-8">
+    <button
+      type="button"
+      onClick={() => setOpen(!open)}
+      aria-pressed={open}
+      className="flex items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background hover:opacity-90"
+    >
+      <span aria-hidden="true">✦</span> Ask Claude
+      {turn?.status === "running" && <span className="ml-1 size-2 animate-pulse rounded-full bg-background" aria-label="Claude is working" />}
+    </button>
+  );
+}
+
+/** The editor's page; while the conversation panel is open on a wide screen, the page makes room for it. */
+function Shell({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) {
+  const assistant = useOptionalAssistant();
+  return (
+    <main className={`mx-auto w-full max-w-7xl flex-1 px-4 pb-24 pt-8 ${assistant?.open ? "xl:max-w-none xl:pr-114" : ""}`}>
       <Link href="/dashboard" className="text-sm text-zinc-500 hover:underline">
         ← Your sites
       </Link>

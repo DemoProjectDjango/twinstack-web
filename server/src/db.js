@@ -11,6 +11,11 @@ import { config } from "./config.js";
 //   workLog     one document per line of a site's Claude work log
 //               (siteId = GitHub repo id)
 //   workLogForgotten  lines the user removed from a site's work log
+//   assistantConversations  the "Ask Claude" chats: one active conversation per
+//               user and site (siteId = GitHub repo id), with the exact Claude
+//               message history, what the chat shows and the proposed changes
+//   claudeUsage one document per Claude request the server makes for a user
+//               (tokens in and out), for metering Claude use per account
 //
 // Account ids leave this module as 24-character hex strings.
 
@@ -28,6 +33,8 @@ export async function connectDb() {
     siteCopies().createIndex({ userId: 1 }),
     workLog().createIndex({ siteId: 1, createdAt: -1 }),
     workLogForgotten().createIndex({ siteId: 1, line: 1 }, { unique: true }),
+    conversations().createIndex({ userId: 1, siteId: 1, archived: 1, updatedAt: -1 }),
+    claudeUsage().createIndex({ userId: 1, createdAt: -1 }),
   ]);
 }
 
@@ -39,6 +46,8 @@ const users = () => db.collection("users");
 const siteCopies = () => db.collection("siteCopies");
 const workLog = () => db.collection("workLog");
 const workLogForgotten = () => db.collection("workLogForgotten");
+const conversations = () => db.collection("assistantConversations");
+const claudeUsage = () => db.collection("claudeUsage");
 
 function objectId(id) {
   return ObjectId.isValid(id) ? new ObjectId(id) : null;
@@ -263,4 +272,75 @@ export async function recentWorkLogLines(siteId, limit) {
     .limit(limit)
     .toArray();
   return docs.map((doc) => doc.line).reverse();
+}
+
+/* ------------------------------------------------------- the assistant */
+
+// One active conversation per user and site; starting a new one archives the old. `messages` is
+// the exact history sent to Claude and is only ever appended to (thinking blocks are bound to it).
+// Updates are targeted ($push / $set on one action) so a turn finishing and a change being
+// applied at the same moment can't overwrite each other.
+
+function conversationView(doc) {
+  if (!doc) return null;
+  const { _id, ...rest } = doc;
+  return { id: _id.toHexString(), ...rest };
+}
+
+export async function findConversation(userId, siteId) {
+  const doc = await conversations().findOne({ userId, siteId, archived: false }, { sort: { updatedAt: -1 } });
+  return conversationView(doc);
+}
+
+export async function createConversation({ userId, siteId, toolset }) {
+  const now = new Date();
+  const doc = {
+    userId,
+    siteId,
+    // The assistant's tool list it was started with (a conversation stays bound to it).
+    toolset,
+    archived: false,
+    createdAt: now,
+    updatedAt: now,
+    messages: [],
+    display: [],
+    actions: {},
+    // Ids of the files attached to it, removed with it.
+    attachments: [],
+    knowledge: { notes: "", sent: [] },
+    usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+  };
+  const { insertedId } = await conversations().insertOne(doc);
+  return conversationView({ _id: insertedId, ...doc });
+}
+
+/** Applies a MongoDB update to the user's conversation; returns the updated conversation, or null. */
+export async function updateConversation(id, userId, update) {
+  const _id = objectId(id);
+  if (!_id) return null;
+  const doc = await conversations().findOneAndUpdate(
+    { _id, userId },
+    { ...update, $set: { ...(update.$set ?? {}), updatedAt: new Date() } },
+    { returnDocument: "after" },
+  );
+  return conversationView(doc);
+}
+
+export async function archiveConversations(userId, siteId) {
+  await conversations().updateMany({ userId, siteId, archived: false }, { $set: { archived: true, archivedAt: new Date() } });
+}
+
+/** One Claude request made for a user, for metering. `usage` is the API's usage object. */
+export async function recordClaudeUsage({ userId, siteId, kind, model, usage }) {
+  await claudeUsage().insertOne({
+    userId,
+    siteId,
+    kind,
+    model,
+    inputTokens: usage.input_tokens ?? 0,
+    outputTokens: usage.output_tokens ?? 0,
+    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+    cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+    createdAt: new Date(),
+  });
 }

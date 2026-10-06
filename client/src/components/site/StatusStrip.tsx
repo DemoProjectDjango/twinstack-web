@@ -1,12 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { friendlyJobLabel } from "@/lib/job-labels";
+import { friendlyJobDone, friendlyJobLabel } from "@/lib/job-labels";
 import { api } from "@/lib/site-api";
 import { useSite } from "./site-context";
 import { Button, Spinner } from "./ui";
-
-const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
 
 // How long "Done" stays up after a command succeeds.
 const DONE_MS = 2500;
@@ -38,6 +36,8 @@ export function StatusStrip({ onShowLog }: { onShowLog: () => void }) {
 
   let content: React.ReactNode = null;
   let tone = "border-zinc-200 bg-background dark:border-zinc-800";
+  // A check that fails has found problems, not gone wrong: the Publish screen lists them, and Build tools shows its log.
+  const foundProblems = job?.command === "check" && job.status === "failed";
 
   if (job?.status === "running") {
     content = (
@@ -56,7 +56,7 @@ export function StatusStrip({ onShowLog }: { onShowLog: () => void }) {
         <span className="min-w-0 flex-1 truncate">Busy: {status.busy}…</span>
       </>
     );
-  } else if (job && (job.status === "failed" || job.status === "cancelled") && dismissed !== job.id) {
+  } else if (job && (job.status === "failed" || job.status === "cancelled") && dismissed !== job.id && !foundProblems) {
     const failed = job.status === "failed";
     tone = failed
       ? "border-red-300 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
@@ -82,7 +82,7 @@ export function StatusStrip({ onShowLog }: { onShowLog: () => void }) {
     content = (
       <>
         <span aria-hidden="true">✓</span>
-        <span className="min-w-0 flex-1 truncate">Done: {lowerFirst(friendlyJobLabel(job!.command, job!.label))}</span>
+        <span className="min-w-0 flex-1 truncate">{friendlyJobDone(job!.command)}</span>
       </>
     );
   }

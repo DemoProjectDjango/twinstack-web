@@ -21,6 +21,31 @@ const RUNNING: Record<string, string> = {
   changelog: "Updating the change history",
 };
 
+const DONE: Record<string, string> = {
+  install: "Your site is ready",
+  check: "Your site has been checked",
+  preview: "Preview updated",
+  new: "Page added",
+  "nav-add": "Section added",
+  "nav-remove": "Menu item removed",
+  "page-edit": "Claude's version is ready",
+  "page-generate": "Claude's version is ready",
+  "page-convert": "Claude's version is ready",
+  "proposal-preview": "Preview of Claude's version is ready",
+  "md-edit": "Claude's version is ready",
+  "seo-audit": "Search check finished",
+  "seo-set": "Search settings saved",
+  "seo-claude": "Claude finished the search text",
+  scaffold: "Pages created",
+  schedule: "Scheduled pages run",
+  changelog: "Change history updated",
+};
+
 export function friendlyJobLabel(command: string, fallback: string) {
   return RUNNING[command] ?? fallback;
+}
+
+/** What a command that finished successfully did, for the "Done" message. */
+export function friendlyJobDone(command: string) {
+  return DONE[command] ?? "Done";
 }

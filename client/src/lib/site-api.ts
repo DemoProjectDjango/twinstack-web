@@ -37,8 +37,12 @@ export type Job = {
 /** `url` is set when the page's frontmatter chooses its address: "/" is the homepage. Older servers send none. */
 export type SitePage = { file: string; slug: string; title: string; url?: string | null; draft: boolean; date: string | null };
 
-/** The homepage: the page at "/" (index.html in the site tree, content/pages/home.md when scaffolded). */
-export const isHomePage = (page: SitePage) => page.url === "/" || (page.url == null && page.file === "content/pages/home.md");
+/**
+ * The homepage: the page at "/" (index.html in the site tree, content/pages/home.md when scaffolded).
+ * Only a server too old to send `url` leaves it to the file name: a home.md without `url: /` is an
+ * ordinary page at /home.html.
+ */
+export const isHomePage = (page: SitePage) => page.url === "/" || (page.url === undefined && page.file === "content/pages/home.md");
 
 /** site.config.json → brand: images are site paths ("/assets/img/…"), "" when not set. */
 export type Brand = { logoText: string; logo: string; logoDark: string; logoMark: string; favicon: string };
@@ -292,6 +296,51 @@ export type SeoReport = {
  * the tags. `report` is the latest audit (null before the first), `stale` once a page changed since.
  */
 export type SeoInfo = { available: boolean; template: boolean; report: SeoReport | null; stale: boolean };
+
+/** A page a problem is about. */
+export type ProblemPage = { file: string; title: string };
+
+/**
+ * One problem the site check found (server/src/site-check.js): the deploy runs the same check, so
+ * while any is left the live site doesn't update.
+ */
+export type SiteProblem =
+  | {
+      kind: "missing-link";
+      message: string;
+      /** Where the link points, e.g. "/" or "/pricing.html". */
+      href: string;
+      /**
+       * home: the site has no homepage. listing: a collection has no listing page (`listing`).
+       * hidden: the page is hidden (`hiddenPage`). page: no such page. file: no such image or file.
+       */
+      target: "home" | "listing" | "hidden" | "page" | "file";
+      hiddenPage?: ProblemPage;
+      listing?: { collection: string; label: string };
+      /** The page the link is on, or null if it couldn't be matched. */
+      page: (ProblemPage & { url: string }) | null;
+      /** In the page's own text; otherwise the site's design makes it (logo, menu, footer, a layout or shared data). */
+      inPageText: boolean;
+    }
+  | { kind: "duplicate"; message: string; url: string; pages: ProblemPage[] }
+  | { kind: "no-date"; message: string; page: ProblemPage }
+  | { kind: "other"; message: string };
+
+export type SiteCheckReport = {
+  checkedAt: string;
+  /** Passed: nothing stops the live site from updating. */
+  ok: boolean;
+  /** The site couldn't be built, so the check never ran; `failure` has the error. */
+  buildFailed: boolean;
+  failure: string | null;
+  problems: SiteProblem[];
+  /** Problems beyond the first 100, left out. */
+  moreProblems: number;
+  warnings: string[];
+};
+
+/** The latest check and whether it's current: `fresh` is false once a file changed since. */
+export type SiteCheck = { report: SiteCheckReport | null; fresh: boolean };
 
 /** An uploaded HTML page, saved inside .git for the "page-convert" command. */
 export type HtmlSource = {
