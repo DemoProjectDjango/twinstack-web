@@ -21,9 +21,22 @@ const SECTIONS = [
     label: "Company facts",
     file: "content/data/company.json",
     description: "Headline stats, clouds, integrations and process steps shown across many pages.",
+    items: { stats: { value: "", label: "" }, clouds: "", integrations: "", process: { title: "", body: "", mark: "" } },
   },
-  { id: "faq", label: "FAQ", file: "content/data/faq.json", description: "Questions and answers. Pages can show all of them or filter by topic." },
-  { id: "testimonials", label: "Testimonials", file: "content/data/testimonials.json", description: "Client quotes shown on the homepage." },
+  {
+    id: "faq",
+    label: "FAQ",
+    file: "content/data/faq.json",
+    description: "Questions and answers. Pages can show all of them or filter by topic.",
+    items: { items: { topic: "", question: "", answer: "" } },
+  },
+  {
+    id: "testimonials",
+    label: "Testimonials",
+    file: "content/data/testimonials.json",
+    description: "Client quotes, shown wherever the site includes its testimonials.",
+    items: { items: { quote: "", industry: "", meta: "" } },
+  },
   {
     id: "home",
     label: "Homepage sections",
@@ -39,6 +52,18 @@ const isObject = (value) => value !== null && typeof value === "object" && !Arra
 
 function pick(data, keys) {
   return keys ? Object.fromEntries(keys.filter((key) => key in data).map((key) => [key, data[key]])) : data;
+}
+
+/**
+ * The structure saves are checked against: the data, with an example item in each empty top-level
+ * list the section knows the items of (`items`). The template ships those lists empty, and an empty
+ * list on its own says nothing about what may be added to it.
+ */
+function shapeOf(section, data) {
+  if (!section.items || !isObject(data)) return data;
+  return Object.fromEntries(
+    Object.entries(data).map(([key, value]) => [key, Array.isArray(value) && !value.length && key in section.items ? [section.items[key]] : value]),
+  );
 }
 
 /** What each item of a list looks like: the union of its items' fields. */
@@ -107,6 +132,7 @@ export async function getStaticInfo(key) {
       file: section.file,
       description: section.description,
       data: pick(data, section.keys),
+      shape: shapeOf(section, pick(data, section.keys)),
     });
   }
   return { sections };
@@ -123,7 +149,7 @@ export async function saveStaticInfo(key, id, next) {
     const { text, data } = await readSection(dir, section);
     if (data === null) throw new WorkspaceError(`${section.file} doesn't exist.`, 404);
 
-    const error = shapeError(pick(data, section.keys), next, "");
+    const error = shapeError(shapeOf(section, pick(data, section.keys)), next, "");
     if (error) throw new WorkspaceError(error.replace(/^: /, ""), 400);
 
     // Only the picked keys change; everything else (and key order) is kept.

@@ -361,7 +361,8 @@ export type EditMode = "generate" | "edit";
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 
-export type StaticSection = { id: string; label: string; file: string; description: string; data: Json };
+/** `shape` is `data` with an example item in each empty list, so the form knows what to add (older servers send none). */
+export type StaticSection = { id: string; label: string; file: string; description: string; data: Json; shape?: Json };
 
 /** URL of an image under assets/img/ in the workspace, for thumbnails. */
 export function workspaceImageUrl(owner: string, repo: string, path: string) {

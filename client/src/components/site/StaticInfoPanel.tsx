@@ -109,7 +109,7 @@ export function StaticInfoPanel() {
                 <p className="mt-1 font-mono text-xs text-zinc-500">{section.file}</p>
               </div>
 
-              <JsonForm value={draft} shape={section.data} onChange={setDraft} disabled={saving || busy} />
+              <JsonForm value={draft} shape={section.shape ?? section.data} onChange={setDraft} disabled={saving || busy} />
 
               <ErrorText error={error} />
               {savedAt && !dirty && (

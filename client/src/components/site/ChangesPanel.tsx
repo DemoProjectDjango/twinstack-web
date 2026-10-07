@@ -5,6 +5,8 @@ import { describeChange, summarizeChanges } from "@/lib/change-labels";
 import { confirmModal } from "@/lib/confirm";
 import { api, workspacePath, type FileDiff, type WorkspaceStatus } from "@/lib/site-api";
 import { DomainSettings } from "./DomainSettings";
+import { markVisited, wasVisited } from "./HomePanel";
+import { SiteDetailsStep } from "./SiteDetailsStep";
 import { useSite } from "./site-context";
 import { SiteProblems } from "./SiteProblems";
 import { Badge, Button, Details, EmptyState, ErrorText, Field, Notice, ScreenHeader, Section, inputClass } from "./ui";
@@ -38,6 +40,9 @@ export function ChangesPanel() {
   const [mode, setMode] = useState<"pr" | "direct">(status.onDefaultBranch ? "direct" : "pr");
   const [branch, setBranch] = useState("");
   const [result, setResult] = useState<(CommitResult & { mode: "pr" | "direct" }) | null>(null);
+  // The first publish asks to check the site details first, unless they've been looked at already.
+  const [detailsChecked, setDetailsChecked] = useState(() => wasVisited(owner, repo, "details"));
+  const [checkingDetails, setCheckingDetails] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,8 +68,20 @@ export function ChangesPanel() {
     }
   }
 
-  async function commit(e: React.FormEvent) {
+  function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (goesLive && !detailsChecked) setCheckingDetails(true);
+    else void commit();
+  }
+
+  function detailsDone() {
+    markVisited(owner, repo, "details");
+    setDetailsChecked(true);
+    setCheckingDetails(false);
+    void commit();
+  }
+
+  async function commit() {
     const { report, fresh } = siteCheck;
     if (
       fresh &&
@@ -244,61 +261,65 @@ export function ChangesPanel() {
           <div className="mb-4">
             <SiteProblems />
           </div>
-          <form onSubmit={commit} className="space-y-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <Button type="submit" variant="primary" className="px-5 py-2" disabled={disabled}>
-                {working === "commit" ? "Publishing…" : goesLive ? "Publish now" : status.onDefaultBranch ? "Send for review" : "Add to the review"}
-              </Button>
-              <span className="text-sm text-zinc-500">
-                {goesLive
-                  ? "Your live site updates about a minute later."
-                  : "Nothing changes on your live site until the review is approved on GitHub."}
-              </span>
-            </div>
-
-            <Details summary="More options">
-              <div className="space-y-3">
-                <Field label="A note about this version (optional)" hint="Kept in your site's history. Made from your changes if you leave it empty.">
-                  <input
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
-                    maxLength={5000}
-                    placeholder={summarizeChanges(status.changes, overview) || "Update the site"}
-                    className={inputClass}
-                    disabled={disabled}
-                  />
-                </Field>
-                <fieldset className="space-y-1.5 text-sm">
-                  <legend className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">How to publish</legend>
-                  <label className="flex items-start gap-2">
-                    <input type="radio" checked={mode === "direct"} onChange={() => setMode("direct")} disabled={disabled} className="mt-1" />
-                    <span>
-                      {status.onDefaultBranch ? (
-                        "Publish straight away (recommended)"
-                      ) : (
-                        <>
-                          Save straight to <code className="font-mono">{status.branch}</code>
-                        </>
-                      )}
-                    </span>
-                  </label>
-                  <label className="flex items-start gap-2">
-                    <input type="radio" checked={mode === "pr"} onChange={() => setMode("pr")} disabled={disabled} className="mt-1" />
-                    <span>
-                      {status.onDefaultBranch
-                        ? "Send for review first: someone approves it on GitHub before it goes live"
-                        : "Add to the review that's already open"}
-                    </span>
-                  </label>
-                </fieldset>
-                {mode === "pr" && status.onDefaultBranch && (
-                  <Field label="Review name (optional)" hint="Defaults to twinstack/<date>-<time>.">
-                    <input value={branch} onChange={(e) => setBranch(e.target.value)} className={`${inputClass} font-mono`} disabled={disabled} />
-                  </Field>
-                )}
+          {checkingDetails ? (
+            <SiteDetailsStep onDone={detailsDone} onCancel={() => setCheckingDetails(false)} />
+          ) : (
+            <form onSubmit={submit} className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <Button type="submit" variant="primary" className="px-5 py-2" disabled={disabled}>
+                  {working === "commit" ? "Publishing…" : goesLive ? "Publish now" : status.onDefaultBranch ? "Send for review" : "Add to the review"}
+                </Button>
+                <span className="text-sm text-zinc-500">
+                  {goesLive
+                    ? "Your live site updates about a minute later."
+                    : "Nothing changes on your live site until the review is approved on GitHub."}
+                </span>
               </div>
-            </Details>
-          </form>
+
+              <Details summary="More options">
+                <div className="space-y-3">
+                  <Field label="A note about this version (optional)" hint="Kept in your site's history. Made from your changes if you leave it empty.">
+                    <input
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      maxLength={5000}
+                      placeholder={summarizeChanges(status.changes, overview) || "Update the site"}
+                      className={inputClass}
+                      disabled={disabled}
+                    />
+                  </Field>
+                  <fieldset className="space-y-1.5 text-sm">
+                    <legend className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">How to publish</legend>
+                    <label className="flex items-start gap-2">
+                      <input type="radio" checked={mode === "direct"} onChange={() => setMode("direct")} disabled={disabled} className="mt-1" />
+                      <span>
+                        {status.onDefaultBranch ? (
+                          "Publish straight away (recommended)"
+                        ) : (
+                          <>
+                            Save straight to <code className="font-mono">{status.branch}</code>
+                          </>
+                        )}
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2">
+                      <input type="radio" checked={mode === "pr"} onChange={() => setMode("pr")} disabled={disabled} className="mt-1" />
+                      <span>
+                        {status.onDefaultBranch
+                          ? "Send for review first: someone approves it on GitHub before it goes live"
+                          : "Add to the review that's already open"}
+                      </span>
+                    </label>
+                  </fieldset>
+                  {mode === "pr" && status.onDefaultBranch && (
+                    <Field label="Review name (optional)" hint="Defaults to twinstack/<date>-<time>.">
+                      <input value={branch} onChange={(e) => setBranch(e.target.value)} className={`${inputClass} font-mono`} disabled={disabled} />
+                    </Field>
+                  )}
+                </div>
+              </Details>
+            </form>
+          )}
         </Section>
       )}
 

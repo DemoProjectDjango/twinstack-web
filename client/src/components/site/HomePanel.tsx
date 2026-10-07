@@ -20,7 +20,7 @@ export function markVisited(owner: string, repo: string, section: SiteSection) {
   }
 }
 
-function wasVisited(owner: string, repo: string, section: SiteSection) {
+export function wasVisited(owner: string, repo: string, section: SiteSection) {
   try {
     return localStorage.getItem(visitedKey(owner, repo, section)) === "1";
   } catch {

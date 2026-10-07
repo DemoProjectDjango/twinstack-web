@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -836,15 +836,22 @@ export async function deletePage(key, file) {
 // site plan's index.html and <folder>/index.html lines make them (scripts/lib/scaffold-tree-runner.js),
 // from the template's own scripts/site-tree-content/<path>.md when it has one for that address.
 
-/** A new page as the site plan scaffolds one: the site's page skeleton (scripts/lib/scaffold-templates.js) with its address and layout. */
-function pageSkeleton({ title, slug, url, layout }) {
+/**
+ * A new page as the site plan scaffolds one: the site's page skeleton (scripts/lib/scaffold-templates.js)
+ * with its address and layout. Copies whose layout shows only the body (the template's blank
+ * page.html) get the template's HTML starter, with the collection's loop on a listing page
+ * (`collection`); older copies, whose layouts draw the title and hero, get the frontmatter skeleton.
+ */
+function pageSkeleton({ title, slug, url, layout, bodyIsPage, collection }) {
   const value = /^[\w ,.!&'()-]+$/.test(title) ? title : JSON.stringify(title);
-  return `---
+  const head = `---
 title: ${value}
 slug: ${slug}
 url: ${url}
 ${layout ? `layout: ${layout}\n` : ""}order: 50
-kicker:
+`;
+  if (!bodyIsPage) {
+    return `${head}kicker:
 heroHeading: ${value}
 heroText: One sentence on what this page is for.
 description: Under 160 characters, written for search results.
@@ -854,6 +861,44 @@ description: Under 160 characters, written for search results.
 
 Replace this with the real content.
 `;
+  }
+  const lines = [
+    '<h1 class="text-hero">{{ page.title }}</h1>',
+    '<p class="mt-5 max-w-[54ch] text-lede text-ink-2">One sentence on what this page is for.</p>',
+    ...(collection
+      ? [
+          '<div class="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">',
+          `  {{# each ${collection} }}`,
+          '  <a href="{{ url }}" class="card block no-underline">',
+          '    {{# if dateFormatted }}<p class="text-sm text-muted">{{ dateFormatted }}</p>{{/ if }}',
+          '    <h2 class="text-h3 text-ink">{{ title }}</h2>',
+          '    {{# if description }}<p class="mt-2 text-muted">{{ description }}</p>{{/ if }}',
+          "  </a>",
+          "  {{/ each }}",
+          "</div>",
+        ]
+      : []),
+  ];
+  return `${head}description: Under 160 characters, written for search results.
+---
+
+<section class="section-y">
+  <div class="wrap">
+${lines.map((line) => `    ${line}`).join("\n")}
+  </div>
+</section>
+`;
+}
+
+/** Whether a page with this layout (or the pages collection's, or "page") shows only its body: the layout doesn't draw the title. */
+function bodyIsPage(dir, site, layout) {
+  const name = layout || site.collections?.pages?.layout || "page";
+  if (!/^[\w-]+$/.test(name)) return false;
+  try {
+    return !/\bpage\.(title|heroHeading)\b/.test(readFileSync(path.join(dir, `templates/layouts/${name}.html`), "utf8"));
+  } catch {
+    return false;
+  }
 }
 
 const addressOf = (url) => (url.endsWith("/") || path.posix.extname(url) ? url : `${url}/`);
@@ -898,7 +943,7 @@ export async function readSiteConfig(key) {
   }
 }
 
-/** Gives a site with no homepage one: a page at "/" with the home layout (content/pages/home.md). */
+/** Gives a site with no homepage one: a page at "/" (content/pages/home.md), with the home layout when the copy has one. */
 export async function createHomepage(key, { title } = {}) {
   checkTitle(title);
   const site = await readSiteConfig(key);
@@ -908,8 +953,10 @@ export async function createHomepage(key, { title } = {}) {
     // home.md may already be an ordinary page at /home.html.
     names: ["home", "index", "homepage"],
     predefinedPath: "index.md",
-    skeleton: (slug, hasLayout) =>
-      pageSkeleton({ title: title?.trim() || site.tagline || site.name || "Home", slug, url: "/", layout: hasLayout("home") ? "home" : null }),
+    skeleton: (slug, hasLayout) => {
+      const layout = hasLayout("home") ? "home" : null;
+      return pageSkeleton({ title: title?.trim() || site.tagline || site.name || "Home", slug, url: "/", layout, bodyIsPage: bodyIsPage(workspaceDir(key), site, layout) });
+    },
     taken: (page) => `Your site already has a homepage: "${page.title}".`,
   });
 }
@@ -939,8 +986,11 @@ export async function createListingPage(key, collection, { title } = {}) {
     url: listing.url,
     names: [listing.folder],
     predefinedPath: `${listing.folder}/index.md`,
-    skeleton: (slug, hasLayout) =>
-      pageSkeleton({ title: title?.trim() || listing.label, slug, url: listing.url, layout: hasLayout(listing.layout) ? listing.layout : null }),
+    skeleton: (slug, hasLayout) => {
+      const layout = hasLayout(listing.layout) ? listing.layout : null;
+      const blank = bodyIsPage(workspaceDir(key), site, layout);
+      return pageSkeleton({ title: title?.trim() || listing.label, slug, url: listing.url, layout, bodyIsPage: blank, collection: blank ? collection : null });
+    },
     taken: (page) => `Your site already has its ${listing.label} page: "${page.title}".`,
   });
 }

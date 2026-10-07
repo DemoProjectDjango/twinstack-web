@@ -594,7 +594,7 @@ function AskClaudeButton() {
 function Shell({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) {
   const assistant = useOptionalAssistant();
   return (
-    <main className={`mx-auto w-full max-w-7xl flex-1 px-4 pb-24 pt-8 ${assistant?.open ? "xl:max-w-none xl:pr-114" : ""}`}>
+    <main className={`mx-auto w-full max-w-6xl flex-1 px-4 pb-24 pt-8 ${assistant?.open ? "xl:max-w-none xl:pr-114" : ""}`}>
       <Link href="/dashboard" className="text-sm text-zinc-500 hover:underline">
         ← Your sites
       </Link>
