@@ -280,6 +280,24 @@ function InstructionEditor({ file }: { file: string }) {
   );
 }
 
+/** Whose header and footer the site shows after a conversion: its own, or the page's (both or one). */
+type ChromeChoice = "site" | "both" | "header" | "footer";
+
+/**
+ * Whether a saved page has its own header (a <header>, a <nav> or a navbar before its main heading)
+ * and footer (a <footer>, or an element with a footer class or id). A quick look, to offer the
+ * choice; the site's scripts/lib/html-source.js decides what is copied.
+ */
+function chromeIn(html: string) {
+  const body = html.replace(/<!--[\s\S]*?-->/g, "").replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, "");
+  const start = body.search(/<main\b|<h1\b/i);
+  const top = start >= 0 ? body.slice(0, start) : body;
+  return {
+    header: /<header\b|<nav\b|role\s*=\s*["']?(banner|navigation)|(class|id)\s*=\s*["'][^"']*\b(site-header|navbar|masthead|topbar)\b/i.test(top),
+    footer: /<footer\b|role\s*=\s*["']?contentinfo|(class|id)\s*=\s*["'][^"']*\b(site-)?footer\b/i.test(body),
+  };
+}
+
 /** Convert an existing HTML page (from an old site, say) into one of the site's pages. */
 function ConvertEditor({ file }: { file: string }) {
   const { owner, repo, overview, busy, run, claude, job } = useSite();
@@ -290,11 +308,18 @@ function ConvertEditor({ file }: { file: string }) {
   const [instruction, setInstruction] = useState("");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  // Whether the uploaded page has its own header and footer, and which of them become the site's.
+  const [pageChrome, setPageChrome] = useState<{ header: boolean; footer: boolean }>({ header: false, footer: false });
+  const [useChrome, setUseChrome] = useState<ChromeChoice>("site");
 
   const supported = overview?.features.pageConvert ?? true;
   const stylesSupported = overview?.features.pageConvertStyles ?? true;
   const scriptsSupported = overview?.features.pageConvertScripts ?? true;
+  const chromeSupported = overview?.features.pageConvertChrome ?? false;
   const styled = keepStyles && stylesSupported;
+  const offerChrome = styled && chromeSupported && (pageChrome.header || pageChrome.footer);
+  const withHeader = offerChrome && pageChrome.header && (useChrome === "both" || useChrome === "header");
+  const withFooter = offerChrome && pageChrome.footer && (useChrome === "both" || useChrome === "footer");
   const isScript = (f: File) => /\.m?js$/i.test(f.name);
   const globalSheets = overview?.globalStylesheets ?? [];
   const disabled = busy || !claude.ready || !supported;
@@ -310,6 +335,8 @@ function ConvertEditor({ file }: { file: string }) {
     }
     setError(null);
     setHtmlFile(picked);
+    setUseChrome("site");
+    void picked.text().then((html) => setPageChrome(chromeIn(html)), () => setPageChrome({ header: false, footer: false }));
   }
 
   function pickCss(files: FileList | null) {
@@ -348,6 +375,8 @@ function ConvertEditor({ file }: { file: string }) {
         keepStyles: styled,
         css: saved.css.map((c) => c.source),
         js: (saved.js ?? []).map((c) => c.source),
+        withHeader,
+        withFooter,
         instruction,
         dryRun,
       });
@@ -396,6 +425,45 @@ function ConvertEditor({ file }: { file: string }) {
               disabled={disabled}
             />
           </Field>
+
+          {offerChrome && (
+            <fieldset className="space-y-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+              <legend className="px-1 text-sm font-medium">
+                This page has its own {pageChrome.header && pageChrome.footer ? "header and footer" : pageChrome.header ? "header" : "footer"}
+              </legend>
+              {(
+                [
+                  ["site", "Keep my site's header and footer", "The page's own are left out; your site's show around it, as on every other page."],
+                  ...(pageChrome.header && pageChrome.footer
+                    ? [["both", "Use this page's header and footer on every page", "Copied exactly as they are, with their own look and scripts, and shown on every page of your site."]]
+                    : []),
+                  ...(pageChrome.header ? [["header", pageChrome.footer ? "Use only its header, on every page" : "Use its header on every page", "Copied exactly as it is; your site keeps its own footer."]] : []),
+                  ...(pageChrome.footer ? [["footer", pageChrome.header ? "Use only its footer, on every page" : "Use its footer on every page", "Copied exactly as it is; your site keeps its own header."]] : []),
+                ] as [ChromeChoice, string, string][]
+              ).map(([value, label, hint]) => (
+                <label key={value} className="flex items-start gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="convert-chrome"
+                    checked={useChrome === value}
+                    onChange={() => setUseChrome(value)}
+                    disabled={disabled}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="font-medium">{label}</span>
+                    <span className="block text-xs text-zinc-500">{hint}</span>
+                  </span>
+                </label>
+              ))}
+              {useChrome !== "site" && (
+                <p className="text-xs text-zinc-500">
+                  A copied header or footer is fixed: the menu settings on the Design screen don&apos;t change it. You can go back to
+                  your site&apos;s own there at any time.
+                </p>
+              )}
+            </fieldset>
+          )}
 
           <Details summary="Advanced options: how it looks, stylesheets and scripts">
             <div className="space-y-3">
@@ -463,8 +531,8 @@ function ConvertEditor({ file }: { file: string }) {
                   <p className="mt-1 text-xs text-zinc-500">
                     A saved page usually links its stylesheet and scripts rather than including them. Upload those files under
                     the names the page links them by (e.g. <code className="font-mono">style.css</code>,{" "}
-                    <code className="font-mono">main.js</code>). Scripts from a full URL load from it without uploading. The
-                    preview lists any linked file that&apos;s missing.
+                    <code className="font-mono">main.js</code>). Stylesheets and scripts from a full URL (a CDN such as Font
+                    Awesome) are brought in from it without uploading. The preview lists any linked file that&apos;s missing.
                   </p>
                   {globalSheets.length > 0 && (
                     <p className="mt-2 text-xs text-zinc-500">

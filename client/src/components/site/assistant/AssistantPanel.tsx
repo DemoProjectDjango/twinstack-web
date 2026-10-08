@@ -16,7 +16,7 @@ import { SUGGESTIONS } from "./suggestions";
 
 export function AssistantPanel() {
   const { claude } = useSite();
-  const { context, conversation, turn, loading, error, open, setOpen, send, stop, startOver, actions, applyAll, applyingAll } = useAssistant();
+  const { context, conversation, turn, loading, error, open, setOpen, send, stop, startOver, actions, applyAll, applyingAll, autoApply, setAutoApply } = useAssistant();
   const [text, setText] = useState("");
   const uploads = useAttachmentUploads();
   const drop = useFileDrop(uploads.add, claude.ready);
@@ -64,6 +64,13 @@ export function AssistantPanel() {
         <span aria-hidden="true">✦</span>
         <h2 className="font-semibold">Ask Claude</h2>
         <span className="ml-auto flex items-center gap-1">
+          <label
+            className="mr-1 flex cursor-pointer items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400"
+            title="On: Claude's changes are made as soon as it answers. Off: you apply or skip each one."
+          >
+            <input type="checkbox" checked={autoApply} onChange={(e) => setAutoApply(e.target.checked)} />
+            Make changes automatically
+          </label>
           {conversation && (
             <Button variant="ghost" className="px-2 py-1 text-xs" disabled={running} onClick={() => void startOver()}>
               New conversation
@@ -164,7 +171,7 @@ export function AssistantPanel() {
               maxLength={8000}
               placeholder={suggestions.placeholder}
               aria-label="Message to Claude"
-              className={`${inputClass} resize-none text-sm`}
+              className={`${inputClass} resize-none text-sm h-25`}
             />
             <div className="flex items-center gap-2">
               <AttachButton onFiles={uploads.add} disabled={running} />

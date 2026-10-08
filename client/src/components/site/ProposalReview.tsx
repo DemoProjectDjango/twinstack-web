@@ -15,14 +15,23 @@ export const CLAUDE_PAGE_COMMANDS = ["page-edit", "page-generate", "page-convert
  * Claude again.
  */
 /** What an extra file in a proposal is, for its heading in the review. */
-function extraFileRole(file: string) {
+function extraFileRole(file: string, content = "") {
+  const copied = content.includes('data-designed="copied"');
+  if (file === "templates/partials/header.html") return copied ? "the page's own header, copied to show on every page" : "the header";
+  if (file === "templates/partials/footer.html") return copied ? "the page's own footer, copied to show on every page" : "the footer, designed together with the header";
+  if (/^assets\/css\/imported\/chrome-/.test(file)) return "the copied header and footer's CSS, kept to them";
+  if (/^assets\/js\/imported\/chrome-/.test(file)) return "a script the copied header or footer runs, on every page";
   if (file.startsWith("content/data/")) return "data the page shows, which other pages may show too";
   if (file.startsWith("assets/js/imported/")) return "one of the page's own scripts";
   if (file.startsWith("styles/global/")) return "a global stylesheet from the site tree, replaced by your upload";
   return "the old page's CSS, scoped to this page";
 }
 
-export function ProposalReview() {
+/**
+ * `chrome`: the Design screen's review, which shows only a header and footer proposal
+ * (chrome-design). Without it, every other kind (the page editor's), never a header and footer one.
+ */
+export function ProposalReview({ chrome = false }: { chrome?: boolean } = {}) {
   const { owner, repo, busy, version, job, overview, run, setStatus, refresh } = useSite();
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [draft, setDraft] = useState("");
@@ -39,8 +48,8 @@ export function ProposalReview() {
     api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal"))
       .then(({ proposal: found }) => {
         if (cancelled) return;
-        // The SEO tab shows its own suggestions.
-        const next = found?.mode === "seo" ? null : found;
+        // The SEO tab shows its own suggestions, and the Design screen the header and footer's.
+        const next = !found || found.mode === "seo" || (found.mode === "chrome") !== chrome ? null : found;
         setProposal(next);
         const stamp = next ? `${next.file}@${next.createdAt}` : null;
         if (stamp !== loadedAt.current) {
@@ -54,7 +63,7 @@ export function ProposalReview() {
     return () => {
       cancelled = true;
     };
-  }, [owner, repo, version]);
+  }, [owner, repo, version, chrome]);
 
   async function apply() {
     if (!proposal) return;
@@ -112,7 +121,7 @@ export function ProposalReview() {
     void run("proposal-preview", {}).then((started) => started && setPreviewedDraft(proposal.content));
   }, [proposal, canPreview, busy, run]);
 
-  const claudeJob = job && CLAUDE_PAGE_COMMANDS.includes(job.command) ? job : null;
+  const claudeJob = job && (chrome ? job.command === "chrome-design" : CLAUDE_PAGE_COMMANDS.includes(job.command)) ? job : null;
   const generated = proposal?.mode === "generate";
   const converted = proposal?.mode === "convert";
 
@@ -142,7 +151,9 @@ export function ProposalReview() {
         <section className="space-y-4 rounded-lg border-2 border-foreground p-5">
           <div>
             <h3 className="font-semibold">
-              {generated
+              {proposal.mode === "chrome"
+                ? "Claude's header and footer"
+                : generated
                 ? "Claude's finished page"
                 : converted
                   ? `The page from ${proposal.source ?? "your old website"}`
@@ -150,7 +161,10 @@ export function ProposalReview() {
                     ? "Claude's version of the file"
                     : "Claude's changed page"}
             </h3>
-            <p className="mt-1 text-sm text-zinc-500">Nothing is kept yet. Check it, then keep it or throw it away.</p>
+            <p className="mt-1 text-sm text-zinc-500">
+              Nothing is kept yet. Check it, then keep it or throw it away.
+              {proposal.mode === "chrome" && " Once kept, every page of the site shows this header and footer."}
+            </p>
           </div>
 
           {proposal.summary?.length > 0 && (
@@ -246,7 +260,7 @@ export function ProposalReview() {
                 >
                   <summary className="cursor-pointer">
                     Also writes <code className="font-mono">{extra.file}</code> ({Math.ceil(extra.content.length / 1024)} KB):{" "}
-                    {extraFileRole(extra.file)}
+                    {extraFileRole(extra.file, extra.content)}
                   </summary>
                   {extra.file.startsWith("content/data/") && extra.original != null ? (
                     <div className="mt-2">
@@ -319,7 +333,7 @@ function PagePreview({
   return (
     <div className="space-y-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
       <div className="flex flex-wrap items-center gap-2">
-        <h4 className="text-sm font-medium">How the page will look</h4>
+        <h4 className="text-sm font-medium">{proposal.mode === "chrome" ? "How every page will look (shown on the homepage)" : "How the page will look"}</h4>
         {preview?.edited && <span className="text-xs text-zinc-500">with your edits</span>}
         {supported && (
           <span className="ml-auto flex items-center gap-1">

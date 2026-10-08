@@ -6,7 +6,6 @@ import { TOOL_DEFINITIONS, runTool, toolInfo } from "./tools.js";
 // it stops. Read tools run straight away; change tools become proposals (actions) for the owner.
 // `messages` is the conversation's full history and is only ever appended to.
 
-export const ASSISTANT_MODEL = process.env.ASSISTANT_MODEL || "claude-opus-5-5";
 // Requests Claude may make in one turn (each tool round is one). Plenty for "read a few things,
 // propose a few changes"; it stops a runaway loop.
 const MAX_STEPS = 16;
@@ -31,14 +30,15 @@ function addUsage(total, usage) {
 /**
  * Runs the turn. `live` is updated as it goes (text as it streams, what Claude is looking at, the
  * proposals) so the browser can show progress; `onUpdate` is called after each change to it.
- * Returns the messages to append to the history, the proposals and the token usage.
+ * Returns the messages to append to the history, the proposals and the token usage. `model` is
+ * the account's choice (getClaudeModel); a fallback after a refusal may answer with another.
  */
-export async function runTurn({ client, key, history, live, onUpdate = () => {}, signal }) {
+export async function runTurn({ client, key, model: requested, history, live, onUpdate = () => {}, signal }) {
   const messages = [...history];
   const start = history.length;
   const usage = emptyUsage();
   const actions = [];
-  let model = ASSISTANT_MODEL;
+  let model = requested;
   let stopReason = null;
 
   try {
@@ -55,7 +55,7 @@ export async function runTurn({ client, key, history, live, onUpdate = () => {},
     for (let step = 0; step < MAX_STEPS; step++) {
       const stream = client.beta.messages.stream(
         {
-          model: ASSISTANT_MODEL,
+          model: requested,
           max_tokens: MAX_TOKENS,
           system: SYSTEM_PROMPT,
           tools: TOOL_DEFINITIONS,

@@ -3,18 +3,25 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/site-api";
 
-type Settings = { anthropicKey: string | null };
+type ClaudeModel = { id: string; name: string; description: string };
+type Settings = { anthropicKey: string | null; model?: string; models?: ClaudeModel[] };
 
-/** The user's own Anthropic API key, stored encrypted on the server (the browser only sees a masked hint). */
+/** The user's own Anthropic API key, stored encrypted on the server (the browser only sees a masked hint), and the model Claude uses. */
 export function AnthropicKey() {
   const [saved, setSaved] = useState<string | null | undefined>(undefined);
   const [key, setKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
+  const [model, setModel] = useState<string | null>(null);
+  const [models, setModels] = useState<ClaudeModel[]>([]);
 
   useEffect(() => {
     api<Settings>("/api/settings")
-      .then((s) => setSaved(s.anthropicKey))
+      .then((s) => {
+        setSaved(s.anthropicKey);
+        setModel(s.model ?? null);
+        setModels(s.models ?? []);
+      })
       .catch(() => setSaved(null));
   }, []);
 
@@ -107,6 +114,74 @@ export function AnthropicKey() {
           {error}
         </p>
       )}
+
+      {saved && model && models.length > 0 && <ModelPicker model={model} models={models} onSaved={setModel} />}
     </section>
+  );
+}
+
+/** Which Claude model writes pages and answers in Ask Claude. Saved as soon as one is picked. */
+function ModelPicker({ model, models, onSaved }: { model: string; models: ClaudeModel[]; onSaved: (model: string) => void }) {
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedNote, setSavedNote] = useState(false);
+
+  async function choose(id: string) {
+    if (id === model) return;
+    setWorking(true);
+    setError(null);
+    setSavedNote(false);
+    try {
+      const s = await api<{ model: string }>("/api/settings/model", { method: "PUT", body: { model: id } });
+      onSaved(s.model);
+      setSavedNote(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save your choice.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <fieldset className="mt-6 border-t border-zinc-200 pt-5 dark:border-zinc-800" disabled={working}>
+      <legend className="sr-only">Claude model</legend>
+      <h3 className="font-medium">Which Claude to use</h3>
+      <p className="mt-1 text-sm text-zinc-500">
+        Used when Claude writes or changes your pages and when you ask Claude. More capable models cost more on your
+        Anthropic account.
+      </p>
+      <div className="mt-3 grid gap-2">
+        {models.map((m) => (
+          <label
+            key={m.id}
+            className="flex cursor-pointer items-start gap-3 rounded-md border border-zinc-200 p-3 has-checked:border-zinc-900 dark:border-zinc-800 dark:has-checked:border-zinc-100"
+          >
+            <input
+              type="radio"
+              name="claude-model"
+              value={m.id}
+              checked={m.id === model}
+              onChange={() => void choose(m.id)}
+              className="mt-1"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">{m.name}</span>
+              <span className="block text-sm text-zinc-500">{m.description}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <p aria-live="polite" className="mt-2 min-h-5 text-sm">
+        {working ? (
+          <span className="text-zinc-500">Saving…</span>
+        ) : error ? (
+          <span role="alert" className="text-red-600 dark:text-red-400">
+            {error}
+          </span>
+        ) : savedNote ? (
+          <span className="text-green-700 dark:text-green-400">✓ Saved. Claude uses it from the next request.</span>
+        ) : null}
+      </p>
+    </fieldset>
   );
 }

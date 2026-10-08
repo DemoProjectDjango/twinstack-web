@@ -16,6 +16,7 @@ import {
 import { WorkspaceError, markInstalled } from "./workspace.js";
 import { SEO_REPORT } from "./seo.js";
 import { saveCheckReport } from "./site-check.js";
+import { scanMissingPages } from "./missing-pages.js";
 
 // Every command the site manager can run, mapped to the same scripts the
 // site's package.json runs. User input only ever becomes separate argv
@@ -201,12 +202,19 @@ export const COMMANDS = {
   check: {
     label: "Build and check",
     steps: () => [script("build.js"), script("check.js")],
-    onEnd: saveCheckReport,
+    onEnd: async (key, result) => {
+      await saveCheckReport(key, result);
+      await scanMissingPages(key).catch(() => {});
+    },
   },
 
   preview: {
     label: "Build preview",
     steps: () => [script("build.js", ["--drafts"])],
+    // Links to pages that don't exist yet, which the editor then offers to make (MissingPages).
+    onEnd: async (key, { exitCode }) => {
+      if (exitCode === 0) await scanMissingPages(key).catch(() => {});
+    },
   },
 
   new: {
@@ -264,7 +272,8 @@ export const COMMANDS = {
     needsKey: () => true,
     steps: (input) => {
       const args = [markdownPage(input), text(input, "instruction", "Instruction", { max: 4000, multiline: true })];
-      return [script("edit-page.js", [...args, ...claudeFlags(input)])];
+      // A whole page designed at high effort can take several minutes.
+      return [script("edit-page.js", [...args, ...claudeFlags(input)], 20 * MINUTE)];
     },
     // A stale proposal must never be shown as this preview's result.
     prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
@@ -279,7 +288,24 @@ export const COMMANDS = {
       const args = [markdownPage(input), "--generate"];
       const direction = text(input, "instruction", "Direction", { max: 4000, multiline: true, optional: true });
       if (direction) args.push(direction);
-      return [script("edit-page.js", [...args, ...claudeFlags(input)])];
+      // A whole page designed at high effort can take several minutes.
+      return [script("edit-page.js", [...args, ...claudeFlags(input)], 20 * MINUTE)];
+    },
+    prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
+  },
+
+  // Claude designs the header and footer as a pair (edit-page.js --chrome): one design shown on
+  // every page. The menu, button, logo and copyright still come from the site's settings.
+  "chrome-design": {
+    label: "Design the header and footer with Claude",
+    claude: true,
+    needsKey: () => true,
+    steps: (input) => {
+      const args = ["--chrome"];
+      const direction = text(input, "instruction", "Direction", { max: 4000, multiline: true, optional: true });
+      if (direction) args.push(direction);
+      if (flag(input, "dryRun")) args.push("--dry-run", `--proposal-out=${PROPOSAL_FILE}`);
+      return [script("edit-page.js", args, 20 * MINUTE)];
     },
     prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
   },
@@ -299,12 +325,15 @@ export const COMMANDS = {
       if (input?.keepStyles === false) args.push("--markdown");
       else {
         args.push("--keep-styles", ...cssSources(input).map((css) => `--css=${css}`), ...jsSources(input).map((js) => `--js=${js}`));
+        // The page's own header and footer become the site's, on every page (copies that support it).
+        if (flag(input, "withHeader")) args.push("--with-header");
+        if (flag(input, "withFooter")) args.push("--with-footer");
       }
       const direction = text(input, "instruction", "Direction", { max: 4000, multiline: true, optional: true });
       if (direction) args.push(direction);
       // Up to three Claude requests (the conversion, a review, a correction) and, with styles kept,
       // a browser check at three widths.
-      return [script("edit-page.js", [...args, ...claudeFlags(input)], 20 * MINUTE)];
+      return [script("edit-page.js", [...args, ...claudeFlags(input)], 45 * MINUTE)];
     },
     prepare: async (key, input) => {
       if (!htmlSourceExists(key, input.source)) throw new WorkspaceError("The uploaded HTML file is gone. Upload it again.", 409);
@@ -407,7 +436,9 @@ const PASS_ENV = new Set(
   ["PATH", "SYSTEMROOT", "COMSPEC", "PATHEXT", "WINDIR", "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG", "LC_ALL", "CHROME_PATH"],
 );
 
-export function jobEnv(anthropicKey) {
+// `model` is the account's Claude model (TWINSTACK_MODEL); copies whose scripts predate it use
+// their own site.config.json → automation.model instead.
+export function jobEnv(anthropicKey, model) {
   const env = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (PASS_ENV.has(name.toUpperCase())) env[name] = value;
@@ -417,6 +448,7 @@ export function jobEnv(anthropicKey) {
   env.npm_config_update_notifier = "false";
   if (anthropicKey) {
     env.ANTHROPIC_API_KEY = anthropicKey;
+    if (model) env.TWINSTACK_MODEL = model;
     // Lets the server route Claude calls through a proxy (or a mock in tests).
     if (process.env.ANTHROPIC_BASE_URL) env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
   }

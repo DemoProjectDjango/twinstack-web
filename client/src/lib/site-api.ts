@@ -70,10 +70,27 @@ export type FooterColumn = { title: string; links: NavItem[]; [field: string]: u
 export type HeaderTheme = "light" | "dark" | "brand";
 export type FooterTheme = "dark" | "light" | "brand";
 export type MenuLayout = "right" | "center" | "left";
+export type HeaderStyle = "bar" | "floating";
+export type FooterLayout = "columns" | "centered" | "minimal";
+/** The footer's call-to-action strip: shown when it has a button label and link. */
+export type FooterCta = { title?: string; text?: string; label: string; url: string };
 export type NavAppearance = {
-  header: { theme: HeaderTheme; layout: MenuLayout; sticky: boolean };
+  /**
+   * style: "bar" spans the page, "floating" is a rounded bar with space around it. transparent:
+   * see-through over the top of the page until scrolled. shrink: lower once scrolled. The last
+   * three are absent from older servers, and only copies with `supportsStyles` show them.
+   */
+  header: { theme: HeaderTheme; layout: MenuLayout; sticky: boolean; style?: HeaderStyle; transparent?: boolean; shrink?: boolean };
   /** `copyright` follows "© <year>"; empty shows the site name and "All rights reserved." */
-  footer: { theme: FooterTheme; showTagline: boolean; showContact: boolean; copyright: string };
+  footer: {
+    theme: FooterTheme;
+    showTagline: boolean;
+    showContact: boolean;
+    copyright: string;
+    layout?: FooterLayout;
+    showSocial?: boolean;
+    cta?: FooterCta | null;
+  };
 };
 export type Navigation = {
   header: { items: NavItem[]; cta: { label: string; url: string; [field: string]: unknown } | null };
@@ -90,10 +107,21 @@ export type Navigation = {
 export type NavigationInfo = {
   navigation: Navigation;
   supportsAppearance: boolean;
+  /** Claude designed the header / footer: its look is Claude's, so the style switches don't apply. Absent from older servers. */
+  designed?: { header: boolean; footer: boolean };
+  /**
+   * Copied as it was from a converted page (`from`: its HTML file): fixed HTML, so the menu and
+   * style settings don't change it until the standard one is put back. Absent from older servers.
+   */
+  copied?: { header: boolean; footer: boolean; from: string | null };
+  /** The copy's header and footer have the newer styles (header style, footer layout, social icons, the strip). */
+  supportsStyles?: boolean;
   version: string;
   collections: { name: string; label: string }[];
-  pages: { url: string; title: string; collection: string; draft: boolean }[];
-  site: { name: string; footerTagline: string; foundedYear: number | string | null; email: string; phone: string };
+  /** `menu`: the menus the page adds itself to (its frontmatter `menu`), absent from older servers. */
+  pages: { url: string; title: string; collection: string; draft: boolean; file?: string; menu?: "header" | "footer" | "both" | null }[];
+  /** `social`: which of site.config.json's social links are set (linkedin, x, facebook…). */
+  site: { name: string; footerTagline: string; foundedYear: number | string | null; email: string; phone: string; social?: string[] };
 };
 
 /** A stylesheet the Styles tab can edit. A declared global stylesheet may not exist yet. */
@@ -127,6 +155,12 @@ export type Overview = {
     seoTemplate?: boolean;
     /** Its build.js takes --proposal, so a Claude proposal can be shown as the built page. */
     proposalPreview?: boolean;
+    /** Claude can design the header and footer (edit-page.js --chrome). */
+    chromeDesign?: boolean;
+    /** A conversion can make the page's own header and footer the site's (edit-page.js --with-header / --with-footer). */
+    pageConvertChrome?: boolean;
+    /** A page can add itself to the menu or footer (frontmatter `menu`, set with /navigation/page-menu). */
+    pageMenus?: boolean;
   };
   /** Markdown files outside content/ that the "md-edit" command may change. Empty without mdEdit. */
   markdownFiles: string[];
@@ -202,7 +236,7 @@ export type Proposal = {
    * "convert": converted from an uploaded HTML page. "markdown": a markdown file outside
    * content/ changed by an instruction.
    */
-  mode: "edit" | "generate" | "convert" | "markdown" | "seo";
+  mode: "edit" | "generate" | "convert" | "markdown" | "seo" | "chrome";
   /** The file as it is on disk now, to diff the proposal against. Null if it's gone. */
   original: string | null;
   instruction: string;
@@ -341,6 +375,32 @@ export type SiteCheckReport = {
 
 /** The latest check and whether it's current: `fresh` is false once a file changed since. */
 export type SiteCheck = { report: SiteCheckReport | null; fresh: boolean };
+
+/**
+ * A page the site links to but doesn't have, found after the last build (server/src/missing-pages.js).
+ * kind: home (no homepage), listing (a collection's listing page, `collection`), page (anything else).
+ */
+export type MissingPage = {
+  href: string;
+  kind: "home" | "listing" | "page";
+  collection?: string;
+  /** The text of the first link to it, "" if it had none. */
+  label: string;
+  /** The pages that link to it. `file` is null for a built page the editor couldn't match. */
+  from: { url: string; file: string | null; title: string }[];
+};
+
+/** A page as the link scan names it. */
+export type ScannedPage = { file: string; title: string; url: string };
+
+/**
+ * The last build's link scan. `unlinked`: visible pages no other page links to (not the homepage).
+ * `duplicates`: groups of pages at one address, of which only one shows. Both absent from older servers.
+ */
+export type MissingPages = {
+  report: { scannedAt: string; missing: MissingPage[]; unlinked?: ScannedPage[]; duplicates?: (ScannedPage & { draft: boolean })[][] } | null;
+  fresh: boolean;
+};
 
 /** An uploaded HTML page, saved inside .git for the "page-convert" command. */
 export type HtmlSource = {

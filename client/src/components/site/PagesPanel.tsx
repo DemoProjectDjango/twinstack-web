@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, isHomePage, workspacePath, type SitePage, type WorkspaceStatus } from "@/lib/site-api";
 import { PageContentEditor } from "./EditPanel";
 import { markVisited } from "./HomePanel";
+import { PageHealth, usePageHealth } from "./PageHealth";
 import { PageSeo } from "./SeoPanel";
 import { useSite, type PageEditMode } from "./site-context";
 import { Badge, Button, Details, EmptyState, ErrorText, Field, Notice, ScreenHeader, Segmented, inputClass } from "./ui";
@@ -39,6 +40,9 @@ function PageList() {
   const collections = overview?.collections ?? [];
   const pageCount = collections.reduce((n, c) => n + c.pages.length, 0);
   const hasHomepage = collections.some((c) => c.pages.some(isHomePage));
+  // What the last build found: pages nothing links to, and pages that share an address.
+  const health = usePageHealth();
+  const unlinkedFiles = new Set(health.unlinked.map((p) => p.file));
 
   // "Add a page" can't make it: the homepage's address is "/", not its name.
   async function addHomepage() {
@@ -99,6 +103,8 @@ function PageList() {
         </EmptyState>
       )}
 
+      {pageCount > 0 && <PageHealth health={health} onOpen={(file) => void editFile(file, "generate")} />}
+
       {collections
         .filter((c) => c.pages.length > 0)
         .map((collection) => (
@@ -115,6 +121,7 @@ function PageList() {
                     <span className="font-medium">{page.title}</span>
                     {isHomePage(page) && <Badge>Homepage</Badge>}
                     {page.draft && <Badge>Hidden</Badge>}
+                    {unlinkedFiles.has(page.file) && <Badge>Not linked from anywhere</Badge>}
                     <span className="truncate text-xs text-zinc-500">{pageAddress(page)}</span>
                     <span className="ml-auto text-sm text-zinc-500">Edit →</span>
                   </button>

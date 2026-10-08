@@ -20,6 +20,7 @@ import {
   createConversation,
   findConversation,
   getAnthropicKey,
+  getClaudeModel,
   recordClaudeUsage,
   updateConversation,
 } from "../db.js";
@@ -189,6 +190,7 @@ assistantRouter.post(
     if (!apiKey) {
       return res.status(400).json({ error: "anthropic_key_required", message: "Set up Claude in Settings to ask Claude." });
     }
+    const model = await getClaudeModel(userId);
 
     let conversation = await findConversation(userId, siteId);
     if (conversation && runningTurnFor(conversation.id)) throw new WorkspaceError("Claude is still answering. Wait for it, or stop it.", 409);
@@ -261,6 +263,7 @@ assistantRouter.post(
         result = await runTurn({
           client,
           key,
+          model,
           history: conversation.messages,
           live: turn.live,
           signal: turn.controller.signal,

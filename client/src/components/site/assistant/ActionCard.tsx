@@ -32,6 +32,7 @@ const PAGE_TYPES: Record<string, string> = {
 
 const APPLY_LABEL: Partial<Record<AssistantAction["tool"], string>> = {
   edit_page: "Write it",
+  design_header_and_footer: "Design them",
   create_page: "Create it",
   delete_page: "Remove page",
   add_file_to_site: "Add it",
@@ -91,6 +92,8 @@ function ChangeDetails({ action }: { action: AssistantAction }) {
   const input = action.input as Record<string, unknown>;
   const meta = action.meta as Record<string, unknown>;
   switch (action.tool) {
+    case "design_header_and_footer":
+      return <Rows rows={[["Claude's request to the designer", show(input.instruction || "Match the look of the site's pages")]]} />;
     case "edit_page":
       return (
         <Rows
@@ -199,7 +202,7 @@ function StatusBadge({ action, busy }: { action: AssistantAction; busy: boolean 
 
 export function ActionCard({ id }: { id: string }) {
   const { actions, working, apply, skip, keep, throwAway, turn } = useAssistant();
-  const { busy: siteBusy, editFile } = useSite();
+  const { busy: siteBusy, editFile, showSection } = useSite();
   const action = actions[id];
   if (!action) return null;
 
@@ -233,7 +236,7 @@ export function ActionCard({ id }: { id: string }) {
         {busy && (
           <span className="flex items-center gap-2 text-xs text-zinc-500">
             <Spinner />{" "}
-            {action.tool === "edit_page" || action.tool === "create_page" ? "Claude is writing the page…" : action.tool === "convert_page_from_html" ? "Claude is bringing in the page…" : "Working on it…"}
+            {action.tool === "edit_page" || action.tool === "create_page" ? "Claude is writing the page…" : action.tool === "design_header_and_footer" ? "Claude is designing the header and footer…" : action.tool === "convert_page_from_html" ? "Claude is bringing in the page…" : "Working on it…"}
           </span>
         )}
         {action.status === "proposed" && !busy && (
@@ -254,10 +257,16 @@ export function ActionCard({ id }: { id: string }) {
             <Button className="text-xs" disabled={siteBusy} onClick={() => void throwAway(action)}>
               Throw it away
             </Button>
-            {file && (
-              <Button variant="ghost" className="text-xs underline" onClick={() => void editFile(file, "edit")}>
+            {action.tool === "design_header_and_footer" ? (
+              <Button variant="ghost" className="text-xs underline" onClick={() => showSection("design")}>
                 Look at it first
               </Button>
+            ) : (
+              file && (
+                <Button variant="ghost" className="text-xs underline" onClick={() => void editFile(file, "edit")}>
+                  Look at it first
+                </Button>
+              )
             )}
           </>
         )}

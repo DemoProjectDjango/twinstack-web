@@ -1,32 +1,31 @@
 "use client";
 
 import { useState, type CSSProperties, type ReactNode } from "react";
-import type { BrandInfo, Navigation, NavigationInfo, NavItem } from "@/lib/site-api";
+import type { BrandInfo, NavAppearance, Navigation, NavigationInfo, NavItem } from "@/lib/site-api";
 import { linkStatus, type PageIndex } from "./header-footer";
 
-// The site template's own palette (styles/main.css → @theme). A copy that changed its colours
-// looks different once built; the Build & preview tab shows the real thing.
+// The site template's header and footer colours (templates/partials/header.html and footer.html:
+// Tailwind's zinc greys and the accent in styles/main.css → @theme --color-brand). A copy that
+// changed them looks different once built; the Build & preview tab shows the real thing.
 const C = {
-  ink: "#0b1a2e",
-  ink2: "#1e3350",
-  inkDeep: "#071426",
-  brand: "#1462c4",
-  brandDark: "#0f4e9e",
-  brandWash: "#e8f0fb",
-  onink: "#c8d4e4",
-  oninkMuted: "#9db2cc",
-  mist: "#f1f5fa",
-  line: "#dbe3ee",
-  lineStrong: "#c2cfe0",
-  muted: "#64748b",
-  footerLink: "#b9cbe2",
+  ink: "#09090b",
+  ink2: "#52525b",
+  brand: "#0f766e",
+  onDark: "rgb(255 255 255 / 0.75)",
+  mist: "#f4f4f5",
+  footerLight: "#fafafa",
+  line: "#e4e4e7",
+  lineStrong: "#d4d4d8",
+  muted: "#71717a",
+  footerLink: "#a1a1aa",
+  rule: "rgb(255 255 255 / 0.1)",
 };
 
 const HEADER_BG = { light: "#ffffff", dark: C.ink, brand: C.brand };
 const FOOTER_STYLE = {
-  dark: { background: C.inkDeep, text: C.oninkMuted, link: C.footerLink, heading: "#ffffff", rule: "rgb(255 255 255 / 0.12)" },
-  light: { background: C.mist, text: C.muted, link: C.ink2, heading: C.ink, rule: C.line },
-  brand: { background: C.brand, text: C.brandWash, link: "#ffffff", heading: "#ffffff", rule: "rgb(255 255 255 / 0.25)" },
+  dark: { background: C.ink, text: C.footerLink, link: C.footerLink, heading: "rgb(255 255 255 / 0.9)", rule: C.rule },
+  light: { background: C.footerLight, text: C.muted, link: C.ink2, heading: C.ink, rule: C.line },
+  brand: { background: C.brand, text: C.onDark, link: "rgb(255 255 255 / 0.8)", heading: "#ffffff", rule: "rgb(255 255 255 / 0.2)" },
 };
 
 type Props = {
@@ -54,6 +53,15 @@ function shown(item: NavItem, info: NavigationInfo, index: PageIndex) {
   const ownMissing = Boolean(item.url) && linkStatus(item.url, index) !== "ok";
   return { children: visibleChildren, leftOut: (ownMissing || (!item.url && item.type !== "collection")) && visibleChildren.length === 0 };
 }
+
+// The footer's social icons, as letters in the preview (the site draws the brands' icons).
+const SOCIAL_SHORT: Record<string, string> = { linkedin: "in", x: "X", facebook: "f", instagram: "ig", youtube: "yt", github: "gh" };
+
+// What a copy whose templates predate the appearance settings shows.
+const TEMPLATE_LOOK: NavAppearance = {
+  header: { theme: "light", layout: "right", sticky: true },
+  footer: { theme: "dark", showTagline: true, showContact: true, copyright: "" },
+};
 
 const ring = (on: boolean): CSSProperties => (on ? { outline: "2px dashed #f59e0b", outlineOffset: 3, borderRadius: 4 } : {});
 
@@ -95,21 +103,42 @@ function Logo({ brand, onDark, color }: { brand: BrandInfo | null; onDark: boole
         // eslint-disable-next-line @next/next/no-img-element
         <img src={brand.previews.logoMark} alt="" className="size-6" />
       ) : (
-        <span className="size-6 rounded" style={{ background: onDark ? "#ffffff" : C.brand }} />
+        <span className="size-6 rounded-lg" style={{ background: onDark ? "#ffffff" : C.brand }} />
       )}
       {name}
     </span>
   );
 }
 
+function SocialIcons({ names, color, rule }: { names: string[]; color: string; rule: string }) {
+  return (
+    <span className="flex gap-1.5">
+      {names.map((name) => (
+        <span key={name} className="grid size-6 place-items-center rounded-full border text-[0.55rem] font-bold" style={{ color, borderColor: rule }}>
+          {SOCIAL_SHORT[name] ?? name.slice(0, 2)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device, styled, selected, onSelect }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const look = styled
-    ? navigation.appearance
-    : { header: { theme: "light", layout: "right", sticky: true }, footer: { theme: "dark", showTagline: true, showContact: true, copyright: "" } } as const;
+  const look: NavAppearance = styled ? navigation.appearance : TEMPLATE_LOOK;
+  // The newer styles (templates/partials/header.html and footer.html): only copies that have them.
+  const newer = styled && info.supportsStyles === true;
+  const floating = newer && look.header.style === "floating";
+  const footerLayout = newer ? (look.footer.layout ?? "columns") : "columns";
+  const social = newer && look.footer.showSocial !== false ? (info.site.social ?? []) : [];
+  const footerCta = newer && look.footer.cta?.label ? look.footer.cta : null;
+  const headerNotes = [
+    look.header.sticky && "Stays at the top when scrolling",
+    newer && look.header.transparent && "See-through over the top of the page",
+    newer && look.header.shrink && "Gets lower when scrolled",
+  ].filter(Boolean);
   const mobile = device === "mobile";
   const headerDark = look.header.theme !== "light";
-  const itemColor = headerDark ? C.onink : C.ink2;
+  const itemColor = headerDark ? C.onDark : C.ink2;
   const cta = navigation.header.cta;
   const footer = FOOTER_STYLE[look.footer.theme];
   const footerDark = look.footer.theme !== "light";
@@ -121,8 +150,8 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
       selected={selected}
       onSelect={onSelect}
       title={linkStatus(cta.url, pageIndex) !== "ok" ? "Left out of the built site: no page at this address yet. Click to edit." : undefined}
-      className={`rounded-md px-4 py-2 text-sm font-semibold ${mobile ? "mt-4 w-full text-center" : ""} ${linkStatus(cta.url, pageIndex) !== "ok" ? "line-through opacity-40" : ""}`}
-      style={headerDark ? { background: "#ffffff", color: C.ink } : { background: C.brand, color: "#ffffff" }}
+      className={`rounded-full px-4 py-2 text-sm font-semibold ${mobile ? "mt-4 w-full text-center" : ""} ${linkStatus(cta.url, pageIndex) !== "ok" ? "line-through opacity-40" : ""}`}
+      style={headerDark ? { background: "#ffffff", color: C.ink } : { background: C.ink, color: "#ffffff" }}
     >
       {cta.label || "Button"}
     </Hit>
@@ -135,7 +164,7 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
         selected={selected}
         onSelect={onSelect}
         title={leftOut ? "Left out of the built site: no page at this address yet. Click to edit." : undefined}
-        className={`inline-flex items-center gap-1 text-sm font-medium ${mobile ? "w-full border-b py-2.5" : "rounded px-2.5 py-2"} ${leftOut ? "line-through opacity-40" : ""}`}
+        className={`inline-flex items-center gap-1 text-sm font-medium ${mobile ? "w-full border-b py-2.5" : "rounded-full px-3 py-2"} ${leftOut ? "line-through opacity-40" : ""}`}
         style={{ color: itemColor, borderColor: headerDark ? "rgb(255 255 255 / 0.15)" : C.line }}
       >
         {item.label || "Untitled"}
@@ -145,18 +174,18 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
         (mobile ? (
           <ul className="pb-1 pl-4">
             {children.map((child, c) => (
-              <li key={c} className="py-1 text-sm" style={{ color: headerDark ? C.onink : C.ink }}>
+              <li key={c} className="py-1 text-sm" style={{ color: headerDark ? C.onDark : C.ink }}>
                 {child.label}
               </li>
             ))}
           </ul>
         ) : (
           <ul
-            className="absolute left-0 top-full z-20 hidden min-w-52 rounded-lg border bg-white p-1.5 shadow-lg group-hover:block"
+            className="absolute left-0 top-full z-20 hidden min-w-52 rounded-2xl border bg-white p-1.5 shadow-xl group-hover:block"
             style={{ borderColor: C.line }}
           >
             {children.map((child, c) => (
-              <li key={c} className="rounded px-2.5 py-1.5 text-sm font-medium" style={{ color: C.ink }}>
+              <li key={c} className="rounded-xl px-2.5 py-1.5 text-sm font-medium" style={{ color: C.ink }}>
                 {child.label}
               </li>
             ))}
@@ -180,10 +209,13 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
     <div className={`overflow-hidden rounded-lg border border-zinc-300 bg-white dark:border-zinc-700 ${mobile ? "mx-auto max-w-sm" : ""}`}>
       {/* Header */}
       <div
-        className="relative border-b"
-        style={{ background: HEADER_BG[look.header.theme], borderColor: look.header.theme === "light" ? C.line : look.header.theme === "dark" ? C.ink2 : C.brandDark }}
+        className={`relative ${floating ? "p-2" : "border-b"}`}
+        style={floating ? undefined : { background: HEADER_BG[look.header.theme], borderColor: look.header.theme === "light" ? C.line : C.rule }}
       >
-        <div className="flex h-14 items-center gap-4 px-4">
+        <div
+          className={`flex h-14 items-center gap-4 px-4 ${floating ? "rounded-xl border shadow-md" : ""}`}
+          style={floating ? { background: HEADER_BG[look.header.theme], borderColor: look.header.theme === "light" ? C.line : C.rule } : undefined}
+        >
           <Hit target="header-look" selected={selected} onSelect={onSelect} title="Logo and name: change them on Site info. Click to edit the header's look.">
             <Logo brand={brand} onDark={headerDark} color={headerDark ? "#ffffff" : C.ink} />
           </Hit>
@@ -193,7 +225,7 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
               aria-label={menuOpen ? "Close the preview menu" : "Open the preview menu"}
               aria-expanded={menuOpen}
               onClick={() => setMenuOpen((open) => !open)}
-              className="ml-auto rounded border px-2 py-1.5"
+              className="ml-auto rounded-full border px-2 py-1.5"
               style={{ borderColor: headerDark ? "rgb(255 255 255 / 0.35)" : C.lineStrong }}
             >
               {[0, 1, 2].map((bar) => (
@@ -215,8 +247,8 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
             {ctaButton && <li>{ctaButton}</li>}
           </ul>
         )}
-        {look.header.sticky && (
-          <span className="pointer-events-none absolute -bottom-5 right-2 text-[0.65rem] text-zinc-400">Stays at the top when scrolling</span>
+        {headerNotes.length > 0 && (
+          <span className="pointer-events-none absolute -bottom-5 right-2 text-[0.65rem] text-zinc-400">{headerNotes.join(" · ")}</span>
         )}
       </div>
 
@@ -229,11 +261,38 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
 
       {/* Footer */}
       <div className="px-4 pb-4 pt-8 text-sm" style={{ background: footer.background, color: footer.text, borderTop: footerDark ? undefined : `1px solid ${C.line}` }}>
+        {footerCta && (
+          <Hit
+            target="footer-look"
+            selected={selected}
+            onSelect={onSelect}
+            title="Click to edit the call-to-action strip"
+            className={`mb-6 flex w-full gap-3 rounded-xl p-4 ${mobile || footerLayout === "centered" ? "flex-col items-center text-center" : "items-center justify-between"}`}
+            style={{ background: footerDark ? "rgb(255 255 255 / 0.06)" : "#ffffff", border: `1px solid ${footer.rule}` }}
+          >
+            <span>
+              {footerCta.title && <span className="block text-base font-semibold" style={{ color: footer.heading }}>{footerCta.title}</span>}
+              {footerCta.text && <span className="block text-xs">{footerCta.text}</span>}
+            </span>
+            <span
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold ${linkStatus(footerCta.url, pageIndex) !== "ok" ? "line-through opacity-50" : ""}`}
+              style={footerDark ? { background: "#ffffff", color: C.ink } : { background: C.ink, color: "#ffffff" }}
+            >
+              {footerCta.label}
+            </span>
+          </Hit>
+        )}
         <div
-          className="grid gap-6"
-          style={{ gridTemplateColumns: mobile ? "1fr" : `1.3fr repeat(${Math.max(navigation.footer.length, 1)}, minmax(0, 1fr))` }}
+          className={footerLayout === "minimal" ? "hidden" : footerLayout === "centered" ? "flex flex-col items-center gap-6 text-center" : "grid gap-6"}
+          style={footerLayout === "columns" ? { gridTemplateColumns: mobile ? "1fr" : `1.3fr repeat(${Math.max(navigation.footer.length, 1)}, minmax(0, 1fr))` } : undefined}
         >
-          <Hit target="footer-look" selected={selected} onSelect={onSelect} className="flex flex-col gap-2 self-start" title="Click to edit the footer's look">
+          <Hit
+            target="footer-look"
+            selected={selected}
+            onSelect={onSelect}
+            className={`flex flex-col gap-2 self-start ${footerLayout === "centered" ? "items-center self-center" : ""}`}
+            title="Click to edit the footer's look"
+          >
             <Logo brand={brand} onDark={footerDark} color={footer.heading} />
             {look.footer.showTagline && (
               <span className="max-w-[34ch] text-xs leading-relaxed">
@@ -248,7 +307,10 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
                 {info.site.phone}
               </span>
             )}
+            {social.length > 0 && <SocialIcons names={social} color={footer.link} rule={footer.rule} />}
           </Hit>
+          {/* Centred, the columns sit side by side under the logo. */}
+          <div className={footerLayout === "centered" ? "flex flex-wrap justify-center gap-8" : "contents"}>
           {navigation.footer.map((column, i) => {
             const links = footerLinks(column.links);
             const empty = links.every((link) => link.leftOut);
@@ -261,7 +323,7 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
                 className={`self-start ${empty ? "opacity-40" : ""}`}
                 title={empty ? "Left out of the built site: none of its links lead to a page yet. Click to edit." : undefined}
               >
-                <span className="mb-2 block text-xs font-bold" style={{ color: footer.heading }}>
+                <span className="mb-2 block text-[0.65rem] font-semibold uppercase tracking-widest" style={{ color: footer.heading }}>
                   {column.title || "Untitled column"}
                 </span>
                 <span className="grid gap-1">
@@ -275,11 +337,17 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
               </Hit>
             );
           })}
+          </div>
         </div>
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t pt-3 text-xs" style={{ borderColor: footer.rule }}>
-          <Hit target="footer-look" selected={selected} onSelect={onSelect} title="Click to edit the copyright line">
-            © {year} {look.footer.copyright || `${info.site.name}. All rights reserved.`}
+        <div
+          className={`flex flex-wrap items-center gap-3 text-xs ${footerLayout === "minimal" ? "" : "mt-6 border-t pt-3"} ${footerLayout === "centered" ? "flex-col justify-center" : "justify-between"}`}
+          style={{ borderColor: footer.rule }}
+        >
+          <Hit target="footer-look" selected={selected} onSelect={onSelect} title="Click to edit the copyright line" className="flex items-center gap-3">
+            {footerLayout === "minimal" && <Logo brand={brand} onDark={footerDark} color={footer.heading} />}
+            <span>© {year} {look.footer.copyright || `${info.site.name}. All rights reserved.`}</span>
           </Hit>
+          {footerLayout === "minimal" && social.length > 0 && <SocialIcons names={social} color={footer.link} rule={footer.rule} />}
           <Hit target="legal" selected={selected} onSelect={onSelect} className="flex flex-wrap gap-3" title="Click to edit the legal links">
             {navigation.legal.length ? (
               navigation.legal.map((link, i) => (

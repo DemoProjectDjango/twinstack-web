@@ -1,7 +1,7 @@
 import express, { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
 import { config } from "../config.js";
-import { getAnthropicKey } from "../db.js";
+import { getAnthropicKey, getClaudeModel } from "../db.js";
 import { getAccessToken, readRepoFile } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
 import {
@@ -24,6 +24,8 @@ import {
   collectWorkLog,
   createHomepage,
   createListingPage,
+  createPageAt,
+  deletePage,
   forgetMemoryLine,
   MD_EDIT_FILES,
   getOverview,
@@ -50,9 +52,10 @@ import {
 } from "../site-files.js";
 import { getStaticInfo, saveStaticInfo } from "../static-info.js";
 import { getBrand, saveBrand, saveBrandImage } from "../brand.js";
-import { APPEARANCE_MARKER, HEADER_FOOTER_FILES, getNavigation, saveNavigation } from "../navigation.js";
+import { APPEARANCE_MARKER, HEADER_FOOTER_FILES, HEADER_FOOTER_MARKERS, getNavigation, saveNavigation, setPageMenu } from "../navigation.js";
 import { SEO_FILES, SEO_MARKERS, installSeo, readSeo } from "../seo.js";
 import { readCheckReport } from "../site-check.js";
+import { readMissingPages } from "../missing-pages.js";
 import {
   WorkspaceError,
   acquire,
@@ -156,7 +159,7 @@ workspacesRouter.post(
     }
 
     const release = acquire(key, command.label);
-    const env = jobEnv(anthropicKey);
+    const env = jobEnv(anthropicKey, needsKey ? await getClaudeModel(req.user.id) : null);
     let workLog = null;
     try {
       await command.prepare?.(key, input);
@@ -230,6 +233,35 @@ workspacesRouter.post(
     const { file } = await createListingPage(key, req.body?.collection, { title: req.body?.title });
     res.json({ file, status: await getStatus(key) });
   }),
+);
+
+/* A page at the exact address a link already points to (a missing page the editor offers to make). */
+
+workspacesRouter.post(
+  "/:owner/:repo/pages/at",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const { file } = await createPageAt(key, { url: req.body?.url, title: req.body?.title });
+    res.json({ file, status: await getStatus(key) });
+  }),
+);
+
+/* Removes one page (the Pages screen's "Delete"). It can be undone on the Publish screen until it's published. */
+
+workspacesRouter.delete(
+  "/:owner/:repo/pages/source",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    await deletePage(key, req.query.file);
+    res.json({ status: await getStatus(key) });
+  }),
+);
+
+/* The pages the site links to but doesn't have, as the last build found them, with the pages nothing links to. */
+
+workspacesRouter.get(
+  "/:owner/:repo/missing-pages",
+  handle(async (req, res) => res.json(await readMissingPages(keyFor(req)))),
 );
 
 /* What the last "Build and check" found (the deploy's own check), and whether the site changed since. */
@@ -522,6 +554,17 @@ workspacesRouter.put(
   }),
 );
 
+/* A page that adds itself to the header menu, the footer or both (its frontmatter `menu`). */
+
+workspacesRouter.put(
+  "/:owner/:repo/navigation/page-menu",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    await setPageMenu(key, req.body?.file, req.body?.menu ?? null);
+    res.json({ status: await getStatus(key) });
+  }),
+);
+
 /* Brings the template's header, footer and content.js into a copy made before they had appearance settings. */
 
 workspacesRouter.post(
@@ -532,7 +575,7 @@ workspacesRouter.post(
     const files = {};
     for (const file of HEADER_FOOTER_FILES) {
       const content = await readRepoFile(accessToken, config.siteTemplate, file);
-      const marker = file.endsWith(".html") ? APPEARANCE_MARKER : "navAppearance";
+      const marker = HEADER_FOOTER_MARKERS[file] ?? APPEARANCE_MARKER;
       if (content === null || !content.includes(marker)) {
         throw new WorkspaceError(`The template (${config.siteTemplate}) doesn't have the new ${file} yet. Push it to GitHub first.`, 409);
       }

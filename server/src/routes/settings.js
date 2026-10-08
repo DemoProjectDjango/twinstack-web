@@ -1,10 +1,12 @@
 import { Router } from "express";
-import { clearAnthropicKey, getAnthropicKeyHint, setAnthropicKey } from "../db.js";
+import { CLAUDE_MODELS, isClaudeModel } from "../claude-models.js";
+import { clearAnthropicKey, getAnthropicKeyHint, getClaudeModel, setAnthropicKey, setClaudeModel } from "../db.js";
 import { requireAuth } from "../session.js";
 
 // The user's own Anthropic API key, stored encrypted in MongoDB (see db.js)
 // and handed to site scripts as ANTHROPIC_API_KEY only when a Claude command
-// runs. The browser only ever sees a masked hint.
+// runs. The browser only ever sees a masked hint. Also the Claude model the
+// account uses, for the assistant and the site's scripts alike.
 
 export const settingsRouter = Router();
 settingsRouter.use(requireAuth);
@@ -25,7 +27,18 @@ function handle(fn) {
 settingsRouter.get(
   "/",
   handle(async (req, res) => {
-    res.json({ anthropicKey: await getAnthropicKeyHint(req.user.id) });
+    res.json({ anthropicKey: await getAnthropicKeyHint(req.user.id), model: await getClaudeModel(req.user.id), models: CLAUDE_MODELS });
+  }),
+);
+
+settingsRouter.put(
+  "/model",
+  handle(async (req, res) => {
+    if (!req.is("application/json")) return res.status(415).json({ error: "Expected JSON" });
+    const model = req.body?.model;
+    if (!isClaudeModel(model)) return res.status(400).json({ error: "Choose one of the models listed." });
+    await setClaudeModel(req.user.id, model);
+    res.json({ model });
   }),
 );
 

@@ -167,11 +167,17 @@ export async function getOverview(key) {
       pageConvertStyles: editScript.includes("--keep-styles"),
       // Copies made before scripts were kept drop them and take no --js uploads.
       pageConvertScripts: editScript.includes("--js="),
+      // Copies made before a conversion could keep the page's own header and footer as the site's.
+      pageConvertChrome: editScript.includes("--with-header"),
+      // Copies whose scripts/lib/content.js reads a page's frontmatter `menu` (it adds itself to the menus).
+      pageMenus: ((await readText(path.join(dir, "scripts/lib/content.js"))) ?? "").includes("selfListed"),
       globalCss,
       mdEdit,
       seo,
       seoTemplate,
       proposalPreview: buildScript.includes("--proposal="),
+      // Copies made before Claude could design the header and footer (edit-page.js --chrome).
+      chromeDesign: editScript.includes("--chrome"),
       // Copies made before knowledge/ existed have no notes or work log for Claude.
       memory: existsSync(path.join(dir, KNOWLEDGE_SCRIPT)),
     },
@@ -317,8 +323,10 @@ export async function prepareProposalPreview(key, content) {
   if (!proposal || typeof proposal.file !== "string" || typeof proposal.content !== "string") {
     throw new WorkspaceError("There's no proposal to preview. Ask Claude again.", 409);
   }
-  if (!MARKDOWN_PAGE.test(proposal.file) || proposal.file.split("/").includes("..")) {
-    throw new WorkspaceError("Only a page under content/ can be previewed.", 400);
+  // A header and footer proposal is built with them and shown on the homepage.
+  const chrome = proposal.mode === "chrome" && proposal.file === HEADER_PARTIAL;
+  if (!chrome && (!MARKDOWN_PAGE.test(proposal.file) || proposal.file.split("/").includes(".."))) {
+    throw new WorkspaceError("Only a page under content/, or the header and footer, can be previewed.", 400);
   }
   if (content !== undefined && (typeof content !== "string" || !content.trim() || Buffer.byteLength(content) > MAX_FILE_BYTES)) {
     throw new WorkspaceError("The page content is empty or too large.", 400);
@@ -347,8 +355,15 @@ async function proposalPreview(key, proposal) {
   }
 }
 
+// A header and footer proposal (edit-page.js --chrome) writes exactly these two partials.
+export const HEADER_PARTIAL = "templates/partials/header.html";
+export const FOOTER_PARTIAL = "templates/partials/footer.html";
+// On a header or footer a conversion copied from the page (the site's scripts/lib/chrome.js COPIED_MARK).
+const COPIED_MARK = 'data-designed="copied"';
+
 /** Whether a proposal of this mode may write this file. */
 function proposalAllowed(mode, file) {
+  if (mode === "chrome") return file === HEADER_PARTIAL;
   return mode === "markdown" ? isEditableMarkdown(file) : MARKDOWN_PAGE.test(file) && !file.split("/").includes("..");
 }
 
@@ -375,10 +390,17 @@ function proposalFiles(mode, files) {
   if (!Array.isArray(files)) return [];
   const allowed =
     mode === "convert"
-      ? (f) => IMPORTED_CSS.test(f.file) || IMPORTED_JS.test(f.file) || (GLOBAL_CSS.test(f.file) && !f.file.split("/").some((seg) => seg === ".." || seg === "."))
+      ? (f) =>
+          IMPORTED_CSS.test(f.file) ||
+          IMPORTED_JS.test(f.file) ||
+          (GLOBAL_CSS.test(f.file) && !f.file.split("/").some((seg) => seg === ".." || seg === ".")) ||
+          // The page's own header and footer, copied as the site's (--with-header / --with-footer).
+          ((f.file === HEADER_PARTIAL || f.file === FOOTER_PARTIAL) && f.content.includes(COPIED_MARK))
       : mode === "edit"
         ? (f) => DATA_JSON.test(f.file) && validJson(f.content)
-        : () => false;
+        : mode === "chrome"
+          ? (f) => f.file === FOOTER_PARTIAL
+          : () => false;
   return files
     .filter((f) => typeof f?.file === "string" && typeof f.content === "string" && allowed(f))
     .filter((f) => Buffer.byteLength(f.content) <= MAX_EXTRA_BYTES)
@@ -412,7 +434,7 @@ export async function readProposal(key) {
     const proposal = JSON.parse(text);
     if (typeof proposal.file !== "string" || typeof proposal.content !== "string") return null;
     // Older copies write no mode: their proposals are always instruction edits.
-    const mode = ["generate", "convert", "markdown", "seo"].includes(proposal.mode) ? proposal.mode : "edit";
+    const mode = ["generate", "convert", "markdown", "seo", "chrome"].includes(proposal.mode) ? proposal.mode : "edit";
     const original = proposalAllowed(mode, proposal.file)
       ? await readText(inside(workspaceDir(key), proposal.file))
       : null;
@@ -761,9 +783,10 @@ export async function applyProposal(key, content) {
       generate: "turned the draft into the finished page",
       seo: "wrote the SEO title, description and focus keyphrase",
       convert: `converted ${proposal.source ?? "an HTML page"} into the page${proposal.files.length ? ", keeping its styles" : ""}`,
+      chrome: "designed the header and footer",
     };
     await logAppliedChange(key, {
-      command: { generate: "page:generate", convert: "page:convert", markdown: "md:edit", seo: "seo:claude" }[proposal.mode] ?? "page:edit",
+      command: { generate: "page:generate", convert: "page:convert", markdown: "md:edit", seo: "seo:claude", chrome: "chrome:design" }[proposal.mode] ?? "page:edit",
       file: proposal.file,
       instruction: proposal.instruction || (defaultInstruction[proposal.mode] ?? ""),
       summary: proposal.summary,
@@ -863,16 +886,17 @@ Replace this with the real content.
 `;
   }
   const lines = [
-    '<h1 class="text-hero">{{ page.title }}</h1>',
-    '<p class="mt-5 max-w-[54ch] text-lede text-ink-2">One sentence on what this page is for.</p>',
+    '<h1 class="max-w-3xl text-4xl font-semibold tracking-tight text-balance text-zinc-950 sm:text-5xl md:text-6xl">{{ page.title }}</h1>',
+    '<p class="mt-6 max-w-2xl text-lg leading-relaxed text-zinc-600">One sentence on what this page is for.</p>',
     ...(collection
       ? [
-          '<div class="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">',
+          '<div class="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">',
           `  {{# each ${collection} }}`,
-          '  <a href="{{ url }}" class="card block no-underline">',
-          '    {{# if dateFormatted }}<p class="text-sm text-muted">{{ dateFormatted }}</p>{{/ if }}',
-          '    <h2 class="text-h3 text-ink">{{ title }}</h2>',
-          '    {{# if description }}<p class="mt-2 text-muted">{{ description }}</p>{{/ if }}',
+          '  <a href="{{ url }}" class="group flex flex-col rounded-2xl border border-zinc-200 bg-white p-6 no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-lg">',
+          '    {{# if dateFormatted }}<p class="text-sm text-zinc-500">{{ dateFormatted }}</p>{{/ if }}',
+          '    <h2 class="mt-1 text-lg font-semibold text-zinc-950">{{ title }}</h2>',
+          '    {{# if description }}<p class="mt-2 text-zinc-600">{{ description }}</p>{{/ if }}',
+          '    <span class="mt-auto pt-5 text-sm font-medium text-brand">Read more <span aria-hidden="true" class="inline-block transition group-hover:translate-x-0.5">→</span></span>',
           "  </a>",
           "  {{/ each }}",
           "</div>",
@@ -882,8 +906,8 @@ Replace this with the real content.
   return `${head}description: Under 160 characters, written for search results.
 ---
 
-<section class="section-y">
-  <div class="wrap">
+<section class="relative overflow-hidden">
+  <div class="mx-auto max-w-7xl px-5 py-20 sm:px-8 md:py-28">
 ${lines.map((line) => `    ${line}`).join("\n")}
   </div>
 </section>
@@ -992,6 +1016,40 @@ export async function createListingPage(key, collection, { title } = {}) {
       return pageSkeleton({ title: title?.trim() || listing.label, slug, url: listing.url, layout, bodyIsPage: blank, collection: blank ? collection : null });
     },
     taken: (page) => `Your site already has its ${listing.label} page: "${page.title}".`,
+  });
+}
+
+/**
+ * A page at exactly the address a link points to (/about, /products/who-sees-what.html), in the
+ * pages collection with that address as its url: the homepage and a collection's listing page are
+ * made their own way. An address without an extension is a folder (/about → /about/), as the
+ * site serves it. The file is named after the address (content/pages/products-who-sees-what.md),
+ * and the title defaults to the address's last part in words.
+ */
+export async function createPageAt(key, { url, title } = {}) {
+  checkTitle(title);
+  if (typeof url !== "string" || !/^\/[\w\-./]*$/.test(url) || url.split("/").some((seg) => seg === "." || seg === "..") || url.includes("//")) {
+    throw new WorkspaceError("That isn't a web address on this site (like /about or /services/design.html).", 400);
+  }
+  const extension = path.posix.extname(url).toLowerCase();
+  if (extension && extension !== ".html") throw new WorkspaceError("Only a page's address can be made into a page, not a file's.", 400);
+  const address = addressOf(url);
+  if (address === "/") return createHomepage(key, { title });
+  const site = await readSiteConfig(key);
+  const listing = Object.keys(site.collections ?? {}).map((name) => listingOf(site, name)).find((l) => l && addressOf(l.url) === address);
+  if (listing) return createListingPage(key, listing.collection, { title });
+
+  const parts = address.replace(/\.html$/, "").split("/").filter(Boolean);
+  const slug = parts.join("-").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "page";
+  const words = (parts.at(-1) ?? "page").replace(/[-_]+/g, " ").trim();
+  const name = title?.trim() || words.charAt(0).toUpperCase() + words.slice(1);
+  return addAddressedPage(key, {
+    label: `adding the page at ${address}`,
+    url: address,
+    names: [slug, `${slug}-page`, `${slug}-2`, `${slug}-3`],
+    predefinedPath: `${slug}.md`,
+    skeleton: (file) => pageSkeleton({ title: name, slug: file, url: address, layout: null, bodyIsPage: bodyIsPage(workspaceDir(key), site, null) }),
+    taken: (page) => `"${page.title}" is already at ${address}.`,
   });
 }
 

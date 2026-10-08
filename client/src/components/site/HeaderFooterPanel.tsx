@@ -1,12 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import {
   ApiError,
   api,
   workspacePath,
   type BrandInfo,
+  type FooterLayout,
   type FooterTheme,
+  type HeaderStyle,
   type HeaderTheme,
   type MenuLayout,
   type Navigation,
@@ -18,6 +21,7 @@ import {
 import { confirmModal } from "@/lib/confirm";
 import { HeaderFooterPreview } from "./HeaderFooterPreview";
 import { JobLog } from "./JobLog";
+import { ProposalReview } from "./ProposalReview";
 import { kindOf, linkStatus, move, pageIndex, withKind, type ItemKind, type PageIndex } from "./header-footer";
 import { useSite } from "./site-context";
 import { Badge, Button, ErrorText, Field, Notice, Section, inputClass } from "./ui";
@@ -189,6 +193,12 @@ export function HeaderFooterPanel() {
 
   const look = draft.appearance;
   const styled = info.supportsAppearance;
+  // A header or footer Claude designed has its own colours and layout: those switches don't apply.
+  const designedHeader = Boolean(info.designed?.header);
+  const designedFooter = Boolean(info.designed?.footer);
+  // Copied as it was from a converted page: fixed HTML that none of these settings change.
+  const copied = Boolean(info.copied?.header || info.copied?.footer);
+  const copiedWhat = info.copied?.header && info.copied?.footer ? "header and footer" : info.copied?.header ? "header" : "footer";
   const disabled = saving || installing;
   const defaultCollection = info.collections[0]?.name ?? "";
   const toggle = (key: string) => setOpen((current) => (current === key ? null : key));
@@ -235,7 +245,11 @@ export function HeaderFooterPanel() {
 
       <Section
         title="Preview"
-        description="An approximation in the template's colours. Links to pages the site doesn't have yet are struck through: the build leaves them out until those pages exist."
+        description={
+          designedHeader || designedFooter
+            ? "What the menu and footer hold, in the template's colours rather than Claude's design (Home shows the real look). Links to pages the site doesn't have yet are struck through: the build leaves them out until those pages exist."
+            : "An approximation in the template's colours. Links to pages the site doesn't have yet are struck through: the build leaves them out until those pages exist."
+        }
       >
         <div className="mb-3 flex gap-1" role="group" aria-label="Preview size">
           <Segmented
@@ -259,7 +273,26 @@ export function HeaderFooterPanel() {
         />
       </Section>
 
-      {!styled && (
+      <ClaudeDesign designed={designedHeader || designedFooter} dirty={dirty} />
+
+      {copied ? (
+        <Notice>
+          Your {copiedWhat} {info.copied?.header && info.copied?.footer ? "were" : "was"} copied exactly as{" "}
+          {info.copied?.header && info.copied?.footer ? "they were" : "it was"}
+          {info.copied?.from ? ` on ${info.copied.from}` : " on a page you brought in"}, and {info.copied?.header && info.copied?.footer ? "show" : "shows"} on
+          every page. The menu, footer links and colours below don&apos;t change {info.copied?.header && info.copied?.footer ? "them" : "it"}: bring the page
+          in again to update {info.copied?.header && info.copied?.footer ? "them" : "it"}, or go back to the standard header and footer, which use these
+          settings.{" "}
+          <Button
+            variant="ghost"
+            className="ml-1 underline"
+            disabled={disabled || busy}
+            onClick={installTemplates}
+          >
+            {installing ? "Switching…" : "Use the standard header and footer"}
+          </Button>
+        </Notice>
+      ) : !styled ? (
         <Notice tone="warning">
           This site&apos;s header and footer templates are older than the colour and layout settings, so those settings are
           switched off. You can still edit every menu and link.{" "}
@@ -267,7 +300,15 @@ export function HeaderFooterPanel() {
             {installing ? "Updating…" : "Update the header and footer templates"}
           </Button>
         </Notice>
-      )}
+      ) : info.supportsStyles === false && !designedHeader && !designedFooter ? (
+        <Notice>
+          Newer header and footer styles are available: a floating or see-through header, footer layouts, social icons and a
+          call-to-action strip.{" "}
+          <Button variant="ghost" className="ml-1 underline" disabled={disabled || busy} onClick={installTemplates}>
+            {installing ? "Updating…" : "Update the header and footer templates"}
+          </Button>
+        </Notice>
+      ) : null}
       {installed && (
         <Notice tone="success">
           {installed.length
@@ -280,6 +321,14 @@ export function HeaderFooterPanel() {
         {/* ------------------------------------------------------------ header */}
         <Section title="Header" description="The bar at the top of every page.">
           <div id="hf-header-look" className={`space-y-4 rounded-md p-1 ${flash(selected, "header-look")}`}>
+            {designedHeader ? (
+              <Notice>
+                Claude designed this header, so its colours, where the menu sits and whether it stays at the top are part of
+                the design. To change them, ask Claude in &quot;Design with Claude&quot; above. The menu, button and logo below
+                are still yours to edit.
+              </Notice>
+            ) : (
+            <>
             <Field label="Colour">
               <Segmented<HeaderTheme>
                 value={look.header.theme}
@@ -310,6 +359,35 @@ export function HeaderFooterPanel() {
               onChange={(sticky) => edit((n) => void (n.appearance.header.sticky = sticky))}
               label="Keep the header at the top of the screen while scrolling"
             />
+            {info.supportsStyles && (
+              <>
+                <Field label="Style">
+                  <Segmented<HeaderStyle>
+                    value={look.header.style ?? "bar"}
+                    disabled={!styled || disabled}
+                    onChange={(style) => edit((n) => void (n.appearance.header.style = style))}
+                    options={[
+                      { value: "bar", label: "Full-width bar" },
+                      { value: "floating", label: "Floating, rounded" },
+                    ]}
+                  />
+                </Field>
+                <Check
+                  checked={look.header.transparent === true}
+                  disabled={!styled || disabled}
+                  onChange={(on) => edit((n) => void (n.appearance.header.transparent = on))}
+                  label="See-through over the top of the page until it's scrolled (best when pages start with a large image or colour)"
+                />
+                <Check
+                  checked={look.header.shrink === true}
+                  disabled={!styled || disabled}
+                  onChange={(on) => edit((n) => void (n.appearance.header.shrink = on))}
+                  label="Get lower once the page is scrolled"
+                />
+              </>
+            )}
+            </>
+            )}
             <p className="text-xs text-zinc-500">
               The logo is set in the Logo section above, and the site name in{" "}
               <button type="button" className="underline" onClick={() => showSection("details")}>
@@ -401,6 +479,9 @@ export function HeaderFooterPanel() {
         {/* ------------------------------------------------------------ footer */}
         <Section title="Footer" description="The block at the bottom of every page.">
           <div id="hf-footer-look" className={`space-y-4 rounded-md p-1 ${flash(selected, "footer-look")}`}>
+            {designedFooter ? (
+              <p className="text-sm text-zinc-500">Claude designed this footer, so its colours are part of the design.</p>
+            ) : (
             <Field label="Colour">
               <Segmented<FooterTheme>
                 value={look.footer.theme}
@@ -413,7 +494,30 @@ export function HeaderFooterPanel() {
                 ]}
               />
             </Field>
+            )}
+            {info.supportsStyles && !designedFooter && (
+              <Field label="Layout">
+                <Segmented<FooterLayout>
+                  value={look.footer.layout ?? "columns"}
+                  disabled={!styled || disabled}
+                  onChange={(layout) => edit((n) => void (n.appearance.footer.layout = layout))}
+                  options={[
+                    { value: "columns", label: "Logo and columns" },
+                    { value: "centered", label: "Centred" },
+                    { value: "minimal", label: "One line" },
+                  ]}
+                />
+              </Field>
+            )}
             <div className="space-y-1.5">
+              {info.supportsStyles && (
+                <Check
+                  checked={look.footer.showSocial !== false}
+                  disabled={!styled || disabled}
+                  onChange={(on) => edit((n) => void (n.appearance.footer.showSocial = on))}
+                  label={`Show social media icons${info.site.social?.length ? "" : " (none are set yet)"}`}
+                />
+              )}
               <Check
                 checked={look.footer.showTagline}
                 disabled={!styled || disabled}
@@ -444,6 +548,56 @@ export function HeaderFooterPanel() {
                 className={inputClass}
               />
             </Field>
+            {info.supportsStyles && !designedFooter && (
+              <div className="space-y-3">
+                <Check
+                  checked={Boolean(look.footer.cta)}
+                  disabled={!styled || disabled}
+                  onChange={(on) =>
+                    edit((n) => void (n.appearance.footer.cta = on ? { title: "Ready to get started?", text: "", label: "Get in touch", url: "" } : null))
+                  }
+                  label="Show a call-to-action strip above the footer"
+                />
+                {look.footer.cta && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Heading">
+                      <input
+                        value={look.footer.cta.title ?? ""}
+                        maxLength={100}
+                        disabled={disabled}
+                        onChange={(e) => edit((n) => void (n.appearance.footer.cta!.title = e.target.value))}
+                        className={inputClass}
+                      />
+                    </Field>
+                    <Field label="Sentence under it">
+                      <input
+                        value={look.footer.cta.text ?? ""}
+                        maxLength={200}
+                        disabled={disabled}
+                        onChange={(e) => edit((n) => void (n.appearance.footer.cta!.text = e.target.value))}
+                        className={inputClass}
+                      />
+                    </Field>
+                    <Field label="Button text">
+                      <input
+                        value={look.footer.cta.label}
+                        maxLength={40}
+                        disabled={disabled}
+                        onChange={(e) => edit((n) => void (n.appearance.footer.cta!.label = e.target.value))}
+                        className={inputClass}
+                      />
+                    </Field>
+                    <LinkField
+                      label="Goes to"
+                      value={look.footer.cta.url}
+                      index={index}
+                      disabled={disabled}
+                      onChange={(url) => edit((n) => void (n.appearance.footer.cta!.url = url))}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <h4 className="mb-2 mt-6 text-sm font-semibold">Link columns</h4>
@@ -515,9 +669,87 @@ export function HeaderFooterPanel() {
         </Section>
       </div>
 
+      {info.supportsStyles && !copied && <SelfListedPages info={info} disabled={disabled || busy} onChanged={() => load()} />}
+
       <NewSection dirty={dirty} />
       {job?.command === "nav-add" && <JobLog />}
     </div>
+  );
+}
+
+type PageMenu = "header" | "footer" | "both" | null;
+
+/**
+ * Pages that put themselves in the menu or footer (their frontmatter `menu`), after the links set
+ * above: a new page ticked here shows up without editing the menu. Saved straight away, page by page.
+ */
+function SelfListedPages({ info, disabled, onChanged }: { info: NavigationInfo; disabled: boolean; onChanged: () => Promise<void> | void }) {
+  const { owner, repo, setStatus } = useSite();
+  const [working, setWorking] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const pages = info.pages.filter((page) => !page.draft && page.file);
+
+  async function set(file: string, menu: PageMenu) {
+    setWorking(file);
+    setError(null);
+    try {
+      const result = await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/navigation/page-menu"), { method: "PUT", body: { file, menu } });
+      setStatus(result.status);
+      await onChanged();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  const has = (menu: PageMenu, where: "header" | "footer") => menu === where || menu === "both";
+  const next = (menu: PageMenu, where: "header" | "footer", on: boolean): PageMenu => {
+    const header = where === "header" ? on : has(menu, "header");
+    const footer = where === "footer" ? on : has(menu, "footer");
+    return header && footer ? "both" : header ? "header" : footer ? "footer" : null;
+  };
+
+  return (
+    <Section
+      title="Pages that add themselves"
+      description="Tick a page to put it in the menu or the footer automatically, after the links above. It keeps its place when you rename it, and drops out if it's hidden or removed. Footer pages go in the first column."
+    >
+      {pages.length === 0 ? (
+        <p className="text-sm text-zinc-500">Your site has no pages yet.</p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-zinc-500">
+              <th className="py-1 font-medium">Page</th>
+              <th className="w-20 py-1 text-center font-medium">Menu</th>
+              <th className="w-20 py-1 text-center font-medium">Footer</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pages.map((page) => (
+              <tr key={page.file} className="border-t border-zinc-100 dark:border-zinc-800">
+                <td className="py-1.5">
+                  {page.title} <span className="font-mono text-xs text-zinc-500">{page.url}</span>
+                </td>
+                {(["header", "footer"] as const).map((where) => (
+                  <td key={where} className="text-center">
+                    <input
+                      type="checkbox"
+                      aria-label={`${page.title} in the ${where === "header" ? "menu" : "footer"}`}
+                      checked={has(page.menu ?? null, where)}
+                      disabled={disabled || working !== null}
+                      onChange={(e) => void set(page.file!, next(page.menu ?? null, where, e.target.checked))}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {error ? <ErrorText error={error} /> : null}
+    </Section>
   );
 }
 
@@ -1020,6 +1252,61 @@ function NewSection({ dirty }: { dirty: boolean }) {
           Add section
         </Button>
       </form>
+    </Section>
+  );
+}
+
+/**
+ * Claude designs the header and footer as a pair (the copy's edit-page.js --chrome), shown on
+ * every page. The proposal is reviewed here, built on the homepage, before it's kept.
+ */
+function ClaudeDesign({ designed, dirty }: { designed: boolean; dirty: boolean }) {
+  const { busy, run, overview, claude, job } = useSite();
+  const [direction, setDirection] = useState("");
+  const supported = Boolean(overview?.features.chromeDesign);
+  const running = job?.command === "chrome-design" && job.status === "running";
+
+  return (
+    <Section
+      title="Design with Claude"
+      description="Claude designs the header and footer together, in the look of your pages, and every page shows them. The menu, button, logo and copyright stay as you set them on this screen."
+    >
+      {!supported ? (
+        <Notice>This site&apos;s tools are older than this feature, so Claude can&apos;t design its header and footer yet.</Notice>
+      ) : (
+        <div className="space-y-3">
+          {!claude.ready && (
+            <Notice>
+              This needs Claude.{" "}
+              <Link href={claude.setupHref} className="font-medium underline">
+                {claude.setupLabel}
+              </Link>
+            </Notice>
+          )}
+          <Field label="What you'd like (optional)" hint="For example: a dark header with the phone number, or a footer with a big call to action.">
+            <textarea
+              value={direction}
+              onChange={(e) => setDirection(e.target.value)}
+              rows={3}
+              maxLength={4000}
+              disabled={busy || !claude.ready}
+              className={inputClass}
+            />
+          </Field>
+          {dirty && <Notice tone="warning">Save your changes first: Claude designs around what&apos;s saved.</Notice>}
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              variant="primary"
+              disabled={busy || !claude.ready || dirty}
+              onClick={() => void run("chrome-design", { ...(direction.trim() && { instruction: direction.trim() }), dryRun: true })}
+            >
+              {running ? "Claude is designing…" : designed ? "Redesign with Claude" : "Design with Claude"}
+            </Button>
+            {running && <span className="text-sm text-zinc-500">This usually takes a minute or two.</span>}
+          </div>
+          <ProposalReview chrome />
+        </div>
+      )}
     </Section>
   );
 }

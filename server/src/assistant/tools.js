@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { addAttachmentToSite, readAttachmentMeta, sitePathFor } from "./attachments.js";
 import { getBrand, saveBrand } from "../brand.js";
 import { getNavigation, saveNavigation } from "../navigation.js";
@@ -161,7 +162,7 @@ const TOOLS = [
   // ---------------------------------------------------------------- change
   tool(
     "edit_page",
-    "Proposes changing one existing page's wording or layout. A writer that knows the site's house style rewrites the page from your instruction, and the owner sees the finished page before keeping it. The writer can't see this conversation: make the instruction complete and self-contained, with every fact, name, number and the tone the owner gave you.",
+    "Proposes changing one existing page's wording or layout. A writer that knows the site's house style rewrites the page from your instruction, and the finished page is kept. The writer can't see this conversation: make the instruction complete and self-contained, with every fact, name, number and the tone the owner gave you.",
     {
       file: { type: "string", description: "The page's file, e.g. content/pages/about.md" },
       instruction: { type: "string", description: "What to change, fully specified (up to 4000 characters)." },
@@ -174,12 +175,16 @@ const TOOLS = [
   ),
   tool(
     "create_page",
-    "Proposes adding a new page. With a brief, the writer then writes it and the owner sees it before keeping it; without one it starts as an empty page. Types: page (About, Contact…), post (dated blog/news article), service, product, case (case study), homepage (the page at the site's main address, only when the site has none), listing (a collection's own page that lists its pages, such as the Blog page; give collection). slug and hidden don't apply to homepage and listing.",
+    "Proposes adding a new page. With a brief, the writer then writes it and it is kept; without one it starts as an empty page. Types: page (About, Contact…), post (dated blog/news article), service, product, case (case study), homepage (the page at the site's main address, only when the site has none), listing (a collection's own page that lists its pages, such as the Blog page; give collection). slug and hidden don't apply to homepage and listing.",
     {
       type: { type: "string", enum: CREATE_TYPES },
       collection: { type: "string", description: "For type listing: the collection it lists, by name from get_site_overview (e.g. blog)." },
       title: { type: "string" },
       slug: { type: "string", description: "Optional web address: lowercase letters, numbers and dashes. Made from the title when left out." },
+      address: {
+        type: "string",
+        description: "For type page only: the exact address the page must have, when a link already points there (e.g. /pricing or /services/design.html). Overrides slug. Use it for missing pages the site links to.",
+      },
       hidden: { type: "boolean", description: "Keep it off the published site until the owner unhides it." },
       brief: { type: "string", description: "Optional: what the page should say, complete and self-contained (facts, names, tone). Up to 4000 characters." },
       ...imagesField,
@@ -275,10 +280,21 @@ const TOOLS = [
   ),
   tool(
     "update_menu_and_footer",
-    "Proposes the complete new navigation object (read_navigation first, change only what's asked, keep every other field and item as it is). Links start with /, #, mailto:, tel: or https://. A header item is a link ({label, url}), a dropdown ({label, children: [links]}) or a collection menu ({label, type: \"collection\", collection, limit}).",
+    "Proposes the complete new navigation object (read_navigation first, change only what's asked, keep every other field and item as it is). Links start with /, #, mailto:, tel: or https://. A header item is a link ({label, url}), a dropdown ({label, children: [links]}) or a collection menu ({label, type: \"collection\", collection, limit}). appearance.header: theme light|dark|brand, layout right|center|left, sticky, style bar|floating, transparent (see-through over the top of the page until scrolled), shrink (lower once scrolled). appearance.footer: theme dark|light|brand, layout columns|centered|minimal, showTagline, showContact, showSocial (icons for the social links in Site details), cta {title, text, label, url} (a call-to-action strip above the footer; null for none), copyright. When read_navigation says supportsStyles is false the site's templates predate style, transparent, shrink, layout, showSocial and cta; when copied says a header or footer was copied from a page, the menu and appearance don't change it.",
     { navigation: { type: "object", description: "The full navigation: header {items, cta}, footer [columns], legal [links], appearance." }, ...summaryField, ...continueField },
     ["navigation", "summary"],
     { kind: "change", runs: "server", title: "Change the menu and footer" },
+  ),
+  tool(
+    "design_header_and_footer",
+    "Proposes a new design for the header and footer, which every page shows. A designer that knows the site designs both together in the look of its pages, and they are kept. Their content stays the site's: the menu, button and footer links (update_menu_and_footer), logo and copyright. Use it to change how they look; the designer can't see this conversation, so put the look the owner described in the instruction.",
+    {
+      instruction: { type: "string", description: "Optional: the look wanted, complete and self-contained (up to 4000 characters). Leave out to match the site's pages." },
+      ...summaryField,
+      ...continueField,
+    },
+    ["summary"],
+    { kind: "change", runs: "client", title: "Design the header and footer" },
   ),
   tool(
     "update_site_details",
@@ -444,6 +460,8 @@ async function runRead(name, input, key) {
       return {
         navigation: info.navigation,
         appearanceSupported: info.supportsAppearance,
+        supportsStyles: info.supportsStyles,
+        copied: info.copied,
         collections: info.collections,
         pages: info.pages,
       };
@@ -516,6 +534,13 @@ async function prepareChange(name, input, key) {
   const base = { summary, continueAfter };
 
   switch (name) {
+    case "design_header_and_footer": {
+      const overview = await getOverview(key);
+      if (!overview.features?.chromeDesign) {
+        throw new ToolInputError("This site's tools are older than header and footer design, so it can't be done here. Tell the owner.");
+      }
+      return { ...base, input: { instruction: str(input, "instruction", { optional: true }) }, meta: {} };
+    }
     case "edit_page": {
       const file = pageFileOf(input);
       const page = await readPage(key, file);
@@ -543,6 +568,16 @@ async function prepareChange(name, input, key) {
         const existing = overview.collections.flatMap((c) => c.pages).find((p) => p.url === url);
         if (existing) throw new ToolInputError(`The site already has ${input.type === "homepage" ? "a homepage" : "that listing page"}: ${existing.file}. Use edit_page to change it.`);
         return { ...base, input: { type: input.type, collection, title, slug: null, hidden: false, brief, images: await imagesOf(input, key) }, meta: { address: url } };
+      }
+      const address = str(input, "address", { max: 200, optional: true })?.trim();
+      if (address) {
+        if (input.type !== "page") throw new ToolInputError("address is only for type page.");
+        if (!/^\/[\w\-./]*$/.test(address) || address.includes("..") || address.includes("//")) throw new ToolInputError("address must be a path on this site, like /pricing or /services/design.html.");
+        const overview = await getOverview(key);
+        const folder = (u) => (u.endsWith("/") || path.posix.extname(u) ? u : `${u}/`);
+        const existing = overview.collections.flatMap((c) => c.pages).find((p) => p.url && folder(p.url) === folder(address));
+        if (existing) throw new ToolInputError(`${existing.file} is already at ${address}. Use edit_page to change it.`);
+        return { ...base, input: { type: "page", title, slug: null, address, hidden: false, brief, images: await imagesOf(input, key) }, meta: { address } };
       }
       const slug = str(input, "slug", { max: 70, optional: true });
       if (slug && !/^[a-z0-9-]+$/.test(slug)) throw new ToolInputError("slug may only use lowercase letters, numbers and dashes.");

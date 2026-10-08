@@ -23,6 +23,10 @@ function titles(pages: ProblemPage[]) {
   return shown.length > 1 ? `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}` : (shown[0] ?? "A page");
 }
 
+/** "Create the page" at exactly a link's address, for a link to a page (not to a file). */
+const createAt = (target: string, href: string): Fix[] =>
+  target === "page" ? [{ label: `Create ${href}`, add: { path: "/pages/at", body: { url: href }, name: `The page at ${href}` } }] : [];
+
 const linkTo = (pages: ProblemPage[]) => `${titles(pages)} ${new Set(pages.map((p) => p.file)).size === 1 ? "links" : "link"} to it`;
 
 /** The problems in plain words, grouped by what fixes them: the missing page first, then each page to change. */
@@ -55,13 +59,17 @@ function groupProblems(problems: SiteProblem[]): Group[] {
         } else if (problem.inPageText && page) {
           add(`text:${page.file}:${href}`, () => ({
             text: `${quoted(page.title)} links to ${href}, which ${problem.target === "file" ? "isn't a file on your site" : "isn't a page on your site"}.`,
-            fixes: [{ label: `Open ${quoted(page.title)}`, open: page.file }],
+            // Either make the page the link expects, or change the link.
+            fixes: [...createAt(problem.target, href), { label: `Open ${quoted(page.title)}`, open: page.file }],
           }));
         } else {
           // The logo, menu, footer, a layout or the homepage's sections make this link, on every page they're on.
           add(
             `design:${href}`,
-            () => ({ text: `Your site's design links to ${href}, which ${problem.target === "file" ? "isn't a file on your site" : "isn't a page on your site"}.`, fixes: [{ label: "Open Design", screen: "design" }] }),
+            () => ({
+              text: `Your site's design links to ${href}, which ${problem.target === "file" ? "isn't a file on your site" : "isn't a page on your site"}.`,
+              fixes: [...createAt(problem.target, href), { label: "Open Design", screen: "design" }],
+            }),
             page,
           );
         }

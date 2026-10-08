@@ -14,6 +14,7 @@ import { ChangesPanel } from "./ChangesPanel";
 import { HeaderFooterPanel } from "./HeaderFooterPanel";
 import { HomePanel } from "./HomePanel";
 import { MemoryPanel } from "./MemoryPanel";
+import { MissingPages } from "./MissingPages";
 import { PagesPanel } from "./PagesPanel";
 import { SchedulePanel } from "./SchedulePanel";
 import { SeoPanel } from "./SeoPanel";
@@ -479,6 +480,8 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
           <div className="min-w-0 space-y-6">
             <SiteNotices onReset={resetToDefault} />
             <ErrorText error={runError} />
+            {/* After every build, on every screen: links to pages that don't exist yet, with a way to make them. */}
+            {!status.needsInstall && <MissingPages />}
             {section !== "tools" && <AskClaude />}
 
             {section === "home" && <HomePanel />}

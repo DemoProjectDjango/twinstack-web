@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { MongoClient, ObjectId } from "mongodb";
+import { DEFAULT_MODEL, isClaudeModel } from "./claude-models.js";
 import { config } from "./config.js";
 
 // MongoDB holds everything that outlives a browser session:
@@ -198,6 +199,18 @@ export async function getAnthropicKeyHint(id) {
 export async function getAnthropicKey(id) {
   const doc = await users().findOne({ _id: objectId(id) }, { projection: { anthropicKey: 1 } });
   return tryDecrypt(doc?.anthropicKey, `anthropicKey:${id}`, `Anthropic key for account ${id}`);
+}
+
+/* ------------------------------------------------------------ claude model */
+
+export async function setClaudeModel(id, model) {
+  await users().updateOne({ _id: objectId(id) }, { $set: { claudeModel: model } });
+}
+
+/** The account's chosen Claude model, or the default when it hasn't chosen one (or chose one no longer offered). */
+export async function getClaudeModel(id) {
+  const doc = await users().findOne({ _id: objectId(id) }, { projection: { claudeModel: 1 } });
+  return isClaudeModel(doc?.claudeModel) ? doc.claudeModel : DEFAULT_MODEL;
 }
 
 /* ------------------------------------------------------------ site copies */

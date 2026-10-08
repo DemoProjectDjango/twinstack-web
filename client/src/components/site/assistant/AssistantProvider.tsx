@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   assistantApi,
   attachmentUrl,
@@ -49,7 +49,30 @@ type AssistantValue = {
   /** Applies a message's open proposals in order, pausing when a page waits to be kept. */
   applyAll: (entry: DisplayEntry) => void;
   applyingAll: boolean;
+  /** Claude's changes are carried out (and its pages kept) as soon as its answer ends, with no buttons to press. */
+  autoApply: boolean;
+  setAutoApply: (on: boolean) => void;
 };
+
+// The owner's choice, per browser. Automatic unless they turned it off.
+const AUTO_APPLY_KEY = "twinstack:assistant-auto-apply";
+const AUTO_APPLY_EVENT = "twinstack:assistant-auto-apply";
+function readAutoApply() {
+  try {
+    return window.localStorage.getItem(AUTO_APPLY_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+/** Changes from this tab (the event) and from other tabs (storage). */
+function subscribeAutoApply(onChange: () => void) {
+  window.addEventListener(AUTO_APPLY_EVENT, onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    window.removeEventListener(AUTO_APPLY_EVENT, onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
 
 const AssistantCtx = createContext<AssistantValue | null>(null);
 
@@ -80,6 +103,20 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
   const [queued, setQueued] = useState<string[]>([]);
   // The assistant messages whose proposals have already led to an automatic "carry on".
   const continued = useRef(new Set<string>());
+  // Rendered on the server as automatic (the default), then read from this browser.
+  const autoApply = useSyncExternalStore(subscribeAutoApply, readAutoApply, () => true);
+  const setAutoApply = useCallback((on: boolean) => {
+    try {
+      window.localStorage.setItem(AUTO_APPLY_KEY, on ? "on" : "off");
+    } catch {
+      // Private windows may refuse; then the switch can't be changed.
+    }
+    window.dispatchEvent(new Event(AUTO_APPLY_EVENT));
+  }, []);
+  // Answers asked for in this browser tab (a message's entry id is its turn's id): only these are
+  // carried out by themselves, never old proposals found when the conversation loads.
+  const startedTurns = useRef(new Set<string>());
+  const autoQueued = useRef(new Set<string>());
 
   const load = useCallback(async () => {
     try {
@@ -139,6 +176,7 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
       setOpen(true);
       try {
         const result = await assistantApi.send(owner, repo, { ...body, context });
+        if (result.turn?.id) startedTurns.current.add(result.turn.id);
         setConversation(result.conversation);
         setTurn(result.turn);
         return true;
@@ -231,7 +269,8 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
     async (action: AssistantAction) => {
       const input = action.input as Record<string, never>;
       // Only one page preview can wait at a time: it's the same slot the page editor uses.
-      const writes = action.tool === "edit_page" || action.tool === "convert_page_from_html" || (action.tool === "create_page" && input.brief);
+      const writes =
+        action.tool === "edit_page" || action.tool === "convert_page_from_html" || action.tool === "design_header_and_footer" || (action.tool === "create_page" && input.brief);
       if (writes && Object.values(actions).some((a) => a.status === "ready" && a.id !== action.id)) {
         throw new Error("Keep or throw away the page that's waiting first.");
       }
@@ -243,6 +282,17 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
           await writePage(input.file, input.instruction, images);
           await record(action, "ready", "The new version is ready to look at.");
           return;
+        case "design_header_and_footer": {
+          // The same preview as the Design screen's "Design with Claude".
+          const direction = typeof input.instruction === "string" ? String(input.instruction).trim() : "";
+          const job = await runAndWait("chrome-design", direction ? { instruction: direction, dryRun: true } : { dryRun: true });
+          if (job.status !== "succeeded") throw new Error(`Claude couldn't design the header and footer.
+${tail(job.output)}`);
+          const { proposal } = await api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal"));
+          if (proposal?.mode !== "chrome") throw new Error("Claude didn't come back with a new header and footer.");
+          await record(action, "ready", "The new header and footer are ready to look at, on the Design screen.");
+          return;
+        }
         case "create_page": {
           let file: string | undefined;
           if (input.type === "homepage" || input.type === "listing") {
@@ -250,6 +300,14 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
             const made = await api<{ file: string; status: WorkspaceStatus }>(workspacePath(owner, repo, input.type === "homepage" ? "/pages/homepage" : "/pages/listing"), {
               method: "POST",
               body: { title: input.title, ...(input.type === "listing" && { collection: input.collection }) },
+            });
+            setStatus(made.status);
+            file = made.file;
+          } else if (typeof input.address === "string" && input.address) {
+            // A page at exactly the address a link already points to.
+            const made = await api<{ file: string; status: WorkspaceStatus }>(workspacePath(owner, repo, "/pages/at"), {
+              method: "POST",
+              body: { url: input.address, title: input.title },
             });
             setStatus(made.status);
             file = made.file;
@@ -336,9 +394,11 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
   );
 
   const apply = useCallback(
-    async (action: AssistantAction) => {
-      if (action.tool === "delete_page" && !(await confirmModal(`Remove "${(action.meta.title as string) ?? action.input.file}" from your site? You can still undo it on the Publish screen until you publish.`, { title: "Remove page", confirmLabel: "Remove page", danger: true }))) return;
+    async (action: AssistantAction, { confirmed = false }: { confirmed?: boolean } = {}) => {
+      // Run automatically, the owner's request is the confirmation (Claude only removes or publishes when asked).
+      if (!confirmed && action.tool === "delete_page" && !(await confirmModal(`Remove "${(action.meta.title as string) ?? action.input.file}" from your site? You can still undo it on the Publish screen until you publish.`, { title: "Remove page", confirmLabel: "Remove page", danger: true }))) return;
       if (
+        !confirmed &&
         action.tool === "publish_changes" &&
         !(await confirmModal(
           problemsLeft
@@ -425,17 +485,38 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
     [owner, repo, record, setBusy],
   );
 
+  // Whether the queue was started by itself (automatic changes) rather than by "Apply all".
+  const [queueAuto, setQueueAuto] = useState(false);
   const applyAll = useCallback(
     (entry: DisplayEntry) => {
       if (entry.role !== "assistant") return;
       const ids = entry.parts.flatMap((p) => (p.type === "action" && actions[p.id]?.status === "proposed" ? [p.id] : []));
+      setQueueAuto(false);
       setQueued(ids);
     },
     [actions],
   );
 
-  // "Apply all" works through the queue one proposal at a time, skipping settled ones. A page
-  // waiting to be kept pauses it (the owner decides); a failure stops it.
+  // With automatic changes on, an answer asked for in this tab is carried out as soon as it ends:
+  // its proposals go into the queue in order. A stopped or failed answer's are left for the owner.
+  useEffect(() => {
+    if (!autoApply || !conversation || !turn || turn.status !== "done") return;
+    const last = conversation.display.at(-1);
+    if (!last || last.role !== "assistant" || last.id !== turn.id) return;
+    if (!startedTurns.current.has(last.id) || autoQueued.current.has(last.id)) return;
+    const ids = last.parts.flatMap((p) => (p.type === "action" && actions[p.id]?.status === "proposed" ? [p.id] : []));
+    const timer = setTimeout(() => {
+      autoQueued.current.add(last.id);
+      if (!ids.length) return;
+      setQueueAuto(true);
+      setQueued(ids);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [autoApply, conversation, turn, actions]);
+
+  // The queue works through one proposal at a time, skipping settled ones; a failure stops it. A
+  // page waiting to be kept pauses "Apply all" (the owner decides), but is kept by itself when the
+  // queue is automatic.
   const queueHead = useMemo(() => {
     for (const id of queued) {
       const a = actions[id];
@@ -443,12 +524,17 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
     }
     return null;
   }, [queued, actions]);
-  const applyingAll = queueHead !== null && queueHead.status !== "failed";
+  const applyingAll = queueHead !== null && queueHead.status !== "failed" && (queueHead.status !== "ready" || queueAuto);
   useEffect(() => {
-    if (queueHead?.status !== "proposed" || working.size) return;
-    const timer = setTimeout(() => void apply(queueHead), 0);
+    if (!queueHead || working.size) return;
+    const auto = queueAuto && autoApply;
+    let next: (() => Promise<void>) | null = null;
+    if (queueHead.status === "proposed") next = () => apply(queueHead, { confirmed: auto });
+    else if (queueHead.status === "ready" && auto) next = () => keep(queueHead);
+    if (!next) return;
+    const timer = setTimeout(() => void next(), 0);
     return () => clearTimeout(timer);
-  }, [queueHead, working, apply]);
+  }, [queueHead, queueAuto, autoApply, working, apply, keep]);
 
   // When the newest message's proposals are all settled and one of them asked to continue (pages
   // to write once they exist, say), Claude carries on by itself.
@@ -486,6 +572,8 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
     throwAway,
     applyAll,
     applyingAll,
+    autoApply,
+    setAutoApply,
   };
 
   return <AssistantCtx.Provider value={value}>{children}</AssistantCtx.Provider>;

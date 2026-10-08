@@ -27,6 +27,7 @@ export type ActionTool =
   | "update_page_search_settings"
   | "write_search_text_for_all_pages"
   | "update_menu_and_footer"
+  | "design_header_and_footer"
   | "update_site_details"
   | "update_logo_settings"
   | "update_stylesheet"

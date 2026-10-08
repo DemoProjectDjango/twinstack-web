@@ -12,17 +12,43 @@ import { contentVersion, frontmatter, inside, listFiles, readText } from "./site
 // HEADER_FOOTER_FILES brings those three files over from the template.
 
 const NAV_FILE = "content/data/navigation.json";
-export const HEADER_FOOTER_FILES = ["templates/partials/header.html", "templates/partials/footer.html", "scripts/lib/content.js"];
+// site.js sets the header's data-scrolled, which the see-through and shrinking header styles read.
+export const HEADER_FOOTER_FILES = ["templates/partials/header.html", "templates/partials/footer.html", "scripts/lib/content.js", "assets/js/site.js"];
+/** What each of HEADER_FOOTER_FILES must contain, in the template, for the installer to take it. */
+export const HEADER_FOOTER_MARKERS = {
+  "templates/partials/header.html": "nav.appearance",
+  "templates/partials/footer.html": "nav.appearance",
+  "scripts/lib/content.js": "navAppearance",
+  "assets/js/site.js": "data-scrolled",
+};
 /** In the template's header.html and footer.html once they read the appearance settings. */
 export const APPEARANCE_MARKER = "nav.appearance";
+// On the <header> and <footer> Claude designs (the site's scripts/lib/chrome.js DESIGNED_MARK).
+const DESIGNED_MARK = 'data-designed="claude"';
 
 const HEADER_THEMES = ["light", "dark", "brand"];
 const HEADER_LAYOUTS = ["right", "center", "left"];
+const HEADER_STYLES = ["bar", "floating"];
 const FOOTER_THEMES = ["dark", "light", "brand"];
+const FOOTER_LAYOUTS = ["columns", "centered", "minimal"];
 const DEFAULT_APPEARANCE = {
-  header: { theme: "light", layout: "right", sticky: true },
-  footer: { theme: "dark", showTagline: true, showContact: true, copyright: "" },
+  header: { theme: "light", layout: "right", sticky: true, style: "bar", transparent: false, shrink: false },
+  footer: { theme: "dark", layout: "columns", showTagline: true, showContact: true, showSocial: true, cta: null, copyright: "" },
 };
+// In the template's header.html once it has the floating, see-through and shrinking styles, and in
+// its footer.html once it has layouts, social icons and the call-to-action strip.
+const HEADER_STYLES_MARKER = "nav.appearance.header.style";
+const FOOTER_LAYOUTS_MARKER = "nav.appearance.footer.layout";
+// On a header or footer copied from a converted page (the site's scripts/lib/chrome.js COPIED_MARK).
+const COPIED_MARK = 'data-designed="copied"';
+const SOCIAL = ["linkedin", "x", "facebook", "instagram", "youtube", "github"];
+
+/** The footer's call-to-action strip as saved: { title, text, label, url } or null. */
+function footerCta(cta) {
+  if (!isObject(cta)) return null;
+  const value = (key) => (typeof cta[key] === "string" ? cta[key] : "");
+  return { title: value("title"), text: value("text"), label: value("label"), url: value("url") };
+}
 const LIMITS = { items: 15, children: 20, columns: 8, links: 20, legal: 10 };
 // Pages, files, anchors, mail, phone and web links. Never javascript: or data:.
 const LINK = /^(\/(?!\/)|#|mailto:|tel:|https?:\/\/)\S*$/i;
@@ -58,15 +84,24 @@ function withDefaults(appearance) {
       theme: HEADER_THEMES.includes(header.theme) ? header.theme : DEFAULT_APPEARANCE.header.theme,
       layout: HEADER_LAYOUTS.includes(header.layout) ? header.layout : DEFAULT_APPEARANCE.header.layout,
       sticky: header.sticky !== false,
+      style: HEADER_STYLES.includes(header.style) ? header.style : DEFAULT_APPEARANCE.header.style,
+      transparent: header.transparent === true,
+      shrink: header.shrink === true,
     },
     footer: {
       theme: FOOTER_THEMES.includes(footer.theme) ? footer.theme : DEFAULT_APPEARANCE.footer.theme,
+      layout: FOOTER_LAYOUTS.includes(footer.layout) ? footer.layout : DEFAULT_APPEARANCE.footer.layout,
       showTagline: footer.showTagline !== false,
       showContact: footer.showContact !== false,
+      showSocial: footer.showSocial !== false,
+      cta: footerCta(footer.cta),
       copyright: typeof footer.copyright === "string" ? footer.copyright : "",
     },
   };
 }
+
+/** The HTML file a copied header or footer came from (its data-chrome-from), or null. */
+const chromeSource = (partial) => partial.match(/data-chrome-from="([^"]*)"/)?.[1] ?? null;
 
 /** Like the site's applyUrlPattern in scripts/lib/content.js. */
 function applyUrlPattern(pattern, slug) {
@@ -93,6 +128,8 @@ export async function sitePages(dir, site) {
         title: fields.title || slug,
         collection: name,
         draft: fields.draft === "true",
+        // The menus the page adds itself to (frontmatter `menu`): header, footer or both, or null.
+        menu: PAGE_MENUS.includes(fields.menu) ? fields.menu : null,
       });
       if (pages.length >= MAX_PAGES) return pages;
     }
@@ -118,6 +155,18 @@ export async function getNavigation(key) {
       appearance: withDefaults(data.appearance),
     },
     supportsAppearance: header.includes(APPEARANCE_MARKER) && footer.includes(APPEARANCE_MARKER) && content.includes("navAppearance"),
+    // Claude designed the header or footer (edit-page.js --chrome): its colours and layout are
+    // Claude's, so the style switches don't apply to it. Menu, button, logo and copyright still do.
+    designed: { header: header.includes(DESIGNED_MARK), footer: footer.includes(DESIGNED_MARK) },
+    // Copied as it was from a converted page (edit-page.js --with-header/--with-footer): fixed HTML,
+    // so neither the menu nor the style settings change it until the standard one is put back.
+    copied: {
+      header: header.includes(COPIED_MARK),
+      footer: footer.includes(COPIED_MARK),
+      from: chromeSource(header) ?? chromeSource(footer),
+    },
+    // The newer standard header and footer: header styles, footer layouts, social icons, the strip.
+    supportsStyles: header.includes(HEADER_STYLES_MARKER) && footer.includes(FOOTER_LAYOUTS_MARKER),
     version: contentVersion(text ?? ""),
     collections: Object.entries(site.collections ?? {}).map(([name, collection]) => ({
       name,
@@ -131,8 +180,35 @@ export async function getNavigation(key) {
       foundedYear: site.foundedYear ?? null,
       email: typeof contact.email === "string" ? contact.email : "",
       phone: typeof contact.whatsapp === "string" ? contact.whatsapp : "",
+      // Which social links are set (site.config.json → social), for the footer preview's icons.
+      social: SOCIAL.filter((name) => typeof site.social?.[name] === "string" && site.social[name].trim().startsWith("http")),
     },
   };
+}
+
+const PAGE_MENUS = ["header", "footer", "both"];
+
+/**
+ * Sets the menus a page adds itself to: its frontmatter `menu` (header, footer or both; null
+ * removes it), which the copy's scripts/lib/content.js reads. Only that line of the file changes.
+ */
+export async function setPageMenu(key, file, menu) {
+  if (menu !== null && !PAGE_MENUS.includes(menu)) fail("Choose header, footer or both.");
+  if (typeof file !== "string" || !/^content\/[\w./-]+\.md$/.test(file) || file.split("/").includes("..")) fail("That isn't a page.");
+  const release = acquire(key, `setting the menus of ${file}`);
+  try {
+    const target = inside(workspaceDir(key), file);
+    const current = await readText(target);
+    if (current === null) throw new WorkspaceError(`${file} doesn't exist.`, 404);
+    const match = current.match(/^(---\r?\n)([\s\S]*?)(\r?\n---)/);
+    if (!match) fail(`${file} has no frontmatter to set it in.`);
+    const eol = match[1].endsWith("\r\n") ? "\r\n" : "\n";
+    const lines = match[2].split(/\r?\n/).filter((line) => !/^menu\s*:/.test(line));
+    if (menu) lines.push(`menu: ${menu}`);
+    await fs.writeFile(target, `${match[1]}${lines.join(eol)}${match[3]}${current.slice(match[0].length)}`);
+  } finally {
+    release();
+  }
 }
 
 /* ------------------------------------------------------------- validation */
@@ -247,9 +323,40 @@ function appearance(value) {
   }
   const copyright = footer.copyright ?? "";
   if (typeof copyright !== "string" || copyright.length > 120 || /[\r\n]/.test(copyright)) fail("The copyright line must be one line of up to 120 characters.");
+  // The newer options are optional: an editor that doesn't know them leaves them out.
+  const style = header.style ?? "bar";
+  if (!HEADER_STYLES.includes(style)) fail(`The header style must be one of ${HEADER_STYLES.join(", ")}.`);
+  const layout = footer.layout ?? "columns";
+  if (!FOOTER_LAYOUTS.includes(layout)) fail(`The footer layout must be one of ${FOOTER_LAYOUTS.join(", ")}.`);
+  for (const [field, v] of [["header see-through", header.transparent], ["header shrink", header.shrink], ["footer showSocial", footer.showSocial]]) {
+    if (v !== undefined && typeof v !== "boolean") fail(`The ${field} setting must be yes or no.`);
+  }
+  let cta;
+  if (footer.cta !== undefined && footer.cta !== null) {
+    if (!isObject(footer.cta)) fail("The footer's call to action isn't valid.");
+    const label = typeof footer.cta.label === "string" ? footer.cta.label.trim() : "";
+    // No button label: no strip.
+    if (label) {
+      const where = "The footer's call to action";
+      cta = defined({
+        title: footer.cta.title?.trim() ? text(footer.cta.title, where, "a heading", 100) : undefined,
+        text: footer.cta.text?.trim() ? text(footer.cta.text, where, "a sentence", 200) : undefined,
+        label: text(label, where, "a button label", 40),
+        url: link(footer.cta.url, `${where} button`),
+      });
+    }
+  }
   return {
-    header: { theme: header.theme, layout: header.layout, sticky: header.sticky },
-    footer: { theme: footer.theme, showTagline: footer.showTagline, showContact: footer.showContact, copyright: copyright.trim() },
+    header: { theme: header.theme, layout: header.layout, sticky: header.sticky, style, transparent: header.transparent === true, shrink: header.shrink === true },
+    footer: defined({
+      theme: footer.theme,
+      layout,
+      showTagline: footer.showTagline,
+      showContact: footer.showContact,
+      showSocial: footer.showSocial !== false,
+      cta,
+      copyright: copyright.trim(),
+    }),
   };
 }
 
