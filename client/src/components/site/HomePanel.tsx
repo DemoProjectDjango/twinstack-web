@@ -91,6 +91,8 @@ export function HomePanel() {
 
       <LiveCard />
 
+      <SiteUpdateCard />
+
       <ToolsNotice />
 
       {changes > 0 && (
@@ -204,9 +206,114 @@ function LiveCard() {
   );
 }
 
+/**
+ * The template's latest changes, installed with one click (useSiteUpdate): the owner's pages,
+ * content and design are kept, and the update is checked before it goes live. Undo stays offered
+ * while the update is the latest thing published. `showChanges` lists the template's commit
+ * messages (Build tools only: they're written for the template's developers, not site owners).
+ */
+export function SiteUpdateCard({ showChanges = false }: { showChanges?: boolean }) {
+  const { busy, siteUpdate } = useSite();
+  const { info, working, error, done, update, undo } = siteUpdate;
+  const locked = busy || working !== null;
+
+  if (working === "update") {
+    return (
+      <Notice>
+        <span className="flex items-center gap-2">
+          <Spinner /> Updating your site. This takes a few minutes, and your pages and design stay as they are.
+        </span>
+      </Notice>
+    );
+  }
+
+  const offer = info?.available ? info : null;
+  return (
+    <>
+      {offer && (
+        <section aria-labelledby="site-update-heading" className="rounded-lg border border-sky-300 bg-sky-50 p-5 dark:border-sky-900 dark:bg-sky-950">
+          <h3 id="site-update-heading" className="font-medium">
+            An update for your site is ready
+          </h3>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Improvements to the tools your site is built with. Your pages, content and design stay exactly as they are.
+          </p>
+          {showChanges && offer.changes.length > 0 && (
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+              {offer.changes.map((change, i) => (
+                <li key={`${i}-${change}`}>{change}</li>
+              ))}
+              {offer.moreChanges && <li>…and earlier changes</li>}
+            </ul>
+          )}
+          <Button
+            variant="primary"
+            className="mt-3"
+            disabled={locked}
+            onClick={async () => {
+              const ok = await confirmModal(
+                "Your pages, content and design stay as they are. The update is checked before it goes live, and you can undo it afterwards.",
+                { title: "Update your site?", confirmLabel: "Update my site" },
+              );
+              if (ok) void update();
+            }}
+          >
+            Update my site
+          </Button>
+        </section>
+      )}
+      {done && <Notice tone="success">{done}</Notice>}
+      {error ? (
+        <Notice tone="warning">
+          <ErrorText error={error} />
+        </Notice>
+      ) : null}
+      {!offer && info?.undo && (
+        <Notice>
+          Your site was updated{info.undo.date ? ` with the changes of ${formatDay(info.undo.date)}` : ""}.{" "}
+          <Button
+            variant="ghost"
+            className="ml-1 underline"
+            disabled={locked}
+            onClick={async () => {
+              const ok = await confirmModal("Your site goes back to how it was before the update. Your unpublished changes stay.", {
+                title: "Undo the update?",
+                confirmLabel: "Undo the update",
+                danger: true,
+              });
+              if (ok) void undo();
+            }}
+          >
+            {working === "undo" ? "Undoing…" : "Undo the update"}
+          </Button>
+        </Notice>
+      )}
+    </>
+  );
+}
+
+/** "9 October 2026" from an ISO date. */
+export function formatDay(iso: string) {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+}
+
 /** Some features are switched off until this copy gets the template's newer files. */
 export function ToolsNotice({ compact = false }: { compact?: boolean }) {
-  const { busy, tools, showSection, status } = useSite();
+  const { busy, tools, showSection, status, siteUpdate } = useSite();
+
+  // The site update brings every newer file at once, so it replaces these installers when it's on offer.
+  if (siteUpdate.info?.available) {
+    if (!compact || tools.outdated.length === 0) return null;
+    return (
+      <Notice tone="warning">
+        This needs the latest version of your site.{" "}
+        <Button variant="ghost" className="ml-1 underline" onClick={() => showSection("home")}>
+          Update it on Home
+        </Button>
+      </Notice>
+    );
+  }
 
   // Until it's published: the update is an ordinary change.
   if (tools.written && tools.outdated.length === 0 && status.changes.length > 0) {

@@ -20,6 +20,7 @@ const RUNNING: Record<string, string> = {
   scaffold: "Creating the pages",
   schedule: "Running scheduled pages",
   changelog: "Updating the change history",
+  "site-update": "Updating your site to the latest version",
 };
 
 const DONE: Record<string, string> = {
@@ -41,6 +42,7 @@ const DONE: Record<string, string> = {
   scaffold: "Pages created",
   schedule: "Scheduled pages run",
   changelog: "Change history updated",
+  "site-update": "Your site is up to date",
 };
 
 export function friendlyJobLabel(command: string, fallback: string) {

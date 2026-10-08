@@ -60,7 +60,7 @@ export function acquire(key, label) {
 
 /* -------------------------------------------------------------------- git */
 
-async function git(dir, args, { accessToken, maxBuffer = 10 * 1024 * 1024 } = {}) {
+export async function git(dir, args, { accessToken, maxBuffer = 10 * 1024 * 1024 } = {}) {
   const env = accessToken ? gitEnv(accessToken) : { ...process.env, GIT_TERMINAL_PROMPT: "0" };
   try {
     const { stdout } = await execFileAsync("git", args, { cwd: dir, env, timeout: GIT_TIMEOUT_MS, maxBuffer });
@@ -77,7 +77,7 @@ async function git(dir, args, { accessToken, maxBuffer = 10 * 1024 * 1024 } = {}
   }
 }
 
-async function tryGit(dir, args) {
+export async function tryGit(dir, args) {
   try {
     return await git(dir, args);
   } catch {
@@ -91,7 +91,7 @@ async function tryGit(dir, args) {
 const metaPath = (dir) => path.join(dir, ".git", "twinstack.json");
 const installStampPath = (dir) => path.join(dir, ".git", "twinstack-install");
 
-async function readMeta(dir) {
+export async function readMeta(dir) {
   try {
     return JSON.parse(await fs.readFile(metaPath(dir), "utf8"));
   } catch {
@@ -211,7 +211,7 @@ async function syncWorkspace(key, info, accessToken) {
 
 /* ----------------------------------------------------------------- status */
 
-async function listChanges(dir) {
+export async function listChanges(dir) {
   const out = await git(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
   const parts = out.split("\0");
   const changes = [];

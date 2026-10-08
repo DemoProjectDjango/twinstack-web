@@ -25,7 +25,31 @@ function append(job, text) {
   }
 }
 
-function runStep(job, { file, args, display, timeoutMs }, { cwd, env }) {
+/**
+ * A step is a process ({ file, args, display, timeoutMs }, optionally with its own cwd and env) or
+ * a function ({ display, run }): `run({ log, exec })` logs with `log(text)` and starts processes,
+ * which stream and cancel like process steps, with `exec(step)` (resolves to `{ code, output }`).
+ * A function step fails by throwing; its message is the last line of the output.
+ */
+async function runStep(job, step, { cwd, env }) {
+  if (!step.run) return runProcess(job, step, { cwd: step.cwd ?? cwd, env: step.env ?? env });
+  append(job, `${step.display}\n`);
+  const exec = async (child) => {
+    if (job.cancelled) return { code: 1, output: "" };
+    const start = job.base + job.text.length;
+    const code = await runProcess(job, child, { cwd: child.cwd ?? cwd, env: child.env ?? env });
+    return { code, output: job.text.slice(Math.max(0, start - job.base)) };
+  };
+  try {
+    await step.run({ log: (text) => append(job, text.endsWith("\n") ? text : `${text}\n`), exec });
+    return job.cancelled ? 1 : 0;
+  } catch (err) {
+    append(job, `\n${err.message}\n`);
+    return 1;
+  }
+}
+
+function runProcess(job, { file, args, display, timeoutMs }, { cwd, env }) {
   return new Promise((resolve) => {
     append(job, `$ ${display}\n`);
     const child = spawn(file, args, { cwd, env, windowsHide: true });

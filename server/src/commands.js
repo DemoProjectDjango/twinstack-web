@@ -31,7 +31,7 @@ const NODE = process.execPath;
 const MINUTE = 60 * 1000;
 const NEW_TYPES = ["page", "product", "service", "post", "case"];
 
-function npmCli() {
+export function npmCli() {
   const dir = path.dirname(NODE);
   const candidates = [
     process.env.npm_execpath,

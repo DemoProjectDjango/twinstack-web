@@ -56,6 +56,7 @@ import { APPEARANCE_MARKER, HEADER_FOOTER_FILES, HEADER_FOOTER_MARKERS, getNavig
 import { SEO_FILES, SEO_MARKERS, installSeo, readSeo } from "../seo.js";
 import { readCheckReport } from "../site-check.js";
 import { readMissingPages } from "../missing-pages.js";
+import { getUpdateStatus, siteUpdateSteps, undoSiteUpdate } from "../site-update.js";
 import {
   WorkspaceError,
   acquire,
@@ -396,6 +397,60 @@ workspacesRouter.post(
       files[file] = content;
     }
     const result = await updateFromTemplate(key, files, "updating the publishing files");
+    res.json({ ...result, status: await getStatus(key) });
+  }),
+);
+
+/* One-click site updates: the template's newest release merged into the published site, keeping the owner's work (site-update.js). */
+
+workspacesRouter.get(
+  "/:owner/:repo/site-update",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    res.json(await getUpdateStatus(key, await getAccessToken(req, res)));
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/site-update",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const accessToken = await getAccessToken(req, res);
+    // Only for Claude combining files both sides changed, in this process; never handed to the site's scripts.
+    const [anthropicKey, model] = await Promise.all([getAnthropicKey(req.user.id), getClaudeModel(req.user.id)]);
+    const release = acquire(key, "updating the site");
+    try {
+      const { steps, cleanup } = siteUpdateSteps({ key, accessToken, user: req.user.github, anthropicKey, model });
+      const job = startJob({
+        key,
+        userId: req.user.id,
+        command: "site-update",
+        label: "Update the site",
+        steps,
+        cwd: workspaceDir(key),
+        env: jobEnv(null, null),
+        release: () => cleanup().finally(release),
+      });
+      res.status(202).json({ job });
+    } catch (err) {
+      release();
+      throw err;
+    }
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/site-update/undo",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const accessToken = await getAccessToken(req, res);
+    const release = acquire(key, "undoing the site update");
+    let result;
+    try {
+      result = await undoSiteUpdate({ key, accessToken });
+    } finally {
+      release();
+    }
     res.json({ ...result, status: await getStatus(key) });
   }),
 );

@@ -1,13 +1,14 @@
 "use client";
 
-import { ToolsNotice } from "./HomePanel";
+import { SiteUpdateCard, ToolsNotice, formatDay } from "./HomePanel";
 import { JobLog } from "./JobLog";
 import { useSite } from "./site-context";
 import { Button, Notice, ScreenHeader, Section } from "./ui";
 
 /** Advanced: the commands the editor normally runs by itself, their full output, and where the site stands in git. */
 export function BuildPanel() {
-  const { status, busy, run } = useSite();
+  const { status, busy, run, siteUpdate } = useSite();
+  const info = siteUpdate.info;
   const needsInstall = status.needsInstall;
 
   return (
@@ -41,6 +42,24 @@ export function BuildPanel() {
           <Button disabled={busy || needsInstall} onClick={() => run("changelog")}>
             Regenerate changelog
           </Button>
+        </div>
+      </Section>
+
+      <Section
+        title="Site updates"
+        description="Every change pushed to the site template reaches your site as an update. Updating keeps your pages, content and design."
+      >
+        <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[max-content_1fr]">
+          <dt className="text-zinc-500">Your site has changes up to</dt>
+          <dd>{info ? (info.current?.date ? formatDay(info.current.date) : "unknown") : "Couldn't check for updates"}</dd>
+          <dt className="text-zinc-500">Latest template change</dt>
+          <dd>
+            {info?.latest?.date ? formatDay(info.latest.date) : "unknown"}
+            {info && !info.available && " (your site has it)"}
+          </dd>
+        </dl>
+        <div className="mt-4 space-y-3">
+          <SiteUpdateCard showChanges />
         </div>
       </Section>
 

@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, workspacePath, type NavigationInfo, type Overview, type Publishing, type WorkspaceStatus } from "@/lib/site-api";
-import type { PublishingState, SiteTools } from "./site-context";
+import { api, workspacePath, type Job, type NavigationInfo, type Overview, type Publishing, type SiteUpdateInfo, type WorkspaceStatus } from "@/lib/site-api";
+import type { PublishingState, SiteTools, SiteUpdateState } from "./site-context";
 
 // While a deploy runs, and for a while after anything changes (a push starts a
 // run a few seconds later), GitHub is asked again every few seconds.
@@ -141,4 +141,88 @@ export function useSiteTools({
   }, [ids, owner, repo, setStatus, refresh]);
 
   return { outdated: needed.map((n) => n.what), updating, error, written, update };
+}
+
+/** The error a failed job ended with: the output ends "\n\n<error>\n\nEnded: failed (exit 1).\n". */
+function jobFailure(output: string) {
+  const chunks = output.replace(/\r/g, "").trimEnd().split("\n\n");
+  return chunks.length > 1 ? chunks[chunks.length - 2].trim() : "The update didn't finish. Your site hasn't changed.";
+}
+
+/**
+ * One-click site updates (server/src/site-update.js): the template's newest release is merged
+ * into the published site by a job, keeping the owner's work, and can be undone while nothing
+ * has been published since.
+ */
+export function useSiteUpdate({
+  owner,
+  repo,
+  version,
+  runJobAt,
+  run,
+  setStatus,
+  watch,
+}: {
+  owner: string;
+  repo: string;
+  version: number;
+  runJobAt: (rest: string) => Promise<Job>;
+  run: (command: string) => Promise<boolean>;
+  setStatus: (status: WorkspaceStatus) => void;
+  watch: () => void;
+}): SiteUpdateState {
+  const [info, setInfo] = useState<SiteUpdateInfo | null>(null);
+  const [working, setWorking] = useState<"update" | "undo" | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api<SiteUpdateInfo>(workspacePath(owner, repo, "/site-update"))
+      .then((next) => !cancelled && setInfo(next))
+      // No update offer is better than an error on Home: the template may have no release yet.
+      .catch(() => !cancelled && setInfo(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [owner, repo, version]);
+
+  const update = useCallback(async () => {
+    setWorking("update");
+    setError(null);
+    setDone(null);
+    try {
+      const job = await runJobAt("/site-update");
+      if (job.status === "succeeded") {
+        setDone("Your site is updated. It goes live in a minute or two.");
+        watch();
+      } else {
+        setError(new Error(job.status === "cancelled" ? "The update was stopped." : jobFailure(job.output)));
+      }
+    } catch (err) {
+      setError(err);
+    } finally {
+      setWorking(null);
+    }
+  }, [runJobAt, watch]);
+
+  const undo = useCallback(async () => {
+    setWorking("undo");
+    setError(null);
+    setDone(null);
+    try {
+      const result = await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/site-update/undo"), { method: "POST", body: {} });
+      setStatus(result.status);
+      setDone("The update is undone. Your site goes back in a minute or two.");
+      watch();
+      // The update may have changed the site's tools; put the earlier ones back.
+      if (result.status.needsInstall) await run("install");
+    } catch (err) {
+      setError(err);
+    } finally {
+      setWorking(null);
+    }
+  }, [owner, repo, setStatus, watch, run]);
+
+  return { info, working, error, done, update, undo };
 }

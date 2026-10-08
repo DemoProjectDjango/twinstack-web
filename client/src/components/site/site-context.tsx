@@ -2,7 +2,7 @@
 
 import { createContext, useContext } from "react";
 import type { ClaudeAccess } from "@/lib/claude";
-import type { EditMode, Job, Overview, Publishing, SiteCheckReport, WorkspaceStatus } from "@/lib/site-api";
+import type { EditMode, Job, Overview, Publishing, SiteCheckReport, SiteUpdateInfo, WorkspaceStatus } from "@/lib/site-api";
 
 /** The site editor's screens: the everyday ones first, then the ones under Advanced. */
 export type SiteSection =
@@ -57,6 +57,18 @@ export type SiteTools = {
   update: () => Promise<void>;
 };
 
+/** One-click updates to the template's newest release (see useSiteUpdate). */
+export type SiteUpdateState = {
+  /** null until loaded, or when it couldn't be loaded. */
+  info: SiteUpdateInfo | null;
+  working: "update" | "undo" | null;
+  error: unknown;
+  /** What the last update or undo here did, in words, until the next one. */
+  done: string | null;
+  update: () => Promise<void>;
+  undo: () => Promise<void>;
+};
+
 export type SiteContextValue = {
   owner: string;
   repo: string;
@@ -87,6 +99,7 @@ export type SiteContextValue = {
   showSection: (section: SiteSection) => void;
   publishing: PublishingState;
   tools: SiteTools;
+  siteUpdate: SiteUpdateState;
   siteCheck: SiteCheckState;
 };
 

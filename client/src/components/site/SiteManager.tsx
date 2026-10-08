@@ -19,7 +19,7 @@ import { PagesPanel } from "./PagesPanel";
 import { SchedulePanel } from "./SchedulePanel";
 import { SeoPanel } from "./SeoPanel";
 import { SiteContext, useSite, type PageEditMode, type SiteContextValue, type SiteSection } from "./site-context";
-import { usePublishing, useSiteTools } from "./site-hooks";
+import { usePublishing, useSiteTools, useSiteUpdate } from "./site-hooks";
 import { StaticInfoPanel } from "./StaticInfoPanel";
 import { StatusStrip } from "./StatusStrip";
 import { StylesPanel } from "./StylesPanel";
@@ -156,6 +156,21 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
       return new Promise<Job>((resolve) => waiters.current.set(started.job.id, resolve));
     },
     [start],
+  );
+
+  // A job started by a route of its own rather than a command (the site update): followed like
+  // any command, and resolves with the finished job.
+  const runJobAt = useCallback(
+    async (rest: string) => {
+      setRunError(null);
+      const { job: started } = await api<{ job: Job }>(workspacePath(owner, repo, rest), { method: "POST", body: {} });
+      dryRunJob.current = null;
+      autoJob.current = null;
+      setAutoJobId(null);
+      setJob(started);
+      return new Promise<Job>((resolve) => waiters.current.set(started.id, resolve));
+    },
+    [owner, repo],
   );
 
   // A change made outside a command (a save, a discard) hands back the new status, or asks for a
@@ -295,6 +310,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     [section, openPage],
   );
   const tools = useSiteTools({ owner, repo, version, overview, publishing: publishing.publishing, setStatus, refresh: refreshAfterChange });
+  const siteUpdate = useSiteUpdate({ owner, repo, version, runJobAt, run, setStatus, watch: publishing.watch });
 
   const showSection = useCallback((next: SiteSection) => {
     setSection(next);
@@ -396,6 +412,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     showSection,
     publishing,
     tools,
+    siteUpdate,
     siteCheck: {
       report: siteCheck.report,
       fresh: checkFresh,

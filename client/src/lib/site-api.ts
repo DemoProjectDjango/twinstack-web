@@ -201,6 +201,23 @@ export type DomainHealth = {
 export type DomainCheck = { pending: boolean; domain?: DomainHealth | null; altDomain?: DomainHealth | null };
 
 /** GitHub Pages for a site copy, and its latest deploy on the default branch. */
+/**
+ * The template's newest commit against the published site's (`GET …/site-update`,
+ * server/src/site-update.js). Every push to the template is an update; dates are ISO strings.
+ */
+export type SiteUpdateInfo = {
+  /** When the newest template change the published site has was made; null if none is known. */
+  current: { date: string | null } | null;
+  latest: { date: string | null } | null;
+  available: boolean;
+  /** What changed since, in the template's own words (its commit messages, newest first). */
+  changes: string[];
+  /** There are more changes than `changes` lists. */
+  moreChanges: boolean;
+  /** The latest thing published is an update, so it can still be undone. */
+  undo: { date: string | null } | null;
+};
+
 export type Publishing = {
   defaultBranch: string;
   /** "<owner>.github.io": where a custom domain's CNAME record points. */
