@@ -15,7 +15,7 @@ import {
 import { composeUserMessage, knowledgeSection } from "../assistant/prompt.js";
 import { TOOLSET_VERSION, applyServerAction } from "../assistant/tools.js";
 import { anthropicClient, runTurn } from "../assistant/turn.js";
-import { archiveConversations, createConversation, findConversation, getClaudeModel, updateConversation } from "../db.js";
+import { archiveConversations, createConversation, findConversation, getAssistantModel, updateConversation } from "../db.js";
 import { ClaudeAccessError, beginClaudeActivity, claudeFilesKeyFor, claudeKeyFor, hasCredits, meterClaude } from "../credits.js";
 import { getAccessToken } from "../github.js";
 import { logWork, readDataFile, recentWorkLog } from "../site-files.js";
@@ -186,7 +186,7 @@ assistantRouter.post(
       if (!(err instanceof ClaudeAccessError)) throw err;
       return res.status(err.status).json({ error: err.code, message: err.message });
     }
-    const model = await getClaudeModel(userId);
+    const model = await getAssistantModel(userId);
 
     let conversation = await findConversation(userId, siteId);
     if (conversation && runningTurnFor(conversation.id)) throw new WorkspaceError("Claude is still answering. Wait for it, or stop it.", 409);
@@ -266,7 +266,7 @@ assistantRouter.post(
           signal: turn.controller.signal,
           // Each request is charged as soon as it's done, so the balance moves while Claude works.
           onMessage: (message) =>
-            meterClaude({ userId, siteId, kind: "assistant", model: message.model, requestedModel: model, usage: message.usage, charged: claude.charged }),
+            meterClaude({ userId, siteId, runId: turn.id, kind: "assistant", model: message.model, requestedModel: model, usage: message.usage, charged: claude.charged }),
           canContinue: () => (claude.charged ? hasCredits(userId) : true),
         });
         turn.status = "done";

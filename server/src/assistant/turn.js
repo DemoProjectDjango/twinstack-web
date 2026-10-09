@@ -14,6 +14,20 @@ const MAX_TOKENS = 64_000;
 // recommends for it. context-management: old tool results (page sources) are cleared from long
 // conversations on the server, which doesn't count as editing the history.
 const BETAS = ["server-side-fallback-2026-07-01", "context-management-2025-06-27"];
+// The history is cached for an hour, not 5 minutes: owners pause between messages (to look at a
+// page, apply a card), and every pause past the TTL rewrote the whole history (often 80k+ tokens).
+// A 1-hour write costs 2x input instead of 1.25x, but only on what's new each request.
+const CACHE = { type: "ephemeral", ttl: "1h" };
+// Clearing old tool results rewrites the cache from the first cleared one on, so it's only worth
+// doing in large steps: past 100k tokens, and only when it clears at least 40k.
+const CONTEXT_EDITS = [
+  {
+    type: "clear_tool_uses_20250919",
+    trigger: { type: "input_tokens", value: 100_000 },
+    keep: { type: "tool_uses", value: 3 },
+    clear_at_least: { type: "input_tokens", value: 40_000 },
+  },
+];
 
 const PROPOSED = "Shown to the owner as a card. It is NOT applied yet: they'll apply or skip it, and the next message will tell you which.";
 
@@ -31,7 +45,7 @@ function addUsage(total, usage) {
  * Runs the turn. `live` is updated as it goes (text as it streams, what Claude is looking at, the
  * proposals) so the browser can show progress; `onUpdate` is called after each change to it.
  * Returns the messages to append to the history, the proposals and the token usage. `model` is
- * the account's choice (getClaudeModel); a fallback after a refusal may answer with another.
+ * the account's assistant model (getAssistantModel); a fallback after a refusal may answer with another.
  * `onMessage(message)` is called after each request (to record and charge it), and before each
  * request after the first `canContinue()` says whether the account can still pay for one.
  */
@@ -78,8 +92,8 @@ export async function runTurn({
           tools: TOOL_DEFINITIONS,
           messages,
           output_config: { effort: "medium" },
-          cache_control: { type: "ephemeral" },
-          context_management: { edits: [{ type: "clear_tool_uses_20250919" }] },
+          cache_control: CACHE,
+          context_management: { edits: CONTEXT_EDITS },
           fallbacks: "default",
           betas: BETAS,
         },

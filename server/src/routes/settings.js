@@ -1,14 +1,22 @@
 import { Router } from "express";
 import { CLAUDE_MODELS, isClaudeModel } from "../claude-models.js";
-import { clearAnthropicKey, getAnthropicKeyHint, getClaudeModel, setAnthropicKey, setClaudeModel } from "../db.js";
+import {
+  clearAnthropicKey,
+  getAnthropicKeyHint,
+  getAssistantModel,
+  getClaudeModel,
+  setAnthropicKey,
+  setAssistantModel,
+  setClaudeModel,
+} from "../db.js";
 import { OWN_KEYS } from "../credits.js";
 import { requireAuth } from "../session.js";
 
 // The user's own Anthropic API key, stored encrypted in MongoDB (see db.js)
 // and handed to site scripts as ANTHROPIC_API_KEY only when a Claude command
 // runs. The browser only ever sees a masked hint. Off while OWN_KEYS (credits.js)
-// is false. Also the Claude model the account uses, for the assistant and the
-// site's scripts alike.
+// is false. Also the Claude models the account uses: one for the site's scripts
+// (writing pages) and one for the "Ask Claude" assistant.
 
 export const settingsRouter = Router();
 settingsRouter.use(requireAuth);
@@ -34,21 +42,28 @@ settingsRouter.get(
       ownKeys: OWN_KEYS,
       anthropicKey: OWN_KEYS ? await getAnthropicKeyHint(req.user.id) : null,
       model: await getClaudeModel(req.user.id),
+      assistantModel: await getAssistantModel(req.user.id),
       models: CLAUDE_MODELS,
     });
   }),
 );
 
-settingsRouter.put(
-  "/model",
-  handle(async (req, res) => {
-    if (!req.is("application/json")) return res.status(415).json({ error: "Expected JSON" });
-    const model = req.body?.model;
-    if (!isClaudeModel(model)) return res.status(400).json({ error: "Choose one of the models listed." });
-    await setClaudeModel(req.user.id, model);
-    res.json({ model });
-  }),
-);
+/** PUT /model sets the page writer's model, PUT /assistant-model the assistant's. */
+for (const [path, save] of [
+  ["/model", setClaudeModel],
+  ["/assistant-model", setAssistantModel],
+]) {
+  settingsRouter.put(
+    path,
+    handle(async (req, res) => {
+      if (!req.is("application/json")) return res.status(415).json({ error: "Expected JSON" });
+      const model = req.body?.model;
+      if (!isClaudeModel(model)) return res.status(400).json({ error: "Choose one of the models listed." });
+      await save(req.user.id, model);
+      res.json({ model });
+    }),
+  );
+}
 
 settingsRouter.put(
   "/anthropic-key",

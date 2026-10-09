@@ -28,3 +28,8 @@ export const isClaudeModel = (id) => typeof id === "string" && IDS.has(id);
 
 // ASSISTANT_MODEL (server env) changes the default for accounts that haven't chosen one.
 export const DEFAULT_MODEL = isClaudeModel(process.env.ASSISTANT_MODEL) ? process.env.ASSISTANT_MODEL : "claude-opus-5-5";
+
+// The "Ask Claude" assistant has its own choice (users.assistantModel), because it mostly reads the
+// site and plans while the page writer does the designing: Sonnet does that well at half Opus's
+// price. ASSISTANT_CHAT_MODEL (server env) changes the default.
+export const DEFAULT_ASSISTANT_MODEL = isClaudeModel(process.env.ASSISTANT_CHAT_MODEL) ? process.env.ASSISTANT_CHAT_MODEL : "claude-sonnet-5-5";

@@ -8,20 +8,29 @@ import { api } from "@/lib/site-api";
 import { BuyCredits } from "./BuyCredits";
 import { Button, ErrorText, Notice, Segmented, Spinner } from "./site/ui";
 
+type Provider = "claude" | "deepseek";
+
+type Tokens = { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number };
+
+/** One model's part of a run. */
+type ModelUse = Tokens & { model: string; provider: Provider; requests: number; credits: number };
+
+/** One run (a Claude command, an Ask Claude answer, a site update): its credits merged, split by model. */
 type Usage = {
   id: string;
   kind: string;
   command: string | null;
-  model: string | null;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  webSearches?: number;
-  credits?: number;
-  charged?: boolean;
+  charged: boolean;
+  ownKey: boolean;
+  credits: number;
+  models: ModelUse[];
   createdAt: string;
 };
+
+/** The credits used, merged (`credits`) and split by provider. */
+type UsageSummary = { credits: number; providers: Record<Provider, Tokens & { requests: number; credits: number }> };
+
+const PROVIDER_NAMES: Record<Provider, string> = { claude: "Claude", deepseek: "DeepSeek" };
 
 type Purchase = { id: string; credits: number; priceCents: number; currency: string; provider: string; status: string; createdAt: string };
 
@@ -49,7 +58,15 @@ const MODEL_NAMES: Record<string, string> = {
   "claude-opus-5-5": "Opus 5.5",
   "claude-sonnet-5-5": "Sonnet 5.5",
   "claude-fable-5-1": "Fable 5.1",
+  // Work-log summaries.
+  "claude-haiku-4-5": "Haiku 4.5",
+  // Routine page work on a site that already has a design (the server's TWINSTACK_FAST_MODEL).
+  "deepseek-flash": "DeepSeek Flash",
+  "deepseek-v4-pro": "DeepSeek V4 Pro",
 };
+
+/** A model's display name; replies name dated snapshots (claude-haiku-4-5-20251001), shown as their alias. */
+const modelName = (model: string) => MODEL_NAMES[model] ?? MODEL_NAMES[model.replace(/-\d{8}$/, "")] ?? model;
 
 const tokens = (n: number) => formatCredits(n);
 
@@ -141,27 +158,37 @@ function History({ active }: { active: boolean }) {
           value={tab}
           onChange={setTab}
           options={[
-            { value: "usage", label: "Claude use" },
+            { value: "usage", label: "Usage" },
             { value: "purchases", label: "Purchases" },
           ]}
         />
       </div>
-      {tab === "usage" ? <HistoryList<Usage> key="usage" type="usage" live={active} render={UsageRows} /> : <HistoryList<Purchase> key="purchases" type="purchases" render={PurchaseRows} />}
+      {tab === "usage" ? (
+        <HistoryList<Usage, UsageSummary> key="usage" type="usage" live={active} render={UsageRows} renderSummary={UsageSplit} />
+      ) : (
+        <HistoryList<Purchase> key="purchases" type="purchases" render={PurchaseRows} />
+      )}
     </section>
   );
 }
 
-/** One kind of history, newest first, a page at a time. `live` reloads the first page every 5 s. */
-function HistoryList<T extends { id: string; createdAt: string }>({
+/**
+ * One kind of history, newest first, a page at a time. `live` reloads the first page every 5 s.
+ * An item is identified by its id: a usage run's date moves on while it's still running.
+ */
+function HistoryList<T extends { id: string; createdAt: string }, S = never>({
   type,
   live = false,
   render: Rows,
+  renderSummary: Summary,
 }: {
   type: Tab;
   live?: boolean;
   render: (props: { items: T[] }) => ReactNode;
+  renderSummary?: (props: { summary: S }) => ReactNode;
 }) {
   const [items, setItems] = useState<T[] | null>(null);
+  const [summary, setSummary] = useState<S | null>(null);
   const [more, setMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -169,13 +196,13 @@ function HistoryList<T extends { id: string; createdAt: string }>({
   const fetchPage = useCallback(
     (before?: string) => {
       const query = new URLSearchParams({ type, limit: String(PAGE), ...(before && { before }) });
-      return api<{ items: T[]; more: boolean }>(`/api/credits/history?${query}`);
+      return api<{ items: T[]; more: boolean; summary?: S }>(`/api/credits/history?${query}`);
     },
     [type],
   );
 
   // The newest page: once, then every 5 s while Claude works so new requests appear as they're
-  // charged. Older pages already shown are kept.
+  // charged. Older pages already shown are kept, less anything the newest page now has.
   useEffect(() => {
     let cancelled = false;
     let first = true;
@@ -183,9 +210,11 @@ function HistoryList<T extends { id: string; createdAt: string }>({
       fetchPage()
         .then((page) => {
           if (cancelled) return;
+          if (page.summary) setSummary(page.summary);
           setItems((old) => {
             const oldest = page.items.at(-1)?.createdAt ?? "";
-            return [...page.items, ...(old ?? []).filter((i) => i.createdAt < oldest)];
+            const shown = new Set(page.items.map((i) => i.id));
+            return [...page.items, ...(old ?? []).filter((i) => i.createdAt < oldest && !shown.has(i.id))];
           });
           // Later reloads leave "Show older" as the pages loaded since left it.
           if (first) setMore(page.more);
@@ -207,7 +236,10 @@ function HistoryList<T extends { id: string; createdAt: string }>({
     setError(null);
     try {
       const page = await fetchPage(before);
-      setItems((old) => [...(old ?? []), ...page.items]);
+      setItems((old) => {
+        const shown = new Set((old ?? []).map((i) => i.id));
+        return [...(old ?? []), ...page.items.filter((i) => !shown.has(i.id))];
+      });
       setMore(page.more);
     } catch (err) {
       setError(err);
@@ -221,11 +253,12 @@ function HistoryList<T extends { id: string; createdAt: string }>({
   }
   if (!items.length) {
     return (
-      <p className="mt-4 text-sm text-zinc-500">{type === "usage" ? "Claude hasn't done anything for you yet." : "You haven't bought any credits yet."}</p>
+      <p className="mt-4 text-sm text-zinc-500">{type === "usage" ? "Nothing has used your credits yet." : "You haven't bought any credits yet."}</p>
     );
   }
   return (
     <div className="mt-4">
+      {Summary && summary && <Summary summary={summary} />}
       <div className="overflow-x-auto">
         <Rows items={items} />
       </div>
@@ -242,6 +275,42 @@ function HistoryList<T extends { id: string; createdAt: string }>({
 const TH = "px-3 py-2 text-left text-xs font-medium text-zinc-500";
 const TD = "px-3 py-2 align-top";
 
+const inputOf = (t: Tokens) => t.inputTokens + t.cacheReadTokens + t.cacheWriteTokens;
+
+/** The credits used, merged (one balance pays for both) and split between Claude and DeepSeek. */
+function UsageSplit({ summary }: { summary: UsageSummary }) {
+  const share = (credits: number) => (summary.credits > 0 ? `${Math.round((credits / summary.credits) * 100)}%` : "–");
+  return (
+    <dl className="mb-4 grid gap-3 sm:grid-cols-3">
+      <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+        <dt className="text-xs text-zinc-500">Credits used</dt>
+        <dd className="text-lg font-medium tabular-nums">{formatCredits(summary.credits)}</dd>
+        <dd className="text-xs text-zinc-500">Claude and DeepSeek, from one balance</dd>
+      </div>
+      {(Object.keys(PROVIDER_NAMES) as Provider[]).map((p) => {
+        const use = summary.providers[p];
+        return (
+          <div key={p} className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+            <dt className="text-xs text-zinc-500">{PROVIDER_NAMES[p]}</dt>
+            <dd className="text-lg font-medium tabular-nums">
+              {formatCredits(use.credits)} <span className="text-sm font-normal text-zinc-500">({share(use.credits)})</span>
+            </dd>
+            <dd className="text-xs text-zinc-500 tabular-nums">
+              {formatCredits(use.requests)} {use.requests === 1 ? "request" : "requests"} · {tokens(inputOf(use))} / {tokens(use.outputTokens)} tokens
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+}
+
+/** A run's credits, as one total: charged, on the account's own key, or not charged. */
+function runCredits(u: Usage) {
+  if (u.charged) return formatCredits(u.credits);
+  return <span className="text-xs text-zinc-500">{u.ownKey ? "Own key" : "–"}</span>;
+}
+
 function UsageRows({ items }: { items: Usage[] }) {
   return (
     <table className="w-full min-w-[36rem] text-sm">
@@ -255,20 +324,30 @@ function UsageRows({ items }: { items: Usage[] }) {
       </thead>
       <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
         {items.map((u) => {
-          const input = u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens;
+          const split = u.models.length > 1;
           return (
             <tr key={u.id}>
               <td className={`${TD} whitespace-nowrap text-zinc-500`}>{dateFormat.format(new Date(u.createdAt))}</td>
               <td className={TD}>
                 {usageLabel(u)}
-                {u.model && <span className="block text-xs text-zinc-500">{MODEL_NAMES[u.model] ?? u.model}</span>}
+                {/* The split: each model's part of this run, with its own credits when there's more than one. */}
+                {u.models.map((m) => (
+                  <span key={m.model} className="block text-xs text-zinc-500">
+                    {modelName(m.model)}
+                    {m.requests > 1 && ` · ${m.requests} requests`}
+                    {split && u.charged && ` · ${formatCredits(m.credits)} credits`}
+                  </span>
+                ))}
               </td>
               <td className={`${TD} whitespace-nowrap text-right tabular-nums`}>
-                {tokens(input)} / {tokens(u.outputTokens)}
+                {u.models.map((m) => (
+                  <span key={m.model} className={`block ${split ? "text-xs text-zinc-500" : ""}`}>
+                    {tokens(inputOf(m))} / {tokens(m.outputTokens)}
+                  </span>
+                ))}
               </td>
-              <td className={`${TD} whitespace-nowrap text-right tabular-nums`}>
-                {u.charged ? formatCredits(u.credits ?? 0) : <span className="text-xs text-zinc-500">{u.charged === false && u.credits !== undefined ? "Own key" : "–"}</span>}
-              </td>
+              {/* Merged: what the whole run took from the balance. */}
+              <td className={`${TD} whitespace-nowrap text-right tabular-nums`}>{runCredits(u)}</td>
             </tr>
           );
         })}

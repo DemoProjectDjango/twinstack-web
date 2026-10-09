@@ -9,11 +9,16 @@ import { OUT_OF_CREDITS, hasCredits, meterClaude } from "./credits.js";
 // version of the scripts reads both). The proxy checks the token and the balance, forwards the
 // request to Anthropic with the app's key, streams the reply straight back, and charges what the
 // reply's usage says. It listens on a loopback port of its own, so it isn't reachable through
-// Nginx, and a token only works while its job runs.
+// Nginx, and a token only works while its job runs. Requests for deepseek-* models (the page
+// editor's cheaper model) are sent to DeepSeek instead, and charged the same way.
 
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
 const MAX_JSON_REPLY_BYTES = 16 * 1024 * 1024;
 const UPSTREAM = (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/+$/, "");
+// deepseek-* models (TWINSTACK_FAST_MODEL, see config.js) go to DeepSeek's Anthropic-compatible API
+// with the app's DeepSeek key; it takes the same request and streams the same events.
+const DEEPSEEK_UPSTREAM = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/anthropic").replace(/\/+$/, "");
+const isDeepseek = (model) => typeof model === "string" && model.startsWith("deepseek-");
 // Headers the scripts send that Anthropic needs; everything else (the token above all) stays here.
 const FORWARD_HEADERS = ["content-type", "anthropic-version", "anthropic-beta"];
 const RETURN_HEADERS = /^(content-type|request-id|retry-after|anthropic-|x-should-retry)/i;
@@ -42,12 +47,13 @@ export async function startClaudeProxy() {
 
 /**
  * A token for one job's Claude requests: `{ apiKey, baseUrl, revoke }`. `info` is what each
- * request is recorded against (`userId`, `siteId`, `command`).
+ * request is recorded against (`userId`, `siteId`, `command`); every request made with the token
+ * shares one `runId`, so the credits history shows the job as one entry.
  */
 export function issueProxyToken(info) {
   if (!baseUrl) throw new Error("The Claude proxy isn't running.");
   const apiKey = `twinstack-job-${randomBytes(24).toString("hex")}`;
-  grants.set(apiKey, info);
+  grants.set(apiKey, { ...info, runId: randomBytes(12).toString("hex") });
   return { apiKey, baseUrl, revoke: () => grants.delete(apiKey) };
 }
 
@@ -103,7 +109,9 @@ async function handle(req, res) {
     return sendError(res, 400, "invalid_request_error", "The request isn't valid JSON.");
   }
 
-  const headers = { "x-api-key": config.platformAnthropicKey };
+  const deepseek = isDeepseek(requestedModel);
+  if (deepseek && !config.deepseekKey) return sendError(res, 400, "invalid_request_error", `${requestedModel} isn't available on this server.`);
+  const headers = { "x-api-key": deepseek ? config.deepseekKey : config.platformAnthropicKey };
   for (const name of FORWARD_HEADERS) if (req.headers[name]) headers[name] = req.headers[name];
   const controller = new AbortController();
   // The job was cancelled (or the script gave up): stop the request at Anthropic too.
@@ -111,7 +119,7 @@ async function handle(req, res) {
     if (!res.writableFinished) controller.abort();
   });
 
-  const upstream = await fetch(`${UPSTREAM}/v1/messages`, { method: "POST", headers, body, signal: controller.signal });
+  const upstream = await fetch(`${deepseek ? DEEPSEEK_UPSTREAM : UPSTREAM}/v1/messages`, { method: "POST", headers, body, signal: controller.signal });
   const replyHeaders = {};
   for (const [name, value] of upstream.headers) if (RETURN_HEADERS.test(name)) replyHeaders[name] = value;
   res.writeHead(upstream.status, replyHeaders);

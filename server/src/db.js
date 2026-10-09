@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { MongoClient, ObjectId } from "mongodb";
-import { DEFAULT_MODEL, isClaudeModel } from "./claude-models.js";
+import { DEFAULT_ASSISTANT_MODEL, DEFAULT_MODEL, isClaudeModel } from "./claude-models.js";
 import { config } from "./config.js";
 
 // MongoDB holds everything that outlives a browser session:
@@ -221,6 +221,16 @@ export async function getClaudeModel(id) {
   return isClaudeModel(doc?.claudeModel) ? doc.claudeModel : DEFAULT_MODEL;
 }
 
+export async function setAssistantModel(id, model) {
+  await users().updateOne({ _id: objectId(id) }, { $set: { assistantModel: model } });
+}
+
+/** The model the "Ask Claude" assistant answers with: the account's choice, or DEFAULT_ASSISTANT_MODEL. */
+export async function getAssistantModel(id) {
+  const doc = await users().findOne({ _id: objectId(id) }, { projection: { assistantModel: 1 } });
+  return isClaudeModel(doc?.assistantModel) ? doc.assistantModel : DEFAULT_ASSISTANT_MODEL;
+}
+
 /* ------------------------------------------------------------ site copies */
 
 export async function recordSiteCopy({ userId, repo, source }) {
@@ -371,13 +381,14 @@ export async function getCredits(id) {
  * on the app's key). Charging may take the balance below zero: a request is only refused before it
  * starts. `usage` is the API's usage object.
  */
-export async function recordClaudeUsage({ userId, siteId = null, kind, command = null, model, usage, credits = 0, charged = false }) {
+export async function recordClaudeUsage({ userId, siteId = null, runId = null, kind, command = null, model, usage, credits = 0, charged = false }) {
   if (charged && credits > 0) {
     await users().updateOne({ _id: objectId(userId) }, { $inc: { "credits.balance": -credits, "credits.used": credits } });
   }
   await claudeUsage().insertOne({
     userId,
     siteId,
+    runId,
     kind,
     command,
     model,
@@ -409,10 +420,101 @@ const historyPage = (collection, userId, { before, limit }) =>
     .limit(limit)
     .toArray();
 
-/** The account's Claude requests, newest first, `limit` at a time from before `before` (a Date). */
+/** Which AI a model belongs to: "deepseek" for deepseek-* models, else "claude". */
+export const providerOf = (model) => (typeof model === "string" && model.startsWith("deepseek-") ? "deepseek" : "claude");
+
+const TOKEN_FIELDS = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "webSearches"];
+
+/**
+ * The aggregation behind listClaudeUsage: the account's requests grouped by run (`runId`: one job,
+ * assistant answer or site update; a request recorded before runs were is a run of its own), each
+ * run dated by its latest request, newest first, `limit` runs from before `before` (a Date).
+ */
+export function usageRunsPipeline(userId, { before = null, limit }) {
+  return [
+    { $match: { userId } },
+    { $sort: { createdAt: 1, _id: 1 } },
+    {
+      $group: {
+        _id: { $ifNull: ["$runId", { $toString: "$_id" }] },
+        createdAt: { $max: "$createdAt" },
+        startedAt: { $min: "$createdAt" },
+        kind: { $first: "$kind" },
+        command: { $first: "$command" },
+        requests: { $push: { model: "$model", credits: "$credits", charged: "$charged", ...Object.fromEntries(TOKEN_FIELDS.map((f) => [f, `$${f}`])) } },
+      },
+    },
+    ...(before ? [{ $match: { createdAt: { $lt: before } } }] : []),
+    { $sort: { createdAt: -1, _id: -1 } },
+    { $limit: limit },
+  ];
+}
+
+/**
+ * One run as the credits history shows it: its credits merged (`credits`, what the account was
+ * charged) and split by model (`models`, each with its provider, requests, tokens and credits).
+ */
+export function usageRun({ _id, createdAt, startedAt, kind, command, requests }) {
+  const models = new Map();
+  for (const r of requests) {
+    const name = r.model ?? "unknown";
+    const entry = models.get(name) ?? { model: name, provider: providerOf(r.model), requests: 0, credits: 0, ...Object.fromEntries(TOKEN_FIELDS.map((f) => [f, 0])) };
+    entry.requests += 1;
+    if (r.charged === true) entry.credits += r.credits ?? 0;
+    for (const f of TOKEN_FIELDS) entry[f] += r[f] ?? 0;
+    models.set(name, entry);
+  }
+  const list = [...models.values()];
+  return {
+    id: String(_id),
+    createdAt,
+    startedAt,
+    kind,
+    command: command ?? null,
+    // Charged when any request ran on the app's key; "own key" when every one ran on the account's.
+    charged: requests.some((r) => r.charged === true),
+    ownKey: requests.every((r) => r.charged === false),
+    credits: list.reduce((sum, m) => sum + m.credits, 0),
+    models: list,
+  };
+}
+
+/** The account's Claude and DeepSeek use, a run per entry, newest first. */
 export async function listClaudeUsage(userId, page) {
-  const docs = await historyPage(claudeUsage(), userId, page);
-  return docs.map(({ _id, userId: _u, ...rest }) => ({ id: _id.toHexString(), ...rest }));
+  const runs = await claudeUsage().aggregate(usageRunsPipeline(userId, page)).toArray();
+  return runs.map(usageRun);
+}
+
+/** The aggregation behind usageByProvider: charged credits, requests and tokens per provider. */
+export function usageByProviderPipeline(userId) {
+  const sum = (field) => ({ $sum: { $ifNull: [`$${field}`, 0] } });
+  return [
+    { $match: { userId } },
+    {
+      $group: {
+        _id: { $cond: [{ $regexMatch: { input: { $ifNull: ["$model", ""] }, regex: "^deepseek-" } }, "deepseek", "claude"] },
+        requests: { $sum: 1 },
+        credits: { $sum: { $cond: [{ $eq: ["$charged", true] }, { $ifNull: ["$credits", 0] }, 0] } },
+        ...Object.fromEntries(TOKEN_FIELDS.map((f) => [f, sum(f)])),
+      },
+    },
+  ];
+}
+
+/**
+ * The account's use split by provider (`providers.claude`, `providers.deepseek`) and merged
+ * (`credits`: everything charged, from the one balance both are paid from).
+ */
+export async function usageByProvider(userId) {
+  const rows = await claudeUsage().aggregate(usageByProviderPipeline(userId)).toArray();
+  return usageTotals(rows);
+}
+
+export function usageTotals(rows) {
+  const empty = () => ({ requests: 0, credits: 0, ...Object.fromEntries(TOKEN_FIELDS.map((f) => [f, 0])) });
+  const providers = { claude: empty(), deepseek: empty() };
+  for (const { _id, ...totals } of rows) Object.assign(providers[_id], totals);
+  return { credits: providers.claude.credits + providers.deepseek.credits, providers };
 }
 
 /** The account's credit purchases, newest first. */

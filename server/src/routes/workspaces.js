@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import express, { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
 import { config } from "../config.js";
@@ -176,7 +177,7 @@ workspacesRouter.post(
         if (claude.charged) {
           const siteId = await siteIdFor(key).catch(() => null);
           proxy = issueProxyToken({ userId: req.user.id, siteId, command: name });
-          env = jobEnv(proxy.apiKey, model, proxy.baseUrl);
+          env = jobEnv(proxy.apiKey, model, proxy.baseUrl, config.fastPageModel);
         } else {
           env = jobEnv(claude.apiKey, model);
         }
@@ -455,8 +456,10 @@ workspacesRouter.post(
       noClaude = err.message;
     }
     const siteId = await siteIdFor(key).catch(() => null);
+    // Every merge Claude does for this update is one entry in the credits history.
+    const runId = randomUUID();
     const onUsage = (message) =>
-      meterClaude({ userId, siteId, kind: "site-update", model: message.model, requestedModel: model, usage: message.usage, charged: claude.charged });
+      meterClaude({ userId, siteId, runId, kind: "site-update", model: message.model, requestedModel: model, usage: message.usage, charged: claude.charged });
     const release = acquire(key, "updating the site");
     const endActivity = claude ? beginClaudeActivity(userId) : () => {};
     try {

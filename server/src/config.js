@@ -10,6 +10,15 @@ function required(name) {
   return value;
 }
 
+/** The cheaper page model (a deepseek-* id), or null: needs DEEPSEEK_API_KEY, off with FAST_PAGE_MODEL=off. */
+function fastPageModel() {
+  if (!process.env.DEEPSEEK_API_KEY?.trim()) return null;
+  const chosen = process.env.FAST_PAGE_MODEL?.trim() || "deepseek-flash";
+  if (chosen === "off") return null;
+  if (!/^deepseek-[\w.-]+$/.test(chosen)) throw new Error(`FAST_PAGE_MODEL must be a deepseek-* model or "off", not "${chosen}".`);
+  return chosen;
+}
+
 function dataKey() {
   // Trimmed: a stray space pasted after the value shouldn't stop the server.
   const hex = required("DATA_ENCRYPTION_KEY").trim();
@@ -54,6 +63,12 @@ export const config = {
   // talk to Claude through the metering proxy (claude-proxy.js). Unset, only accounts with their
   // own key can use Claude.
   platformAnthropicKey: process.env.PLATFORM_ANTHROPIC_KEY?.trim() || null,
+  // The app's DeepSeek key. With it, the metering proxy sends deepseek-* requests to DeepSeek, and
+  // Claude commands on credits get `fastPageModel` as TWINSTACK_FAST_MODEL: the site's page editor
+  // uses it for routine page work once the site has a design to follow, and falls back to the
+  // account's Claude model when its result fails the checks. FAST_PAGE_MODEL=off turns that off.
+  deepseekKey: process.env.DEEPSEEK_API_KEY?.trim() || null,
+  fastPageModel: fastPageModel(),
   // Buying credits adds them at once without taking a payment, until a payment provider is set
   // up. On by default; set CREDITS_DEMO_PURCHASES=false to turn buying off.
   demoPurchases: process.env.CREDITS_DEMO_PURCHASES !== "false",

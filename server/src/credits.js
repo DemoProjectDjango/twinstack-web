@@ -26,6 +26,10 @@ const PRICES = {
   "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2 },
   "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2 },
   "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1 },
+  // DeepSeek (claude-proxy.js) at its peak-hour prices, which are double the off-peak ones, so a
+  // request is never charged too little.
+  "deepseek-flash": { input: 0.3, output: 1.2, cacheRead: 0.006 },
+  "deepseek-v4-pro": { input: 1.32, output: 3.96, cacheRead: 0.044 },
 };
 const UNKNOWN_PRICE = { input: 15, output: 75, cacheRead: 1.5 };
 const WEB_SEARCH_USD = 0.01;
@@ -98,14 +102,15 @@ export async function hasCredits(userId) {
 }
 
 /**
- * Records one finished Claude request and charges it when it ran on the app's key. Never throws:
- * a failed record mustn't fail the work Claude already did.
+ * Records one finished Claude (or DeepSeek, through the proxy) request and charges it when it ran
+ * on the app's key. `runId` groups the requests of one job, assistant answer or site update for
+ * the credits history. Never throws: a failed record mustn't fail the work already done.
  */
-export async function meterClaude({ userId, siteId, kind, command, model, requestedModel, usage, charged }) {
+export async function meterClaude({ userId, siteId, runId, kind, command, model, requestedModel, usage, charged }) {
   if (!usage) return;
   try {
     const credits = creditsFor(usage, model, requestedModel);
-    await recordClaudeUsage({ userId, siteId, kind, command, model: model ?? requestedModel, usage, credits, charged });
+    await recordClaudeUsage({ userId, siteId, runId, kind, command, model: model ?? requestedModel, usage, credits, charged });
   } catch (err) {
     console.error(`Couldn't record Claude usage for account ${userId}:`, err);
   }

@@ -6,7 +6,7 @@ import { refreshCredits } from "@/lib/credits";
 import { api } from "@/lib/site-api";
 
 type ClaudeModel = { id: string; name: string; description: string };
-type Settings = { ownKeys?: boolean; anthropicKey: string | null; model?: string; models?: ClaudeModel[] };
+type Settings = { ownKeys?: boolean; anthropicKey: string | null; model?: string; assistantModel?: string; models?: ClaudeModel[] };
 
 /**
  * The model Claude uses, and (only while the server allows own keys, `ownKeys`) the user's own
@@ -19,6 +19,7 @@ export function AnthropicKey() {
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [model, setModel] = useState<string | null>(null);
+  const [assistantModel, setAssistantModel] = useState<string | null>(null);
   const [models, setModels] = useState<ClaudeModel[]>([]);
 
   useEffect(() => {
@@ -28,6 +29,8 @@ export function AnthropicKey() {
         // Servers from before credits always took a key.
         setOwnKeys(s.ownKeys ?? true);
         setModel(s.model ?? null);
+        // Servers from before the assistant had its own model don't send it.
+        setAssistantModel(s.assistantModel ?? null);
         setModels(s.models ?? []);
       })
       .catch(() => setSaved(null));
@@ -145,13 +148,54 @@ export function AnthropicKey() {
         </>
       )}
 
-      {model && models.length > 0 && <ModelPicker model={model} models={models} onSaved={setModel} />}
+      {model && models.length > 0 && (
+        <ModelPicker
+          name="claude-model"
+          path="/api/settings/model"
+          title={assistantModel ? "Which Claude writes your pages" : "Which Claude to use"}
+          description={
+            assistantModel
+              ? "Used when Claude designs, writes or changes a page. More capable models use more credits."
+              : "Used when Claude writes or changes your pages and when you ask Claude. More capable models use more credits."
+          }
+          model={model}
+          models={models}
+          onSaved={setModel}
+        />
+      )}
+      {assistantModel && models.length > 0 && (
+        <ModelPicker
+          name="assistant-model"
+          path="/api/settings/assistant-model"
+          title="Which Claude answers in Ask Claude"
+          description="Ask Claude reads your site, plans and suggests changes; the pages themselves are still written by the Claude above. Sonnet does this well for about half the credits."
+          model={assistantModel}
+          models={models}
+          onSaved={setAssistantModel}
+        />
+      )}
     </section>
   );
 }
 
-/** Which Claude model writes pages and answers in Ask Claude. Saved as soon as one is picked. */
-function ModelPicker({ model, models, onSaved }: { model: string; models: ClaudeModel[]; onSaved: (model: string) => void }) {
+/** One model choice (the page writer's or the assistant's). Saved as soon as one is picked. */
+function ModelPicker({
+  name,
+  path,
+  title,
+  description,
+  model,
+  models,
+  onSaved,
+}: {
+  name: string;
+  path: string;
+  title: string;
+  description: string;
+  model: string;
+  models: ClaudeModel[];
+  onSaved: (model: string) => void;
+}) {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNote, setSavedNote] = useState(false);
@@ -162,7 +206,7 @@ function ModelPicker({ model, models, onSaved }: { model: string; models: Claude
     setError(null);
     setSavedNote(false);
     try {
-      const s = await api<{ model: string }>("/api/settings/model", { method: "PUT", body: { model: id } });
+      const s = await api<{ model: string }>(path, { method: "PUT", body: { model: id } });
       onSaved(s.model);
       setSavedNote(true);
     } catch (err) {
@@ -174,11 +218,9 @@ function ModelPicker({ model, models, onSaved }: { model: string; models: Claude
 
   return (
     <fieldset className="mt-6 border-t border-zinc-200 pt-5 dark:border-zinc-800" disabled={working}>
-      <legend className="sr-only">Claude model</legend>
-      <h3 className="font-medium">Which Claude to use</h3>
-      <p className="mt-1 text-sm text-zinc-500">
-        Used when Claude writes or changes your pages and when you ask Claude. More capable models use more credits.
-      </p>
+      <legend className="sr-only">{title}</legend>
+      <h3 className="font-medium">{title}</h3>
+      <p className="mt-1 text-sm text-zinc-500">{description}</p>
       <div className="mt-3 grid gap-2">
         {models.map((m) => (
           <label
@@ -187,7 +229,7 @@ function ModelPicker({ model, models, onSaved }: { model: string; models: Claude
           >
             <input
               type="radio"
-              name="claude-model"
+              name={name}
               value={m.id}
               checked={m.id === model}
               onChange={() => void choose(m.id)}

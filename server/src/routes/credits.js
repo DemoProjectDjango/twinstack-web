@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { config } from "../config.js";
 import { CREDITS_PER_USD, MAX_PURCHASE, PURCHASE_STEP, creditsView } from "../credits.js";
-import { addPurchasedCredits, listClaudeUsage, listCreditPurchases } from "../db.js";
+import { addPurchasedCredits, listClaudeUsage, listCreditPurchases, usageByProvider } from "../db.js";
 import { requireAuth } from "../session.js";
 import { handle, requireJson } from "./helpers.js";
 
@@ -21,7 +21,11 @@ creditsRouter.get(
   }),
 );
 
-/** `?type=usage|purchases&before=<ISO date>&limit=<1-100>`, newest first. */
+/**
+ * `?type=usage|purchases&before=<ISO date>&limit=<1-100>`, newest first. Usage comes a run per
+ * item (one job or assistant answer, its credits merged and split by model), and its newest page
+ * also carries `summary`: the credits used, merged and split by provider (Claude, DeepSeek).
+ */
 creditsRouter.get(
   "/history",
   handle(async (req, res) => {
@@ -30,8 +34,11 @@ creditsRouter.get(
     const before = typeof req.query.before === "string" ? new Date(req.query.before) : null;
     if (before && Number.isNaN(before.getTime())) return res.status(400).json({ error: "That date isn't valid." });
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 25, 1), 100);
-    const items = await list(req.user.id, { before, limit });
-    res.json({ items, more: items.length === limit });
+    const [items, summary] = await Promise.all([
+      list(req.user.id, { before, limit }),
+      req.query.type === "usage" && !before ? usageByProvider(req.user.id) : null,
+    ]);
+    res.json({ items, more: items.length === limit, ...(summary && { summary }) });
   }),
 );
 
