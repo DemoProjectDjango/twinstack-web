@@ -15,8 +15,12 @@ import { config } from "./config.js";
 //   assistantConversations  the "Ask Claude" chats: one active conversation per
 //               user and site (siteId = GitHub repo id), with the exact Claude
 //               message history, what the chat shows and the proposed changes
-//   claudeUsage one document per Claude request the server makes for a user
-//               (tokens in and out), for metering Claude use per account
+//   claudeUsage one document per Claude request made for a user (tokens in and
+//               out, and the credits it cost), the account's usage history
+//   creditPurchases  one document per purchase of Claude credits
+//
+// An account's Claude credits are users.credits ({ balance, granted, purchased,
+// used }), changed only with $inc so concurrent requests can't lose an update.
 //
 // Account ids leave this module as 24-character hex strings.
 
@@ -36,7 +40,10 @@ export async function connectDb() {
     workLogForgotten().createIndex({ siteId: 1, line: 1 }, { unique: true }),
     conversations().createIndex({ userId: 1, siteId: 1, archived: 1, updatedAt: -1 }),
     claudeUsage().createIndex({ userId: 1, createdAt: -1 }),
+    creditPurchases().createIndex({ userId: 1, createdAt: -1 }),
   ]);
+  // Accounts from before credits get the free allowance once.
+  await users().updateMany({ credits: { $exists: false } }, { $set: { credits: startingCredits() } });
 }
 
 export async function closeDb() {
@@ -49,6 +56,7 @@ const workLog = () => db.collection("workLog");
 const workLogForgotten = () => db.collection("workLogForgotten");
 const conversations = () => db.collection("assistantConversations");
 const claudeUsage = () => db.collection("claudeUsage");
+const creditPurchases = () => db.collection("creditPurchases");
 
 function objectId(id) {
   return ObjectId.isValid(id) ? new ObjectId(id) : null;
@@ -110,7 +118,7 @@ export function publicUser(doc) {
 
 export async function createUser({ email, name, passwordHash }) {
   const now = new Date();
-  const doc = { email, name, passwordHash, createdAt: now, lastLoginAt: now, loginCount: 1 };
+  const doc = { email, name, passwordHash, createdAt: now, lastLoginAt: now, loginCount: 1, credits: startingCredits() };
   try {
     const { insertedId } = await users().insertOne(doc);
     return { ...doc, _id: insertedId };
@@ -343,17 +351,72 @@ export async function archiveConversations(userId, siteId) {
   await conversations().updateMany({ userId, siteId, archived: false }, { $set: { archived: true, archivedAt: new Date() } });
 }
 
-/** One Claude request made for a user, for metering. `usage` is the API's usage object. */
-export async function recordClaudeUsage({ userId, siteId, kind, model, usage }) {
+/* ---------------------------------------------------------------- credits */
+
+/** Every account starts with this many credits (credits.js prices them). */
+export const FREE_CREDITS = 10_000;
+
+function startingCredits() {
+  return { balance: FREE_CREDITS, granted: FREE_CREDITS, purchased: 0, used: 0 };
+}
+
+/** `{ balance, granted, purchased, used }` for the account. */
+export async function getCredits(id) {
+  const doc = await users().findOne({ _id: objectId(id) }, { projection: { credits: 1 } });
+  return { ...startingCredits(), ...doc?.credits };
+}
+
+/**
+ * One Claude request made for a user: its tokens, and the credits it cost when `charged` (Claude ran
+ * on the app's key). Charging may take the balance below zero: a request is only refused before it
+ * starts. `usage` is the API's usage object.
+ */
+export async function recordClaudeUsage({ userId, siteId = null, kind, command = null, model, usage, credits = 0, charged = false }) {
+  if (charged && credits > 0) {
+    await users().updateOne({ _id: objectId(userId) }, { $inc: { "credits.balance": -credits, "credits.used": credits } });
+  }
   await claudeUsage().insertOne({
     userId,
     siteId,
     kind,
+    command,
     model,
     inputTokens: usage.input_tokens ?? 0,
     outputTokens: usage.output_tokens ?? 0,
     cacheReadTokens: usage.cache_read_input_tokens ?? 0,
     cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+    webSearches: usage.server_tool_use?.web_search_requests ?? 0,
+    credits,
+    charged,
     createdAt: new Date(),
   });
+}
+
+/** A completed purchase: the credits are added at once. `provider` is "demo" until payments exist. */
+export async function addPurchasedCredits({ userId, credits, priceCents, currency, provider }) {
+  const now = new Date();
+  const purchase = { credits, priceCents, currency, provider, status: "paid", createdAt: now, paidAt: now };
+  // A copy: insertOne adds _id to the document it's given.
+  const { insertedId } = await creditPurchases().insertOne({ userId, ...purchase });
+  await users().updateOne({ _id: objectId(userId) }, { $inc: { "credits.balance": credits, "credits.purchased": credits } });
+  return { id: insertedId.toHexString(), ...purchase };
+}
+
+const historyPage = (collection, userId, { before, limit }) =>
+  collection
+    .find({ userId, ...(before && { createdAt: { $lt: before } }) })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
+
+/** The account's Claude requests, newest first, `limit` at a time from before `before` (a Date). */
+export async function listClaudeUsage(userId, page) {
+  const docs = await historyPage(claudeUsage(), userId, page);
+  return docs.map(({ _id, userId: _u, ...rest }) => ({ id: _id.toHexString(), ...rest }));
+}
+
+/** The account's credit purchases, newest first. */
+export async function listCreditPurchases(userId, page) {
+  const docs = await historyPage(creditPurchases(), userId, page);
+  return docs.map(({ _id, userId: _u, ...rest }) => ({ id: _id.toHexString(), ...rest }));
 }

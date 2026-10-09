@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { claudeAccess, type ClaudeAccess } from "@/lib/claude";
+import { claudeAccess } from "@/lib/claude";
+import { useCredits } from "@/lib/credits";
 import { cantManage, type Repo } from "@/lib/repos";
 import { CreateSite } from "./CreateSite";
 import { GitHubIcon } from "./GitHubIcon";
@@ -21,15 +22,12 @@ const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
  */
 export function Dashboard({ githubLogin }: { githubLogin: string | null }) {
   const [sites, setSites] = useState<Sites>(githubLogin ? { status: "loading" } : { status: "ready", repos: [] });
-  const [claude, setClaude] = useState<ClaudeAccess | null>(null);
+  const credits = useCredits();
+  const claude = credits ? claudeAccess(credits) : null;
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/settings")
-      .then((res) => (res.ok ? res.json() : { anthropicKey: null }))
-      .then((s: { anthropicKey: string | null }) => !cancelled && setClaude(claudeAccess(s)))
-      .catch(() => !cancelled && setClaude(claudeAccess({ anthropicKey: null })));
     if (githubLogin) {
       // Fetched from the browser so the page renders while GitHub responds.
       fetch("/api/repos")

@@ -49,6 +49,14 @@ export const config = {
   // 256-bit key that encrypts secrets stored in MongoDB (users' Anthropic keys).
   // Separate from JWT_SECRET so rotating sessions doesn't make stored keys unreadable.
   dataKey: dataKey(),
+  // The app's own Anthropic key. Claude runs on it for every account without a key of its own,
+  // paid for with the account's credits (credits.js). It never reaches the site's scripts: they
+  // talk to Claude through the metering proxy (claude-proxy.js). Unset, only accounts with their
+  // own key can use Claude.
+  platformAnthropicKey: process.env.PLATFORM_ANTHROPIC_KEY?.trim() || null,
+  // Buying credits adds them at once without taking a payment, until a payment provider is set
+  // up. On by default; set CREDITS_DEMO_PURCHASES=false to turn buying off.
+  demoPurchases: process.env.CREDITS_DEMO_PURCHASES !== "false",
   // The site repo users copy. Only it can be duplicated, it is never managed
   // directly, and only copies of it can be managed.
   siteTemplate: (process.env.SITE_TEMPLATE_REPO || "DemoProjectDjango/twinstack-site").toLowerCase(),

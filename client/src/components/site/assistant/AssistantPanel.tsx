@@ -135,7 +135,7 @@ export function AssistantPanel() {
       <footer className="border-t border-zinc-200 p-3 dark:border-zinc-800">
         {!claude.ready ? (
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Claude needs setting up before you can ask it things.{" "}
+            {claude.reason}{" "}
             <Link href={claude.setupHref} className="font-medium underline">
               {claude.setupLabel}
             </Link>

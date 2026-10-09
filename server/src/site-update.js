@@ -242,8 +242,8 @@ function block(name, buffer) {
   return `<${name}>\n${buffer.toString("utf8")}\n</${name}>`;
 }
 
-/** Claude's merge of one conflicting text file, checked before it's used. */
-async function mergeWithClaude(client, model, conflict) {
+/** Claude's merge of one conflicting text file, checked before it's used. `onUsage(message)` meters the request. */
+async function mergeWithClaude(client, model, conflict, onUsage) {
   const { file, ours, base, theirs, marked } = conflict;
   if ([ours, base, theirs].some((b) => b.length > MAX_MERGE_CHARS)) {
     throw new Error(`${file} is too big to merge automatically.`);
@@ -259,6 +259,7 @@ async function mergeWithClaude(client, model, conflict) {
     betas: ["server-side-fallback-2026-07-01"],
   });
   const message = await stream.finalMessage();
+  await onUsage?.(message);
   if (message.stop_reason === "refusal") throw new Error(`Claude declined to merge ${file}.`);
   if (message.stop_reason === "max_tokens") throw new Error(`Claude's merge of ${file} was cut off.`);
   const reply = message.content.filter((b) => b.type === "text").map((b) => b.text).join("");
@@ -342,7 +343,11 @@ function identity(user) {
  * The job's steps for installing the template's newest commit into the copy's published site (see the
  * top of this file). `cleanup` must run when the job ends, whatever happened.
  */
-export function siteUpdateSteps({ key, accessToken, user, anthropicKey, model }) {
+/**
+ * `anthropicKey` is null when Claude can't run (`noClaude` says why); `onUsage(message)` records and
+ * charges each of its requests.
+ */
+export function siteUpdateSteps({ key, accessToken, user, anthropicKey, model, noClaude, onUsage }) {
   const dir = workspaceDir(key);
   const work = updateDir(key);
   const before = updateDir(key, "-before");
@@ -449,13 +454,13 @@ export function siteUpdateSteps({ key, accessToken, user, anthropicKey, model })
         const files = s.conflicts.map((c) => c.file).join(", ");
         if (!anthropicKey) {
           throw new Error(
-            `You changed ${files}, and so does this update. Claude combines the two: add your Anthropic API key in Settings and try again. Nothing on your site has changed.`,
+            `You changed ${files}, and so does this update. Claude combines the two, but it can't run: ${noClaude ?? "set up Claude in Settings."} Try again then. Nothing on your site has changed.`,
           );
         }
         const client = anthropicClient(anthropicKey);
         for (const conflict of s.conflicts) {
           log(`  Claude is combining ${conflict.file}…`);
-          await fs.writeFile(path.join(work, conflict.file), await mergeWithClaude(client, model, conflict));
+          await fs.writeFile(path.join(work, conflict.file), await mergeWithClaude(client, model, conflict, onUsage));
         }
       },
     },
@@ -520,7 +525,7 @@ export function siteUpdateSteps({ key, accessToken, user, anthropicKey, model })
         log("Your site is updated. It goes live in a minute or two.");
         // Published: from here on nothing may fail the job.
         try {
-          const resolve = anthropicKey ? (conflict) => mergeWithClaude(anthropicClient(anthropicKey), model, conflict) : null;
+          const resolve = anthropicKey ? (conflict) => mergeWithClaude(anthropicClient(anthropicKey), model, conflict, onUsage) : null;
           await syncEditor(dir, branch, accessToken, log, resolve);
           if (s.installed) await adoptDependencies(key, dir, work);
         } catch (err) {

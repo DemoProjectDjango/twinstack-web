@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { CLAUDE_SETUP_HREF } from "@/lib/claude";
+import { BUY_CREDITS_HREF, CLAUDE_SETUP_HREF } from "@/lib/claude";
 import { ApiError } from "@/lib/site-api";
 
 const VARIANTS = {
@@ -72,6 +72,11 @@ export function ErrorText({ error }: { error: unknown }) {
       {error instanceof ApiError && error.needsAnthropicKey && (
         <Link href={CLAUDE_SETUP_HREF} className="font-medium underline">
           Set up Claude
+        </Link>
+      )}
+      {error instanceof ApiError && error.outOfCredits && (
+        <Link href={BUY_CREDITS_HREF} className="font-medium underline">
+          Buy credits
         </Link>
       )}
     </p>

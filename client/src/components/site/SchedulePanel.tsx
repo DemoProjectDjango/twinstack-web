@@ -149,7 +149,7 @@ export function SchedulePanel() {
             Run due jobs
           </Button>
           <span className="text-xs text-zinc-500">
-            The preview prints what Claude would be sent, without calling it.{!claude.ready && ` Writing pages needs Claude: ${claude.setupLabel.toLowerCase()} in Settings.`}
+            The preview prints what Claude would be sent, without calling it.{!claude.ready && ` ${claude.reason}`}
           </span>
         </div>
       </Section>

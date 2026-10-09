@@ -32,8 +32,20 @@ function addUsage(total, usage) {
  * proposals) so the browser can show progress; `onUpdate` is called after each change to it.
  * Returns the messages to append to the history, the proposals and the token usage. `model` is
  * the account's choice (getClaudeModel); a fallback after a refusal may answer with another.
+ * `onMessage(message)` is called after each request (to record and charge it), and before each
+ * request after the first `canContinue()` says whether the account can still pay for one.
  */
-export async function runTurn({ client, key, model: requested, history, live, onUpdate = () => {}, signal }) {
+export async function runTurn({
+  client,
+  key,
+  model: requested,
+  history,
+  live,
+  onUpdate = () => {},
+  onMessage = async () => {},
+  canContinue = async () => true,
+  signal,
+}) {
   const messages = [...history];
   const start = history.length;
   const usage = emptyUsage();
@@ -53,6 +65,11 @@ export async function runTurn({ client, key, model: requested, history, live, on
 
   async function loop() {
     for (let step = 0; step < MAX_STEPS; step++) {
+      if (step > 0 && !(await canContinue())) {
+        live.parts.push({ type: "text", text: "I've stopped here because your Claude credits have run out. Buy more credits, then tell me to carry on." });
+        stopReason = "out_of_credits";
+        break;
+      }
       const stream = client.beta.messages.stream(
         {
           model: requested,
@@ -110,6 +127,7 @@ export async function runTurn({ client, key, model: requested, history, live, on
         continue;
       }
       addUsage(usage, message.usage);
+      await onMessage(message);
       model = message.model ?? model;
       stopReason = message.stop_reason;
       // Placeholders become real parts below (or go, if the call was refused).

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { claudeAccess } from "@/lib/claude";
+import { useCredits } from "@/lib/credits";
 import { confirmModal } from "@/lib/confirm";
 import { ApiError, api, setBeforeChange, workspacePath, type Job, type Overview, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
 import { AskClaude } from "./assistant/AskClaude";
@@ -58,7 +59,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   const [status, setRawStatus] = useState<WorkspaceStatus | null>(null);
   const [openError, setOpenError] = useState<unknown>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [anthropicKey, setAnthropicKey] = useState<string | null>(null);
+  const credits = useCredits();
   const [job, setJob] = useState<Job | null>(null);
   const [runError, setRunError] = useState<unknown>(null);
   const [version, setVersion] = useState(0);
@@ -191,13 +192,9 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     let cancelled = false;
     (async () => {
       try {
-        const [opened, settings] = await Promise.all([
-          api<WorkspaceStatus>(workspacePath(owner, repo, "/open"), { method: "POST", body: {} }),
-          api<{ anthropicKey: string | null }>("/api/settings"),
-        ]);
+        const opened = await api<WorkspaceStatus>(workspacePath(owner, repo, "/open"), { method: "POST", body: {} });
         if (cancelled) return;
         setRawStatus(opened);
-        setAnthropicKey(settings.anthropicKey);
         api<Overview>(workspacePath(owner, repo, "/overview"))
           .then((o) => !cancelled && setOverview(o))
           .catch(() => {});
@@ -398,7 +395,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     repo,
     status,
     overview,
-    claude: claudeAccess({ anthropicKey }),
+    claude: claudeAccess(credits),
     job,
     busy,
     version,

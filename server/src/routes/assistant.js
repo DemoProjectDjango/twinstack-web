@@ -15,15 +15,8 @@ import {
 import { composeUserMessage, knowledgeSection } from "../assistant/prompt.js";
 import { TOOLSET_VERSION, applyServerAction } from "../assistant/tools.js";
 import { anthropicClient, runTurn } from "../assistant/turn.js";
-import {
-  archiveConversations,
-  createConversation,
-  findConversation,
-  getAnthropicKey,
-  getClaudeModel,
-  recordClaudeUsage,
-  updateConversation,
-} from "../db.js";
+import { archiveConversations, createConversation, findConversation, getClaudeModel, updateConversation } from "../db.js";
+import { ClaudeAccessError, beginClaudeActivity, claudeFilesKeyFor, claudeKeyFor, hasCredits, meterClaude } from "../credits.js";
 import { getAccessToken } from "../github.js";
 import { logWork, readDataFile, recentWorkLog } from "../site-files.js";
 import { WorkspaceError, getStatus, siteIdFor } from "../workspace.js";
@@ -132,7 +125,7 @@ function pendingOutcomes(conversation) {
 
 function friendlyError(err) {
   if (err instanceof Anthropic.APIUserAbortError) return "Stopped.";
-  if (err instanceof Anthropic.AuthenticationError) return "Your Anthropic API key was rejected. Check it in Settings.";
+  if (err instanceof Anthropic.AuthenticationError) return "Claude didn't accept the API key. If you added your own Anthropic key, check it in Settings.";
   if (err instanceof Anthropic.PermissionDeniedError) return "Your Anthropic account can't use this Claude model.";
   if (err instanceof Anthropic.RateLimitError) return "Claude is getting too many requests right now. Try again in a minute.";
   if (err instanceof Anthropic.InternalServerError) return "Claude is overloaded right now. Try again shortly.";
@@ -159,7 +152,7 @@ assistantRouter.post(
     if (current && runningTurnFor(current.id)) throw new WorkspaceError("Wait for Claude to finish, or stop it first.", 409);
     await archiveConversations(req.user.id, siteId);
     if (current?.attachments?.length) {
-      const apiKey = await getAnthropicKey(req.user.id);
+      const apiKey = await claudeFilesKeyFor(req.user.id);
       await deleteAttachments(apiKey ? anthropicClient(apiKey) : null, keyFor(req), current.attachments);
     }
     res.json({ conversation: null });
@@ -186,9 +179,12 @@ assistantRouter.post(
     if (attachmentIds.length > MAX_ATTACHMENTS) throw new WorkspaceError(`Attach at most ${MAX_ATTACHMENTS} files to a message.`, 400);
     if (continuing && attachmentIds.length) throw new WorkspaceError("Attach files to your own messages.", 400);
 
-    const apiKey = await getAnthropicKey(userId);
-    if (!apiKey) {
-      return res.status(400).json({ error: "anthropic_key_required", message: "Set up Claude in Settings to ask Claude." });
+    let claude;
+    try {
+      claude = await claudeKeyFor(userId);
+    } catch (err) {
+      if (!(err instanceof ClaudeAccessError)) throw err;
+      return res.status(err.status).json({ error: err.code, message: err.message });
     }
     const model = await getClaudeModel(userId);
 
@@ -208,7 +204,7 @@ assistantRouter.post(
     }
 
     // Attached files go to Claude by reference (Files API): read once, never re-sent.
-    const client = anthropicClient(apiKey);
+    const client = anthropicClient(claude.apiKey);
     const attachments = [];
     for (const id of attachmentIds) {
       const meta = await readAttachmentMeta(key, id);
@@ -256,6 +252,7 @@ assistantRouter.post(
       finishedAt: null,
     };
     turns.set(turn.id, turn);
+    const endActivity = beginClaudeActivity(userId);
 
     (async () => {
       let result = null;
@@ -267,6 +264,10 @@ assistantRouter.post(
           history: conversation.messages,
           live: turn.live,
           signal: turn.controller.signal,
+          // Each request is charged as soon as it's done, so the balance moves while Claude works.
+          onMessage: (message) =>
+            meterClaude({ userId, siteId, kind: "assistant", model: message.model, requestedModel: model, usage: message.usage, charged: claude.charged }),
+          canContinue: () => (claude.charged ? hasCredits(userId) : true),
         });
         turn.status = "done";
       } catch (err) {
@@ -293,13 +294,13 @@ assistantRouter.post(
           $set: actions,
           ...(usage && { $inc: Object.fromEntries(Object.entries(usage).map(([k, v]) => [`usage.${k}`, v])) }),
         });
-        if (usage) await recordClaudeUsage({ userId, siteId, kind: "assistant", model: result.model, usage });
       } catch (err) {
         console.error("Couldn't save the assistant turn:", err);
         turn.status = "failed";
         turn.error = "Claude's answer couldn't be saved.";
       } finally {
         turn.finishedAt = Date.now();
+        endActivity();
       }
     })();
 
@@ -420,11 +421,16 @@ assistantRouter.post(
   express.json({ limit: `${Math.ceil((MAX_ATTACHMENT_BYTES * 4) / 3 / 1024 / 1024) + 2}mb` }),
   handle(async (req, res) => {
     const { key } = await siteOf(req);
-    const apiKey = await getAnthropicKey(req.user.id);
-    if (!apiKey) return res.status(400).json({ error: "anthropic_key_required", message: "Set up Claude in Settings to attach files." });
+    let claude;
+    try {
+      claude = await claudeKeyFor(req.user.id);
+    } catch (err) {
+      if (!(err instanceof ClaudeAccessError)) throw err;
+      return res.status(err.status).json({ error: err.code, message: err.message });
+    }
     const { meta, publicMeta } = await saveAttachment(key, req.body ?? {});
     // If this fails it's tried again when the message is sent.
-    await ensureUploaded(anthropicClient(apiKey), key, meta).catch((err) => console.error(`Couldn't upload ${meta.id} to Claude:`, err.message));
+    await ensureUploaded(anthropicClient(claude.apiKey), key, meta).catch((err) => console.error(`Couldn't upload ${meta.id} to Claude:`, err.message));
     res.status(201).json({ attachment: publicMeta });
   }),
 );

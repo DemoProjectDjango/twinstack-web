@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getUser } from "@/lib/session";
+import { CreditBadge } from "./CreditBadge";
 import { NavLinks } from "./NavLinks";
 
 export async function Navbar() {
@@ -22,6 +23,7 @@ export async function Navbar() {
         <div className="ml-auto flex items-center gap-3">
           {user ? (
             <>
+              <CreditBadge />
               <Link
                 href="/settings"
                 title={`${user.email}: settings`}

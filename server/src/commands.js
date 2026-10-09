@@ -437,8 +437,9 @@ const PASS_ENV = new Set(
 );
 
 // `model` is the account's Claude model (TWINSTACK_MODEL); copies whose scripts predate it use
-// their own site.config.json → automation.model instead.
-export function jobEnv(anthropicKey, model) {
+// their own site.config.json → automation.model instead. `baseUrl` is the metering proxy's, when
+// `anthropicKey` is one of its job tokens (claude-proxy.js) rather than the account's own key.
+export function jobEnv(anthropicKey, model, baseUrl = null) {
   const env = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (PASS_ENV.has(name.toUpperCase())) env[name] = value;
@@ -450,7 +451,7 @@ export function jobEnv(anthropicKey, model) {
     env.ANTHROPIC_API_KEY = anthropicKey;
     if (model) env.TWINSTACK_MODEL = model;
     // Lets the server route Claude calls through a proxy (or a mock in tests).
-    if (process.env.ANTHROPIC_BASE_URL) env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
+    if (baseUrl ?? process.env.ANTHROPIC_BASE_URL) env.ANTHROPIC_BASE_URL = baseUrl ?? process.env.ANTHROPIC_BASE_URL;
   }
   return env;
 }

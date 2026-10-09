@@ -1,7 +1,9 @@
 import express, { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
 import { config } from "../config.js";
-import { getAnthropicKey, getClaudeModel } from "../db.js";
+import { getClaudeModel } from "../db.js";
+import { issueProxyToken } from "../claude-proxy.js";
+import { ClaudeAccessError, beginClaudeActivity, claudeKeyFor, meterClaude } from "../credits.js";
 import { getAccessToken, readRepoFile } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
 import {
@@ -66,6 +68,7 @@ import {
   getStatus,
   openWorkspace,
   resetToDefault,
+  siteIdFor,
   workspaceDir,
 } from "../workspace.js";
 
@@ -151,26 +154,49 @@ workspacesRouter.post(
     const input = req.body?.input ?? {};
     const steps = command.steps(input);
     const needsKey = command.needsKey?.(input) ?? false;
-    const anthropicKey = needsKey ? await getAnthropicKey(req.user.id) : null;
-    if (needsKey && !anthropicKey) {
-      return res.status(400).json({
-        error: "anthropic_key_required",
-        message: "Add your Anthropic API key on the dashboard to run Claude commands.",
-      });
+    let claude = null;
+    if (needsKey) {
+      try {
+        claude = await claudeKeyFor(req.user.id);
+      } catch (err) {
+        if (!(err instanceof ClaudeAccessError)) throw err;
+        return res.status(err.status).json({ error: err.code, message: err.message });
+      }
     }
 
     const release = acquire(key, command.label);
-    const env = jobEnv(anthropicKey, needsKey ? await getClaudeModel(req.user.id) : null);
+    let env = jobEnv(null, null);
+    // On credits the script gets a job token for the metering proxy, never the app's key.
+    let proxy = null;
+    let endActivity = () => {};
     let workLog = null;
     try {
+      if (claude) {
+        const model = await getClaudeModel(req.user.id);
+        if (claude.charged) {
+          const siteId = await siteIdFor(key).catch(() => null);
+          proxy = issueProxyToken({ userId: req.user.id, siteId, command: name });
+          env = jobEnv(proxy.apiKey, model, proxy.baseUrl);
+        } else {
+          env = jobEnv(claude.apiKey, model);
+        }
+        endActivity = beginClaudeActivity(req.user.id);
+      }
       await command.prepare?.(key, input);
       // Claude reads the site's latest work log before every run, merged or not.
       if (command.claude) workLog = await prepareWorkLog(key);
       if (workLog) env.TWINSTACK_WORK_LOG = WORK_LOG_FOR_RUN;
     } catch (err) {
+      proxy?.revoke();
+      endActivity();
       release();
       throw err;
     }
+    const finish = () => {
+      proxy?.revoke();
+      endActivity();
+      release();
+    };
     const job = startJob({
       key,
       userId: req.user.id,
@@ -181,7 +207,7 @@ workspacesRouter.post(
       env,
       // Saved before the lock is released, so no later run rewrites the file first. A
       // failed queue run may still have written (and logged) the edits before it failed.
-      release: workLog ? () => collectWorkLog(key, workLog).finally(release) : release,
+      release: workLog ? () => collectWorkLog(key, workLog).finally(finish) : finish,
       onSuccess: command.onSuccess && (() => command.onSuccess(key)),
       onEnd: command.onEnd && ((result) => command.onEnd(key, result)),
     });
@@ -417,10 +443,24 @@ workspacesRouter.post(
     const key = keyFor(req);
     const accessToken = await getAccessToken(req, res);
     // Only for Claude combining files both sides changed, in this process; never handed to the site's scripts.
-    const [anthropicKey, model] = await Promise.all([getAnthropicKey(req.user.id), getClaudeModel(req.user.id)]);
-    const release = acquire(key, "updating the site");
+    // Without Claude the update still runs, and stops only if it needs a merge.
+    const userId = req.user.id;
+    const model = await getClaudeModel(userId);
+    let claude = null;
+    let noClaude = null;
     try {
-      const { steps, cleanup } = siteUpdateSteps({ key, accessToken, user: req.user.github, anthropicKey, model });
+      claude = await claudeKeyFor(userId);
+    } catch (err) {
+      if (!(err instanceof ClaudeAccessError)) throw err;
+      noClaude = err.message;
+    }
+    const siteId = await siteIdFor(key).catch(() => null);
+    const onUsage = (message) =>
+      meterClaude({ userId, siteId, kind: "site-update", model: message.model, requestedModel: model, usage: message.usage, charged: claude.charged });
+    const release = acquire(key, "updating the site");
+    const endActivity = claude ? beginClaudeActivity(userId) : () => {};
+    try {
+      const { steps, cleanup } = siteUpdateSteps({ key, accessToken, user: req.user.github, anthropicKey: claude?.apiKey ?? null, model, noClaude, onUsage });
       const job = startJob({
         key,
         userId: req.user.id,
@@ -429,10 +469,15 @@ workspacesRouter.post(
         steps,
         cwd: workspaceDir(key),
         env: jobEnv(null, null),
-        release: () => cleanup().finally(release),
+        release: () =>
+          cleanup().finally(() => {
+            endActivity();
+            release();
+          }),
       });
       res.status(202).json({ job });
     } catch (err) {
+      endActivity();
       release();
       throw err;
     }

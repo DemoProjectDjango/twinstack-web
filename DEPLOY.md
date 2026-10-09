@@ -313,6 +313,12 @@ MONGODB_DB=twinstack
 # Keep this repo private: anyone who can read it can duplicate it and build sites here.
 SITE_TEMPLATE_REPO=DemoProjectDjango/twinstack-site
 WORKSPACES_DIR=/var/lib/twinstack/workspaces
+
+# The app's Anthropic key: Claude runs on it for every account without its own key, paid for
+# with the account's credits. Leave it out and only accounts with their own key can use Claude.
+PLATFORM_ANTHROPIC_KEY=sk-ant-...
+# Buying credits is a demo (credits added, nothing paid) until payments exist; false turns it off.
+CREDITS_DEMO_PURCHASES=true
 ```
 
 Lock it down and create the web app's settings file:

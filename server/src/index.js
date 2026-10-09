@@ -4,6 +4,8 @@ import { config } from "./config.js";
 import { connectDb, recordSiteCopy } from "./db.js";
 import { isTemplate, withSiteRoles } from "./sites.js";
 import { authRouter } from "./routes/auth.js";
+import { creditsRouter } from "./routes/credits.js";
+import { startClaudeProxy } from "./claude-proxy.js";
 import { previewRouter } from "./routes/preview.js";
 import { settingsRouter } from "./routes/settings.js";
 import { jobsRouter, workspacesRouter } from "./routes/workspaces.js";
@@ -105,6 +107,7 @@ app.post("/api/repos/:owner/:repo/duplicate", requireAuth, requireGithub, async 
 });
 
 app.use("/api/settings", settingsRouter);
+app.use("/api/credits", creditsRouter);
 app.use("/api/workspaces", workspacesRouter);
 app.use("/api/jobs", jobsRouter);
 app.use("/api/preview", previewRouter);
@@ -118,6 +121,9 @@ app.use((req, res) => {
 // Fail fast: without the database nothing that needs sign-in works.
 await connectDb();
 console.log(`Connected to MongoDB (${config.mongo.dbName})`);
+// Claude commands run on credits reach Claude only through it.
+await startClaudeProxy();
+if (!config.platformAnthropicKey) console.log("PLATFORM_ANTHROPIC_KEY isn't set: only accounts with their own Anthropic key can use Claude.");
 
 app.listen(config.port, config.host, () => {
   console.log(`API listening on http://${config.host ?? "localhost"}:${config.port}`);

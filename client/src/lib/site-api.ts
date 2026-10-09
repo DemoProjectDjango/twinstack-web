@@ -1,6 +1,8 @@
 // Browser-side client for the site workspace API (proxied to Express by the
 // /api rewrite in next.config.ts).
 
+import { claudeStarted } from "./credits-store";
+
 export type Change = { path: string; status: "added" | "modified" | "deleted" | "renamed"; untracked: boolean };
 
 export type WorkspaceStatus = {
@@ -462,7 +464,14 @@ export class ApiError extends Error {
   get needsAnthropicKey() {
     return this.code === "anthropic_key_required";
   }
+
+  get outOfCredits() {
+    return this.code === "credits_exhausted";
+  }
 }
+
+// Requests that may start Claude: the credits badge follows the run from then on.
+const STARTS_CLAUDE = /\/(commands\/[^/]+|assistant\/messages|site-update)$/;
 
 // Runs before every request that changes something (not job polling or cancelling): the site
 // editor uses it to stop its own preview rebuild, which would otherwise hold the workspace lock.
@@ -485,6 +494,7 @@ export async function api<T>(path: string, { method = "GET", body }: { method?: 
     throw new ApiError("Network error. Check your connection and try again.", 0);
   }
   const data = await res.json().catch(() => ({}));
+  if (method !== "GET" && STARTS_CLAUDE.test(path) && (res.ok || res.status === 402)) claudeStarted();
   if (!res.ok) {
     const code = typeof data.error === "string" && /^[a-z_]+$/.test(data.error) ? data.error : undefined;
     const message =
