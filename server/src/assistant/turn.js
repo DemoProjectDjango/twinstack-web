@@ -29,7 +29,9 @@ const CONTEXT_EDITS = [
   },
 ];
 
-const PROPOSED = "Shown to the owner as a card. It is NOT applied yet: they'll apply or skip it, and the next message will tell you which.";
+const OUT_OF_CREDITS_NOTE = "I've stopped here because your Claude credits have run out. Buy more credits, then tell me to carry on.";
+
+const PROPOSED ="Shown to the owner as a card. It is NOT applied yet: they'll apply or skip it, and the next message will tell you which.";
 
 export function anthropicClient(apiKey) {
   return new Anthropic({ apiKey, ...(process.env.ANTHROPIC_BASE_URL && { baseURL: process.env.ANTHROPIC_BASE_URL }) });
@@ -46,20 +48,11 @@ function addUsage(total, usage) {
  * proposals) so the browser can show progress; `onUpdate` is called after each change to it.
  * Returns the messages to append to the history, the proposals and the token usage. `model` is
  * the account's assistant model (getAssistantModel); a fallback after a refusal may answer with another.
- * `onMessage(message)` is called after each request (to record and charge it), and before each
- * request after the first `canContinue()` says whether the account can still pay for one.
+ * `beginSpend()` starts each request's Spend (credits.js), which caps its max_tokens, watches it as
+ * it streams and charges it; null means the account can't pay for another request. A request cut
+ * off because the credits ran out keeps the text it wrote, and the turn ends there.
  */
-export async function runTurn({
-  client,
-  key,
-  model: requested,
-  history,
-  live,
-  onUpdate = () => {},
-  onMessage = async () => {},
-  canContinue = async () => true,
-  signal,
-}) {
+export async function runTurn({ client, key, model: requested, history, live, onUpdate = () => {}, beginSpend, signal }) {
   const messages = [...history];
   const start = history.length;
   const usage = emptyUsage();
@@ -79,30 +72,37 @@ export async function runTurn({
 
   async function loop() {
     for (let step = 0; step < MAX_STEPS; step++) {
-      if (step > 0 && !(await canContinue())) {
-        live.parts.push({ type: "text", text: "I've stopped here because your Claude credits have run out. Buy more credits, then tell me to carry on." });
+      const params = {
+        model: requested,
+        max_tokens: MAX_TOKENS,
+        system: SYSTEM_PROMPT,
+        tools: TOOL_DEFINITIONS,
+        messages,
+        output_config: { effort: "medium" },
+        cache_control: CACHE,
+        context_management: { edits: CONTEXT_EDITS },
+        fallbacks: "default",
+        betas: BETAS,
+      };
+      const spend = await beginSpend();
+      params.max_tokens = spend?.maxTokens(MAX_TOKENS, params) ?? 0;
+      if (!params.max_tokens) {
+        await spend?.finish();
+        live.parts.push({ type: "text", text: OUT_OF_CREDITS_NOTE });
         stopReason = "out_of_credits";
         break;
       }
-      const stream = client.beta.messages.stream(
-        {
-          model: requested,
-          max_tokens: MAX_TOKENS,
-          system: SYSTEM_PROMPT,
-          tools: TOOL_DEFINITIONS,
-          messages,
-          output_config: { effort: "medium" },
-          cache_control: CACHE,
-          context_management: { edits: CONTEXT_EDITS },
-          fallbacks: "default",
-          betas: BETAS,
-        },
-        { signal },
-      );
+      const stream = client.beta.messages.stream(params, { signal });
 
       // Text streams into the current text part; a tool call shows as "Reading the site plan".
       const blockParts = new Map();
-      stream.on("streamEvent", (event) => {
+      let cutOff = null;
+      stream.on("streamEvent", (event, snapshot) => {
+        // The credits are spent down to the overdraft limit: stop Claude, keeping what it wrote.
+        if (!cutOff && spend.track(event)) {
+          cutOff = snapshot ?? { content: [] };
+          stream.abort();
+        }
         if (event.type === "content_block_start") {
           const block = event.content_block;
           if (block.type === "text") {
@@ -134,18 +134,40 @@ export async function runTurn({
       try {
         message = await stream.finalMessage();
       } catch (err) {
-        // With eager input streaming, a tool input that isn't valid JSON rejects the stream. Ask
-        // again (the failed request added nothing to the history); API errors go to the caller.
-        if (err instanceof Anthropic.APIError || err instanceof Anthropic.APIUserAbortError || step === MAX_STEPS - 1) throw err;
-        live.parts = live.parts.filter((p) => !p.pending);
-        continue;
+        // A request stopped part-way (by the owner, an error, or the credits) is charged for what
+        // it used up to then.
+        if (!spend.stopped) {
+          addUsage(usage, spend.usage);
+          await spend.finish();
+          // With eager input streaming, a tool input that isn't valid JSON rejects the stream. Ask
+          // again (the failed request added nothing to the history); API errors go to the caller.
+          if (err instanceof Anthropic.APIError || err instanceof Anthropic.APIUserAbortError || step === MAX_STEPS - 1) throw err;
+          live.parts = live.parts.filter((p) => !p.pending);
+          continue;
+        }
       }
-      addUsage(usage, message.usage);
-      await onMessage(message);
-      model = message.model ?? model;
-      stopReason = message.stop_reason;
+      if (spend.stopped) {
+        addUsage(usage, spend.usage);
+        await spend.finish();
+      } else {
+        // Each request is charged as soon as it's done, so the balance moves while Claude works.
+        addUsage(usage, message.usage);
+        await spend.finish({ model: message.model, usage: message.usage });
+        model = message.model ?? model;
+      }
       // Placeholders become real parts below (or go, if the call was refused).
       live.parts = live.parts.filter((p) => !p.pending && !(p.type === "text" && !p.text));
+
+      // Out of credits: cut off at the overdraft limit, or at the max_tokens the balance allowed.
+      // The text written so far stays in the conversation; a half-written tool call never runs.
+      if (spend.stopped || (spend.clamped && message.stop_reason === "max_tokens")) {
+        const content = (message ?? cutOff).content.filter((b) => b.type === "text" && b.text);
+        if (content.length) messages.push({ role: "assistant", content });
+        live.parts.push({ type: "text", text: OUT_OF_CREDITS_NOTE });
+        stopReason = "out_of_credits";
+        break;
+      }
+      stopReason = message.stop_reason;
 
       if (stopReason === "refusal") {
         if (message.content.length) messages.push({ role: "assistant", content: message.content });

@@ -4,7 +4,7 @@ import { COMMANDS, jobEnv } from "../commands.js";
 import { config } from "../config.js";
 import { getClaudeModel } from "../db.js";
 import { issueProxyToken } from "../claude-proxy.js";
-import { ClaudeAccessError, beginClaudeActivity, claudeKeyFor, meterClaude } from "../credits.js";
+import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeKeyFor } from "../credits.js";
 import { getAccessToken, readRepoFile } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
 import {
@@ -458,12 +458,11 @@ workspacesRouter.post(
     const siteId = await siteIdFor(key).catch(() => null);
     // Every merge Claude does for this update is one entry in the credits history.
     const runId = randomUUID();
-    const onUsage = (message) =>
-      meterClaude({ userId, siteId, runId, kind: "site-update", model: message.model, requestedModel: model, usage: message.usage, charged: claude.charged });
+    const startSpend = () => beginSpend({ userId, siteId, runId, kind: "site-update", charged: claude.charged });
     const release = acquire(key, "updating the site");
     const endActivity = claude ? beginClaudeActivity(userId) : () => {};
     try {
-      const { steps, cleanup } = siteUpdateSteps({ key, accessToken, user: req.user.github, anthropicKey: claude?.apiKey ?? null, model, noClaude, onUsage });
+      const { steps, cleanup } = siteUpdateSteps({ key, accessToken, user: req.user.github, anthropicKey: claude?.apiKey ?? null, model, noClaude, beginSpend: startSpend });
       const job = startJob({
         key,
         userId: req.user.id,

@@ -16,7 +16,7 @@ import { composeUserMessage, knowledgeSection } from "../assistant/prompt.js";
 import { TOOLSET_VERSION, applyServerAction } from "../assistant/tools.js";
 import { anthropicClient, runTurn } from "../assistant/turn.js";
 import { archiveConversations, createConversation, findConversation, getAssistantModel, updateConversation } from "../db.js";
-import { ClaudeAccessError, beginClaudeActivity, claudeFilesKeyFor, claudeKeyFor, hasCredits, meterClaude } from "../credits.js";
+import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeFilesKeyFor, claudeKeyFor } from "../credits.js";
 import { getAccessToken } from "../github.js";
 import { logWork, readDataFile, recentWorkLog } from "../site-files.js";
 import { WorkspaceError, getStatus, siteIdFor } from "../workspace.js";
@@ -264,10 +264,9 @@ assistantRouter.post(
           history: conversation.messages,
           live: turn.live,
           signal: turn.controller.signal,
-          // Each request is charged as soon as it's done, so the balance moves while Claude works.
-          onMessage: (message) =>
-            meterClaude({ userId, siteId, runId: turn.id, kind: "assistant", model: message.model, requestedModel: model, usage: message.usage, charged: claude.charged }),
-          canContinue: () => (claude.charged ? hasCredits(userId) : true),
+          // Each request is capped to the balance, watched as it streams and charged as soon as it's
+          // done, so the balance moves while Claude works and stops at the overdraft limit.
+          beginSpend: () => beginSpend({ userId, siteId, runId: turn.id, kind: "assistant", charged: claude.charged }),
         });
         turn.status = "done";
       } catch (err) {

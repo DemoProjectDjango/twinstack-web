@@ -242,14 +242,17 @@ function block(name, buffer) {
   return `<${name}>\n${buffer.toString("utf8")}\n</${name}>`;
 }
 
-/** Claude's merge of one conflicting text file, checked before it's used. `onUsage(message)` meters the request. */
-async function mergeWithClaude(client, model, conflict, onUsage) {
+/**
+ * Claude's merge of one conflicting text file, checked before it's used. `beginSpend()` starts the
+ * request's Spend (credits.js), which caps, watches and charges it; null means no credits are left.
+ */
+async function mergeWithClaude(client, model, conflict, beginSpend) {
   const { file, ours, base, theirs, marked } = conflict;
   if ([ours, base, theirs].some((b) => b.length > MAX_MERGE_CHARS)) {
     throw new Error(`${file} is too big to merge automatically.`);
   }
   const prompt = [`File: ${file}`, block("before", base), block("your_site", ours), block("the_update", theirs), block("git_attempt", marked)].join("\n\n");
-  const stream = client.beta.messages.stream({
+  const params = {
     model,
     max_tokens: MAX_TOKENS,
     system: MERGE_SYSTEM,
@@ -257,11 +260,28 @@ async function mergeWithClaude(client, model, conflict, onUsage) {
     output_config: { effort: "high" },
     fallbacks: "default",
     betas: ["server-side-fallback-2026-07-01"],
-  });
-  const message = await stream.finalMessage();
-  await onUsage?.(message);
+  };
+  const outOfCredits = `Your Claude credits ran out before Claude finished combining ${file}. Buy more credits, then try again.`;
+  const spend = await beginSpend();
+  params.max_tokens = spend?.maxTokens(MAX_TOKENS, params) ?? 0;
+  let message;
+  try {
+    if (!params.max_tokens) throw new Error(outOfCredits);
+    const stream = client.beta.messages.stream(params);
+    // A half-merged file is no use, so a merge that reaches the overdraft limit just stops.
+    stream.on("streamEvent", (event) => {
+      if (spend.track(event)) stream.abort();
+    });
+    try {
+      message = await stream.finalMessage();
+    } catch (err) {
+      throw spend.stopped ? new Error(outOfCredits) : err;
+    }
+  } finally {
+    await spend?.finish(message && !spend.stopped ? { model: message.model, usage: message.usage } : {});
+  }
   if (message.stop_reason === "refusal") throw new Error(`Claude declined to merge ${file}.`);
-  if (message.stop_reason === "max_tokens") throw new Error(`Claude's merge of ${file} was cut off.`);
+  if (message.stop_reason === "max_tokens") throw new Error(spend.clamped ? outOfCredits : `Claude's merge of ${file} was cut off.`);
   const reply = message.content.filter((b) => b.type === "text").map((b) => b.text).join("");
   const found = /<merged_file>\r?\n?([\s\S]*?)<\/merged_file>/.exec(reply);
   if (!found) throw new Error(`Claude's merge of ${file} came back in the wrong form.`);
@@ -344,10 +364,10 @@ function identity(user) {
  * top of this file). `cleanup` must run when the job ends, whatever happened.
  */
 /**
- * `anthropicKey` is null when Claude can't run (`noClaude` says why); `onUsage(message)` records and
- * charges each of its requests.
+ * `anthropicKey` is null when Claude can't run (`noClaude` says why); `beginSpend()` starts each of
+ * its requests' Spend (credits.js), which caps, records and charges it.
  */
-export function siteUpdateSteps({ key, accessToken, user, anthropicKey, model, noClaude, onUsage }) {
+export function siteUpdateSteps({ key, accessToken, user, anthropicKey, model, noClaude, beginSpend }) {
   const dir = workspaceDir(key);
   const work = updateDir(key);
   const before = updateDir(key, "-before");
@@ -460,7 +480,7 @@ export function siteUpdateSteps({ key, accessToken, user, anthropicKey, model, n
         const client = anthropicClient(anthropicKey);
         for (const conflict of s.conflicts) {
           log(`  Claude is combining ${conflict.file}…`);
-          await fs.writeFile(path.join(work, conflict.file), await mergeWithClaude(client, model, conflict, onUsage));
+          await fs.writeFile(path.join(work, conflict.file), await mergeWithClaude(client, model, conflict, beginSpend));
         }
       },
     },
@@ -525,7 +545,7 @@ export function siteUpdateSteps({ key, accessToken, user, anthropicKey, model, n
         log("Your site is updated. It goes live in a minute or two.");
         // Published: from here on nothing may fail the job.
         try {
-          const resolve = anthropicKey ? (conflict) => mergeWithClaude(anthropicClient(anthropicKey), model, conflict, onUsage) : null;
+          const resolve = anthropicKey ? (conflict) => mergeWithClaude(anthropicClient(anthropicKey), model, conflict, beginSpend) : null;
           await syncEditor(dir, branch, accessToken, log, resolve);
           if (s.installed) await adoptDependencies(key, dir, work);
         } catch (err) {

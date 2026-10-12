@@ -1,14 +1,16 @@
 import { randomBytes } from "node:crypto";
 import http from "node:http";
 import { config } from "./config.js";
-import { OUT_OF_CREDITS, hasCredits, meterClaude } from "./credits.js";
+import { OUT_OF_CREDITS, beginSpend } from "./credits.js";
 
 // The site's Claude scripts never see the app's Anthropic key: a copy is a repo its owner can
 // change, so its scripts could print any key they're given. Instead a Claude command run on
 // credits gets a one-off job token as ANTHROPIC_API_KEY and this proxy as ANTHROPIC_BASE_URL (every
-// version of the scripts reads both). The proxy checks the token and the balance, forwards the
-// request to Anthropic with the app's key, streams the reply straight back, and charges what the
-// reply's usage says. It listens on a loopback port of its own, so it isn't reachable through
+// version of the scripts reads both). The proxy checks the token and the balance, caps max_tokens to
+// what the balance buys (credits.js: OVERDRAFT), forwards the request to Anthropic with the app's
+// key, streams the reply back, and charges what the reply's usage says. A reply still running when
+// the account reaches the overdraft limit is stopped and ended as a "max_tokens" reply, so the
+// script keeps what was written. It listens on a loopback port of its own, so it isn't reachable through
 // Nginx, and a token only works while its job runs. Requests for deepseek-* models (the page
 // editor's cheaper model) are sent to DeepSeek instead, and charged the same way.
 
@@ -73,22 +75,22 @@ async function readBody(req) {
   return Buffer.concat(chunks);
 }
 
-/** Folds one streamed event into the request's usage (message_start, then cumulative message_delta). */
-function readEvent(data, state) {
-  let event;
+/** One streamed event's JSON, or null. */
+function parseEvent(raw) {
+  const data = raw
+    .split("\n")
+    .filter((l) => l.startsWith("data:"))
+    .map((l) => l.slice(5).trimStart())
+    .join("\n");
+  if (!data) return null;
   try {
-    event = JSON.parse(data);
+    return JSON.parse(data);
   } catch {
-    return;
-  }
-  if (event.type === "message_start" && event.message) {
-    state.model = event.message.model ?? state.model;
-    state.usage = { ...event.message.usage };
-  } else if (event.type === "message_delta" && event.usage) {
-    state.usage ??= {};
-    for (const [field, value] of Object.entries(event.usage)) if (value != null) state.usage[field] = value;
+    return null;
   }
 }
+
+const sse = (event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 
 async function handle(req, res) {
   const path = (req.url ?? "").split("?")[0];
@@ -98,19 +100,35 @@ async function handle(req, res) {
   const grant = typeof token === "string" ? grants.get(token) : null;
   if (!grant) return sendError(res, 401, "authentication_error", "This Claude run has ended. Start it again.");
   if (!config.platformAnthropicKey) return sendError(res, 503, "api_error", "Claude isn't available on this server.");
-  if (!(await hasCredits(grant.userId))) return sendError(res, 402, "billing_error", OUT_OF_CREDITS);
 
-  const body = await readBody(req);
+  let body = await readBody(req);
   if (!body) return sendError(res, 413, "request_too_large", "This request is too big to send to Claude.");
-  let requestedModel = null;
+  let request;
   try {
-    requestedModel = JSON.parse(body.toString("utf8")).model ?? null;
+    request = JSON.parse(body.toString("utf8"));
   } catch {
     return sendError(res, 400, "invalid_request_error", "The request isn't valid JSON.");
   }
-
+  if (!request || typeof request !== "object") return sendError(res, 400, "invalid_request_error", "The request isn't a Claude message.");
+  const requestedModel = request.model ?? null;
   const deepseek = isDeepseek(requestedModel);
   if (deepseek && !config.deepseekKey) return sendError(res, 400, "invalid_request_error", `${requestedModel} isn't available on this server.`);
+
+  const spend = await beginSpend({ ...grant, kind: "command" });
+  if (!spend) return sendError(res, 402, "billing_error", OUT_OF_CREDITS);
+  try {
+    // No more output than the balance pays for down to the overdraft limit.
+    const maxTokens = spend.maxTokens(request.max_tokens, request);
+    if (maxTokens === 0) return sendError(res, 402, "billing_error", OUT_OF_CREDITS);
+    if (maxTokens !== request.max_tokens) body = Buffer.from(JSON.stringify({ ...request, max_tokens: maxTokens }));
+    await forward(req, res, body, deepseek, spend);
+  } finally {
+    // A stopped reply is charged for what was used up to then.
+    await spend.finish();
+  }
+}
+
+async function forward(req, res, body, deepseek, spend) {
   const headers = { "x-api-key": deepseek ? config.deepseekKey : config.platformAnthropicKey };
   for (const name of FORWARD_HEADERS) if (req.headers[name]) headers[name] = req.headers[name];
   const controller = new AbortController();
@@ -124,45 +142,58 @@ async function handle(req, res) {
   for (const [name, value] of upstream.headers) if (RETURN_HEADERS.test(name)) replyHeaders[name] = value;
   res.writeHead(upstream.status, replyHeaders);
 
-  const state = { model: null, usage: null };
-  const streamed = /text\/event-stream/i.test(upstream.headers.get("content-type") ?? "");
+  const streamed = upstream.ok && /text\/event-stream/i.test(upstream.headers.get("content-type") ?? "");
   const decoder = new TextDecoder();
   let pending = "";
+  // The content block being streamed, closed for the script if the reply is cut off inside it.
+  let openBlock = null;
   const json = [];
   let jsonSize = 0;
   try {
     for await (const chunk of upstream.body ?? []) {
-      res.write(chunk);
-      if (!upstream.ok) continue;
-      if (streamed) {
-        pending += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
-        let end;
-        while ((end = pending.indexOf("\n\n")) !== -1) {
-          const lines = pending.slice(0, end).split("\n");
-          pending = pending.slice(end + 2);
-          const data = lines.filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trimStart()).join("\n");
-          if (data) readEvent(data, state);
+      if (!streamed) {
+        res.write(chunk);
+        if (upstream.ok && jsonSize < MAX_JSON_REPLY_BYTES) {
+          json.push(chunk);
+          jsonSize += chunk.length;
         }
-      } else if (jsonSize < MAX_JSON_REPLY_BYTES) {
-        json.push(chunk);
-        jsonSize += chunk.length;
+        continue;
+      }
+      // Whole events only, so the reply can end cleanly between any two of them.
+      pending += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
+      let end;
+      while ((end = pending.indexOf("\n\n")) !== -1) {
+        const raw = pending.slice(0, end);
+        pending = pending.slice(end + 2);
+        res.write(`${raw}\n\n`);
+        const event = parseEvent(raw);
+        if (event?.type === "content_block_start") openBlock = event.index;
+        else if (event?.type === "content_block_stop") openBlock = null;
+        if (spend.track(event)) {
+          // The credits are spent down to the overdraft limit: stop Claude, and end the reply as one
+          // cut off at its token limit, so the script keeps what was written.
+          controller.abort();
+          if (openBlock != null) res.write(sse({ type: "content_block_stop", index: openBlock }));
+          res.write(sse({ type: "message_delta", delta: { stop_reason: "max_tokens", stop_sequence: null }, usage: { output_tokens: spend.usage?.output_tokens ?? 0 } }));
+          res.end(sse({ type: "message_stop" }));
+          return;
+        }
       }
     }
+    if (pending) res.write(pending);
     res.end();
   } catch (err) {
     if (!controller.signal.aborted) console.error("Claude proxy stream failed:", err.message);
     res.destroy();
   } finally {
-    if (upstream.ok && !streamed && json.length) {
+    if (json.length) {
       try {
         const message = JSON.parse(Buffer.concat(json).toString("utf8"));
-        state.model = message.model ?? null;
-        state.usage = message.usage ?? null;
+        spend.track({ type: "message_start", message });
+        spend.track({ type: "message_delta", usage: message.usage ?? {} });
       } catch {
         // Not a message: nothing to charge.
       }
     }
-    // A stopped reply is charged for what was used up to then.
-    await meterClaude({ ...grant, kind: "command", model: state.model, requestedModel, usage: state.usage, charged: true });
   }
 }

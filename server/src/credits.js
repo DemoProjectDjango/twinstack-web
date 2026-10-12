@@ -96,24 +96,183 @@ export async function claudeFilesKeyFor(userId) {
   return (await ownKeyOf(userId)) ?? config.platformAnthropicKey;
 }
 
-/** Still above zero? Checked between the requests of a run that makes several. */
-export async function hasCredits(userId) {
-  return (await getCredits(userId)).balance > 0;
-}
-
 /**
  * Records one finished Claude (or DeepSeek, through the proxy) request and charges it when it ran
  * on the app's key. `runId` groups the requests of one job, assistant answer or site update for
- * the credits history. Never throws: a failed record mustn't fail the work already done.
+ * the credits history. Returns the credits charged. Never throws: a failed record mustn't fail the
+ * work already done.
  */
 export async function meterClaude({ userId, siteId, runId, kind, command, model, requestedModel, usage, charged }) {
-  if (!usage) return;
+  if (!usage) return 0;
   try {
     const credits = creditsFor(usage, model, requestedModel);
     await recordClaudeUsage({ userId, siteId, runId, kind, command, model: model ?? requestedModel, usage, credits, charged });
+    return charged ? credits : 0;
   } catch (err) {
     console.error(`Couldn't record Claude usage for account ${userId}:`, err);
+    return 0;
   }
+}
+
+/* ------------------------------------------------------------ spending */
+
+// A request on credits may take the balance this far below zero, and no further: its max_tokens is
+// capped to what the balance buys down to -OVERDRAFT, and its reply is watched as it streams and
+// cut off there (ending as a normal "max_tokens" reply, so what it wrote is kept). Every running
+// request of the account counts, so two at once stop at the same limit.
+export const OVERDRAFT = 200;
+
+// Replies report their output tokens only when they finish, so a running one is estimated from the
+// characters it has streamed. Thinking isn't streamed (it comes back empty), so max_tokens, which
+// counts it, is what bounds it.
+const CHARS_PER_TOKEN = 3.5;
+// An image or document sent by reference or as base64 counts as this many input tokens.
+const MEDIA_TOKENS = 1600;
+
+const creditsPerToken = (dollarsPerMillion) => (dollarsPerMillion / 1e6) * CREDITS_PER_USD;
+
+// Accounts with requests running on credits: { userId, balance, running: Set<Spend> }. `balance` is
+// the stored one (re-read as each request starts and ends); `running` is what isn't charged yet.
+const accounts = new Map();
+
+/** Credits the account has above zero, less what its running requests have used so far. */
+function left(account) {
+  let running = 0;
+  for (const spend of account.running) running += spend.credits;
+  return account.balance - running;
+}
+
+/** A rough count of a request's input tokens, without its base64 data, and whether it uses the cache. */
+function inputEstimate(body) {
+  let media = 0;
+  const text = JSON.stringify(body, (name, value) => {
+    if (name === "source" && value && typeof value === "object" && ["base64", "url", "file"].includes(value.type)) {
+      media++;
+      return null;
+    }
+    return value;
+  });
+  return { tokens: Math.ceil(text.length / CHARS_PER_TOKEN) + media * MEDIA_TOKENS, cached: text.includes('"cache_control"') };
+}
+
+/** Characters one streamed delta adds to the reply. */
+function deltaChars(delta) {
+  return (delta?.text ?? delta?.partial_json ?? delta?.thinking ?? "").length;
+}
+
+/** One Claude request, from its start to its charge. Made by beginSpend. */
+class Spend {
+  credits = 0;
+  model = null;
+  requestedModel = null;
+  /** True once the request was cut off at the overdraft limit. */
+  stopped = false;
+  /** True when max_tokens was lowered to fit the balance, so a "max_tokens" stop means the credits ran out. */
+  clamped = false;
+  #info;
+  #account;
+  #usage = null;
+  #final = false;
+  #chars = 0;
+  #done = false;
+
+  constructor(info, account) {
+    this.#info = info;
+    this.#account = account;
+  }
+
+  /**
+   * The max_tokens to send instead of `requested`: no more than the balance buys down to
+   * -OVERDRAFT, after the request's estimated input. 0 when nothing is left for any output.
+   */
+  maxTokens(requested, body) {
+    this.requestedModel = body.model ?? null;
+    if (!this.#account || !Number.isFinite(requested)) return requested;
+    const price = priceOf(this.requestedModel ?? "");
+    const input = inputEstimate(body);
+    const room = left(this.#account) + OVERDRAFT - input.tokens * creditsPerToken(input.cached ? price.cacheRead : price.input);
+    const allowed = Math.floor(room / creditsPerToken(price.output));
+    if (allowed >= requested) return requested;
+    this.clamped = true;
+    return Math.max(0, allowed);
+  }
+
+  /** Folds one streamed event into the request's usage. True when the request must stop now. */
+  track(event) {
+    if (event?.type === "message_start" && event.message) {
+      this.model = event.message.model ?? this.model;
+      this.#usage = { ...event.message.usage };
+    } else if (event?.type === "content_block_delta") {
+      this.#chars += deltaChars(event.delta);
+    } else if (event?.type === "message_delta" && event.usage) {
+      this.#usage ??= {};
+      for (const [field, value] of Object.entries(event.usage)) if (value != null) this.#usage[field] = value;
+      this.#final = true;
+    } else {
+      return this.stopped;
+    }
+    if (this.#account && this.#usage) {
+      this.credits = creditsFor(this.usage, this.model, this.requestedModel);
+      // A reply that has finished has nothing left to stop.
+      if (!this.#final && left(this.#account) <= -OVERDRAFT) this.stopped = true;
+    }
+    return this.stopped;
+  }
+
+  /** What the request has used: the reply's own count once it finished, else estimated so far. */
+  get usage() {
+    if (!this.#usage || this.#final) return this.#usage;
+    const streamed = Math.ceil(this.#chars / CHARS_PER_TOKEN);
+    return { ...this.#usage, output_tokens: Math.max(this.#usage.output_tokens ?? 0, streamed) };
+  }
+
+  /**
+   * Records and charges the request (a finished message's `model` and `usage` when given, else what
+   * was tracked), then stops counting it as running. Only the first call does anything.
+   */
+  async finish({ model, usage } = {}) {
+    if (this.#done) return;
+    this.#done = true;
+    const account = this.#account;
+    try {
+      await meterClaude({
+        ...this.#info,
+        model: model ?? this.model,
+        requestedModel: this.requestedModel,
+        usage: usage ?? this.usage,
+        charged: Boolean(account),
+      });
+      if (account) account.balance = (await getCredits(account.userId)).balance;
+    } catch (err) {
+      console.error(`Couldn't refresh the balance of account ${account?.userId}:`, err);
+    } finally {
+      if (account) {
+        account.running.delete(this);
+        if (!account.running.size) accounts.delete(account.userId);
+      }
+    }
+  }
+}
+
+/**
+ * Starts one Claude request: the Spend that caps, watches and charges it. `info` is what it's
+ * recorded against (`userId`, `siteId`, `runId`, `kind`, `command`); with `charged: false` (the
+ * account's own key) it's only recorded, never limited. Returns null when the account has nothing
+ * left above zero to start it with. Every Spend must end with `finish()`.
+ */
+export async function beginSpend({ charged = true, ...info }) {
+  if (!charged) return new Spend(info, null);
+  const { balance } = await getCredits(info.userId);
+  let account = accounts.get(info.userId);
+  if (account) account.balance = balance;
+  else accounts.set(info.userId, (account = { userId: info.userId, balance, running: new Set() }));
+  if (left(account) <= 0) {
+    if (!account.running.size) accounts.delete(info.userId);
+    return null;
+  }
+  const spend = new Spend(info, account);
+  account.running.add(spend);
+  return spend;
 }
 
 /* ------------------------------------------------------------ activity */
