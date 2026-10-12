@@ -264,8 +264,9 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
 
   /** Has Claude's writer produce a new version of the page, ready to keep: the same preview as the page editor's. */
   const writePage = useCallback(
-    async (file: string, instruction: string, images: string[] = []) => {
-      const job = await runAndWait("page-edit", { page: file, instruction, images, dryRun: true });
+    async (file: string, instruction: string, images: string[] = [], taskSize?: unknown) => {
+      // Claude's own "small"/"complex" label decides which model writes it (the server's task-size.js).
+      const job = await runAndWait("page-edit", { page: file, instruction, images, dryRun: true, ...(typeof taskSize === "string" && { taskSize }) });
       if (job.status !== "succeeded") throw new Error(`Claude couldn't write the page.\n${tail(job.output)}`);
       const { proposal } = await api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal"));
       if (!proposal || proposal.file !== file) throw new Error("Claude didn't come back with a new version of the page.");
@@ -288,13 +289,14 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
       await record(action, "running");
       switch (action.tool) {
         case "edit_page":
-          await writePage(input.file, input.instruction, images);
+          await writePage(input.file, input.instruction, images, input.taskSize);
           await record(action, "ready", "The new version is ready to look at.");
           return;
         case "design_header_and_footer": {
           // The same preview as the Design screen's "Design with Claude".
           const direction = typeof input.instruction === "string" ? String(input.instruction).trim() : "";
-          const job = await runAndWait("chrome-design", direction ? { instruction: direction, dryRun: true } : { dryRun: true });
+          const sized = typeof input.taskSize === "string" ? { taskSize: input.taskSize } : {};
+          const job = await runAndWait("chrome-design", direction ? { instruction: direction, dryRun: true, ...sized } : { dryRun: true, ...sized });
           if (job.status !== "succeeded") throw new Error(`Claude couldn't design the header and footer.
 ${tail(job.output)}`);
           const { proposal } = await api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal"));
@@ -333,7 +335,7 @@ ${tail(job.output)}`);
             await record(action, "applied", `Created ${file} (empty, ready to write).`, file);
             return;
           }
-          await writePage(file, `This is a new, empty page. Write it from scratch.\n\n${input.brief}`, images);
+          await writePage(file, `This is a new, empty page. Write it from scratch.\n\n${input.brief}`, images, input.taskSize);
           await record(action, "ready", `Created ${file}; its first version is ready to look at.`, file);
           return;
         }

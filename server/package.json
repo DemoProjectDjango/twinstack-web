@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "node --watch --env-file-if-exists=.env src/index.js",
     "start": "node --env-file-if-exists=.env src/index.js",
-    "record-copies": "node --env-file-if-exists=.env scripts/record-copies.js"
+    "record-copies": "node --env-file-if-exists=.env scripts/record-copies.js",
+    "check-task-size": "node scripts/check-task-size.js"
   },
   "type": "module",
   "dependencies": {

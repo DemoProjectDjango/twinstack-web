@@ -26,6 +26,9 @@ import { scanMissingPages } from "./missing-pages.js";
 // `claude: true` marks the commands that call Claude: the route hands each of
 // them the site's latest work log first (prepareWorkLog in site-files.js) and
 // saves what it logged afterwards.
+//
+// `sized` gives the instruction a command's task size is measured from (task-size.js): the route
+// passes the size to the script as TWINSTACK_TASK_SIZE, so only small work goes to the cheaper model.
 
 const NODE = process.execPath;
 const MINUTE = 60 * 1000;
@@ -70,6 +73,12 @@ function text(input, name, label, { max = 200, multiline = false, optional = fal
 }
 
 const flag = (input, name) => input?.[name] === true;
+
+/** What a command's task size is measured from: its instruction, images and the assistant's label. */
+function sizeOf(input) {
+  const hint = ["small", "complex"].includes(input?.taskSize) ? input.taskSize : null;
+  return { instruction: typeof input?.instruction === "string" ? input.instruction : "", images: Array.isArray(input?.images) ? input.images : [], hint };
+}
 
 const MARKDOWN_PAGE = /^content\/[\w./-]+\.md$/;
 const MAX_IMAGES = 6;
@@ -268,6 +277,7 @@ export const COMMANDS = {
   "page-edit": {
     label: "Edit with Claude",
     claude: true,
+    sized: sizeOf,
     // Even the preview asks Claude for the proposed file.
     needsKey: () => true,
     steps: (input) => {
@@ -283,6 +293,7 @@ export const COMMANDS = {
   "page-generate": {
     label: "Generate page with Claude",
     claude: true,
+    sized: sizeOf,
     needsKey: () => true,
     steps: (input) => {
       const args = [markdownPage(input), "--generate"];
@@ -299,6 +310,7 @@ export const COMMANDS = {
   "chrome-design": {
     label: "Design the header and footer with Claude",
     claude: true,
+    sized: sizeOf,
     needsKey: () => true,
     steps: (input) => {
       const args = ["--chrome"];
@@ -441,7 +453,9 @@ const PASS_ENV = new Set(
 // `anthropicKey` is one of its job tokens (claude-proxy.js) rather than the account's own key.
 // `fastModel` (TWINSTACK_FAST_MODEL) is the cheaper model the page editor may use for routine page
 // work; only the proxy can route it, so it's passed only with a proxy token. Older scripts ignore it.
-export function jobEnv(anthropicKey, model, baseUrl = null, fastModel = null) {
+// `taskSize` (TWINSTACK_TASK_SIZE, task-size.js) tells the script how big the request is: complex
+// work skips the cheaper model, small work may use it without a design to follow.
+export function jobEnv(anthropicKey, model, baseUrl = null, fastModel = null, taskSize = null) {
   const env = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (PASS_ENV.has(name.toUpperCase())) env[name] = value;
@@ -452,7 +466,10 @@ export function jobEnv(anthropicKey, model, baseUrl = null, fastModel = null) {
   if (anthropicKey) {
     env.ANTHROPIC_API_KEY = anthropicKey;
     if (model) env.TWINSTACK_MODEL = model;
-    if (fastModel && baseUrl) env.TWINSTACK_FAST_MODEL = fastModel;
+    if (fastModel && baseUrl) {
+      env.TWINSTACK_FAST_MODEL = fastModel;
+      if (taskSize) env.TWINSTACK_TASK_SIZE = taskSize;
+    }
     // Lets the server route Claude calls through a proxy (or a mock in tests).
     if (baseUrl ?? process.env.ANTHROPIC_BASE_URL) env.ANTHROPIC_BASE_URL = baseUrl ?? process.env.ANTHROPIC_BASE_URL;
   }

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import express, { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
+import { describeTaskSize, taskSize } from "../task-size.js";
 import { config } from "../config.js";
 import { getClaudeModel } from "../db.js";
 import { issueProxyToken } from "../claude-proxy.js";
@@ -141,6 +144,12 @@ workspacesRouter.post(
   }),
 );
 
+/** Whether the copy's page editor reads TWINSTACK_TASK_SIZE (task-size.js). */
+async function supportsTaskSize(key) {
+  const script = await readFile(path.join(workspaceDir(key), "scripts", "edit-page.js"), "utf8").catch(() => "");
+  return script.includes("TWINSTACK_TASK_SIZE");
+}
+
 workspacesRouter.post(
   "/:owner/:repo/commands/:command",
   handle(async (req, res) => {
@@ -172,13 +181,22 @@ workspacesRouter.post(
     let proxy = null;
     let endActivity = () => {};
     let workLog = null;
+    // How big the request is (task-size.js), when the cheaper model is in play at all.
+    let sized = null;
     try {
       if (claude) {
         const model = await getClaudeModel(req.user.id);
         if (claude.charged) {
           const siteId = await siteIdFor(key).catch(() => null);
           proxy = issueProxyToken({ userId: req.user.id, siteId, command: name });
-          env = jobEnv(proxy.apiKey, model, proxy.baseUrl, config.fastPageModel);
+          let fastModel = config.fastPageModel;
+          if (fastModel && command.sized) {
+            sized = taskSize(command.sized(input));
+            // Copies made before sizing ignore TWINSTACK_TASK_SIZE: keep complex work off the
+            // cheaper model by not offering it to them.
+            if (sized.size === "complex" && !(await supportsTaskSize(key))) fastModel = null;
+          }
+          env = jobEnv(proxy.apiKey, model, proxy.baseUrl, fastModel, sized?.size);
         } else {
           env = jobEnv(claude.apiKey, model);
         }
@@ -204,7 +222,8 @@ workspacesRouter.post(
       userId: req.user.id,
       command: name,
       label: command.label,
-      steps,
+      // The size goes at the top of the job's log, so the Build tools screen shows why a model ran.
+      steps: sized ? [{ display: describeTaskSize(sized), run: () => {} }, ...steps] : steps,
       cwd: workspaceDir(key),
       env,
       // Saved before the lock is released, so no later run rewrites the file first. A

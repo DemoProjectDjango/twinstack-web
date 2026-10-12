@@ -59,6 +59,17 @@ const summaryField = {
     description: "What this change does, in one or two short plain-language sentences for the site owner (no file paths or technical words). Shown on the card they apply.",
   },
 };
+// Which model writes it: small work goes to a faster, cheaper writer, complex work to Claude
+// (task-size.js; the label wins over the app's own rules, since only you know the conversation).
+const TASK_SIZES = ["small", "complex"];
+const taskSizeField = {
+  task_size: {
+    type: "string",
+    enum: TASK_SIZES,
+    description:
+      "How much design and building the change takes. small: changing or adding wording and facts, removing or hiding things, moving a part, one style tweak (a colour, a size), a plain section of text in the page's existing style. complex: anything interactive or animated (sliders, tabs, accordions, pop-ups, hover or scroll effects, forms, maps, embeds, scripts), a redesign or new look, layout changes or fixes for phones, a new section whose look has to be designed. When unsure, complex.",
+  },
+};
 const continueField = {
   continue_after: {
     type: "boolean",
@@ -167,10 +178,11 @@ const TOOLS = [
       file: { type: "string", description: "The page's file, e.g. content/pages/about.md" },
       instruction: { type: "string", description: "What to change, fully specified (up to 4000 characters)." },
       ...imagesField,
+      ...taskSizeField,
       ...summaryField,
       ...continueField,
     },
-    ["file", "instruction", "summary"],
+    ["file", "instruction", "task_size", "summary"],
     { kind: "change", runs: "client", title: "Change a page" },
   ),
   tool(
@@ -188,6 +200,7 @@ const TOOLS = [
       hidden: { type: "boolean", description: "Keep it off the published site until the owner unhides it." },
       brief: { type: "string", description: "Optional: what the page should say, complete and self-contained (facts, names, tone). Up to 4000 characters." },
       ...imagesField,
+      ...taskSizeField,
       ...summaryField,
       ...continueField,
     },
@@ -290,6 +303,7 @@ const TOOLS = [
     "Proposes a new design for the header and footer, which every page shows. A designer that knows the site designs both together in the look of its pages, and they are kept. Their content stays the site's: the menu, button and footer links (update_menu_and_footer), logo and copyright. Use it to change how they look; the designer can't see this conversation, so put the look the owner described in the instruction.",
     {
       instruction: { type: "string", description: "Optional: the look wanted, complete and self-contained (up to 4000 characters). Leave out to match the site's pages." },
+      ...taskSizeField,
       ...summaryField,
       ...continueField,
     },
@@ -539,6 +553,8 @@ async function prepareChange(name, input, key) {
   const summary = str(input, "summary", { max: 600 });
   const continueAfter = input?.continue_after === true;
   const base = { summary, continueAfter };
+  // The assistant's own label for how big a writing job is (taskSizeField); anything else is unlabelled.
+  const taskSize = TASK_SIZES.includes(input?.task_size) ? input.task_size : null;
 
   switch (name) {
     case "design_header_and_footer": {
@@ -546,14 +562,14 @@ async function prepareChange(name, input, key) {
       if (!overview.features?.chromeDesign) {
         throw new ToolInputError("This site's tools are older than header and footer design, so it can't be done here. Tell the owner.");
       }
-      return { ...base, input: { instruction: str(input, "instruction", { optional: true }) }, meta: {} };
+      return { ...base, input: { instruction: str(input, "instruction", { optional: true }), taskSize }, meta: {} };
     }
     case "edit_page": {
       const file = pageFileOf(input);
       const page = await readPage(key, file);
       return {
         ...base,
-        input: { file, instruction: str(input, "instruction"), images: await imagesOf(input, key) },
+        input: { file, instruction: str(input, "instruction"), images: await imagesOf(input, key), taskSize },
         meta: { title: titleOf(page.content) ?? file },
       };
     }
@@ -574,7 +590,7 @@ async function prepareChange(name, input, key) {
         }
         const existing = overview.collections.flatMap((c) => c.pages).find((p) => p.url === url);
         if (existing) throw new ToolInputError(`The site already has ${input.type === "homepage" ? "a homepage" : "that listing page"}: ${existing.file}. Use edit_page to change it.`);
-        return { ...base, input: { type: input.type, collection, title, slug: null, hidden: false, brief, images: await imagesOf(input, key) }, meta: { address: url } };
+        return { ...base, input: { type: input.type, collection, title, slug: null, hidden: false, brief, images: await imagesOf(input, key), taskSize }, meta: { address: url } };
       }
       const address = str(input, "address", { max: 200, optional: true })?.trim();
       if (address) {
@@ -584,11 +600,11 @@ async function prepareChange(name, input, key) {
         const folder = (u) => (u.endsWith("/") || path.posix.extname(u) ? u : `${u}/`);
         const existing = overview.collections.flatMap((c) => c.pages).find((p) => p.url && folder(p.url) === folder(address));
         if (existing) throw new ToolInputError(`${existing.file} is already at ${address}. Use edit_page to change it.`);
-        return { ...base, input: { type: "page", title, slug: null, address, hidden: false, brief, images: await imagesOf(input, key) }, meta: { address } };
+        return { ...base, input: { type: "page", title, slug: null, address, hidden: false, brief, images: await imagesOf(input, key), taskSize }, meta: { address } };
       }
       const slug = str(input, "slug", { max: 70, optional: true });
       if (slug && !/^[a-z0-9-]+$/.test(slug)) throw new ToolInputError("slug may only use lowercase letters, numbers and dashes.");
-      return { ...base, input: { type: input.type, title, slug, hidden: input?.hidden === true, brief, images: await imagesOf(input, key) }, meta: {} };
+      return { ...base, input: { type: input.type, title, slug, hidden: input?.hidden === true, brief, images: await imagesOf(input, key), taskSize }, meta: {} };
     }
     case "delete_page": {
       const file = pageFileOf(input);
