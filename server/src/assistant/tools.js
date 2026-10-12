@@ -21,7 +21,7 @@ import {
   writeSchedule,
 } from "../site-files.js";
 import { readCheckReport } from "../site-check.js";
-import { getStaticInfo, saveStaticInfo } from "../static-info.js";
+import { checkStaticInfo, getStaticInfo, saveStaticInfo } from "../static-info.js";
 import { WorkspaceError, commitAndPush, getStatus } from "../workspace.js";
 import { SYSTEM_PROMPT } from "./prompt.js";
 
@@ -299,7 +299,14 @@ const TOOLS = [
   tool(
     "update_site_details",
     "Proposes new data for one site-details section (read_site_details first). Send the section's complete data with the same fields and types; only change the values asked for.",
-    { section: { type: "string", description: "The section id." }, data: { description: "The section's complete new data." }, ...summaryField, ...continueField },
+    {
+      section: { type: "string", description: "The section id." },
+      // Typed, so the data comes as JSON itself rather than as a string of JSON. Most sections are
+      // objects; redirects is a list.
+      data: { anyOf: [{ type: "object" }, { type: "array" }], description: "The section's complete new data: the same object (or list) read_site_details returned, with only the asked-for values changed. Not a string." },
+      ...summaryField,
+      ...continueField,
+    },
     ["section", "data", "summary"],
     { kind: "change", runs: "server", title: "Change the site details" },
   ),
@@ -665,7 +672,19 @@ async function prepareChange(name, input, key) {
       const section = sections.find((s) => s.id === id);
       if (!section) throw new ToolInputError(`Unknown section "${id}". Sections: ${sections.map((s) => s.id).join(", ")}.`);
       if (input?.data === undefined) throw new ToolInputError("data is required.");
-      return { ...base, input: { section: id, data: input.data }, meta: { before: section.data, label: section.label, file: section.file } };
+      // A JSON string is read as the data; anything that wouldn't save goes back to Claude now,
+      // not to the owner as a change that fails when applied.
+      let data = input.data;
+      if (typeof data === "string") {
+        try {
+          data = JSON.parse(data);
+        } catch {
+          throw new ToolInputError("data must be the section's object (or list), not text.");
+        }
+      }
+      const problem = await checkStaticInfo(key, id, data);
+      if (problem) throw new ToolInputError(`${problem} Send the section's complete data from read_site_details with only the asked-for values changed.`);
+      return { ...base, input: { section: id, data }, meta: { before: section.data, label: section.label, file: section.file } };
     }
     case "update_logo_settings": {
       if (!isPlainObject(input?.brand)) throw new ToolInputError("brand must be an object.");

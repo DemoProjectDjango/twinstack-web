@@ -29,6 +29,19 @@ const CONTEXT_EDITS = [
   },
 ];
 
+// The instructions and tools are the same for every conversation and every account, so they're cached
+// on their own (a breakpoint after the system prompt) and shared: a new or long-idle conversation then
+// reads them at a tenth of the price instead of writing them again. `sharedCachedAt` is when this
+// server last sent them, so the cost estimate knows they're probably cached.
+const SYSTEM = [{ type: "text", text: SYSTEM_PROMPT, cache_control: CACHE }];
+const SHARED_TOKENS = Math.ceil(JSON.stringify({ SYSTEM_PROMPT, TOOL_DEFINITIONS }).length / 3.5);
+const CACHE_FRESH_MS = 55 * 60 * 1000;
+let sharedCachedAt = 0;
+
+/** What to tell the owner when a request was refused although they still have credits. */
+const tooCostlyNote = ({ needed, balance }) =>
+  `I've stopped before starting, because picking this conversation up again would cost about ${needed.toLocaleString("en")} credits and you have ${balance.toLocaleString("en")}. Claude re-reads a whole conversation when it's been idle for a while. Start a new conversation (top right) to carry on for much less, or buy more credits.`;
+
 const OUT_OF_CREDITS_NOTE = "I've stopped here because your Claude credits have run out. Buy more credits, then tell me to carry on.";
 
 const PROPOSED ="Shown to the owner as a card. It is NOT applied yet: they'll apply or skip it, and the next message will tell you which.";
@@ -50,32 +63,37 @@ function addUsage(total, usage) {
  * the account's assistant model (getAssistantModel); a fallback after a refusal may answer with another.
  * `beginSpend()` starts each request's Spend (credits.js), which caps its max_tokens, watches it as
  * it streams and charges it; null means the account can't pay for another request. A request cut
- * off because the credits ran out keeps the text it wrote, and the turn ends there.
+ * off because the credits ran out keeps the text it wrote, and the turn ends there. `cachedTokens`:
+ * how much of the history is still in Claude's cache (the conversation's last request, if it was
+ * within the hour), so the first request's cost is estimated right; later ones use the step before.
+ * The result's `lastPrompt` is the last request's size, for the next turn's `cachedTokens`.
  */
-export async function runTurn({ client, key, model: requested, history, live, onUpdate = () => {}, beginSpend, signal }) {
+export async function runTurn({ client, key, model: requested, history, live, onUpdate = () => {}, beginSpend, cachedTokens = 0, signal }) {
   const messages = [...history];
   const start = history.length;
   const usage = emptyUsage();
   const actions = [];
   let model = requested;
   let stopReason = null;
+  let lastPrompt = 0;
+  const promptSize = (u) => (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0) + (u?.cache_creation_input_tokens ?? 0);
 
   try {
     await loop();
   } catch (err) {
     // Whatever finished before the error (complete steps only) is still part of the conversation.
-    err.partial = { appended: messages.slice(start), actions, usage, model };
+    err.partial = { appended: messages.slice(start), actions, usage, model, lastPrompt };
     throw err;
   }
   onUpdate();
-  return { appended: messages.slice(start), actions, usage, model, stopReason };
+  return { appended: messages.slice(start), actions, usage, model, stopReason, lastPrompt };
 
   async function loop() {
     for (let step = 0; step < MAX_STEPS; step++) {
       const params = {
         model: requested,
         max_tokens: MAX_TOKENS,
-        system: SYSTEM_PROMPT,
+        system: SYSTEM,
         tools: TOOL_DEFINITIONS,
         messages,
         output_config: { effort: "medium" },
@@ -85,10 +103,11 @@ export async function runTurn({ client, key, model: requested, history, live, on
         betas: BETAS,
       };
       const spend = await beginSpend();
-      params.max_tokens = spend?.maxTokens(MAX_TOKENS, params) ?? 0;
+      const sharedWarm = Date.now() - sharedCachedAt < CACHE_FRESH_MS ? SHARED_TOKENS : 0;
+      params.max_tokens = spend?.maxTokens(MAX_TOKENS, params, { cachedTokens: Math.max(sharedWarm, step === 0 ? cachedTokens : lastPrompt) }) ?? 0;
       if (!params.max_tokens) {
         await spend?.finish();
-        live.parts.push({ type: "text", text: OUT_OF_CREDITS_NOTE });
+        live.parts.push({ type: "text", text: spend?.shortfall ? tooCostlyNote(spend.shortfall) : OUT_OF_CREDITS_NOTE });
         stopReason = "out_of_credits";
         break;
       }
@@ -146,6 +165,8 @@ export async function runTurn({ client, key, model: requested, history, live, on
           continue;
         }
       }
+      lastPrompt = promptSize(spend.stopped ? spend.usage : message.usage) || lastPrompt;
+      if (lastPrompt) sharedCachedAt = Date.now();
       if (spend.stopped) {
         addUsage(usage, spend.usage);
         await spend.finish();

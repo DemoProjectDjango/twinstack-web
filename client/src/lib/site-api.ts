@@ -421,6 +421,18 @@ export type MissingPages = {
   fresh: boolean;
 };
 
+/**
+ * What a step in the Ask Claude panel's "Next steps" does (server/src/next-steps.js): sends `prompt`
+ * to Claude, puts it in the message box for the owner to finish (facts only they know), or opens a screen.
+ */
+export type NextStepAction = { type: "send"; prompt: string } | { type: "fill"; prompt: string } | { type: "open"; section: string };
+
+/** One thing the site still needs, in plain words. `counts`: part of `progress` (publishing isn't). */
+export type NextStep = { id: string; title: string; why: string; done: boolean; counts: boolean; action: NextStepAction | null };
+
+/** The site's next steps. `linksChecked`: false until a build has scanned the links. */
+export type NextSteps = { steps: NextStep[]; progress: { done: number; total: number }; linksChecked: boolean };
+
 /** An uploaded HTML page, saved inside .git for the "page-convert" command. */
 export type HtmlSource = {
   source: string;

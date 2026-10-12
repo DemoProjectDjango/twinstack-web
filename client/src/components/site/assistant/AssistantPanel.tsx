@@ -8,6 +8,7 @@ import { Button, ErrorText, Spinner, inputClass } from "../ui";
 import { ActionCard } from "./ActionCard";
 import { AttachButton, PendingChips, SentAttachments, useAttachmentUploads, useFileDrop } from "./Attachments";
 import { useAssistant } from "./AssistantProvider";
+import { NextSteps, useNextSteps } from "./NextSteps";
 import { RichText } from "./RichText";
 import { SUGGESTIONS } from "./suggestions";
 
@@ -23,6 +24,7 @@ export function AssistantPanel() {
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const running = turn?.status === "running";
+  const nextSteps = useNextSteps(open, Object.values(actions).filter((a) => a.status === "applied").length);
 
   // Follow the conversation as it grows, like a chat.
   const size = JSON.stringify([conversation?.display.length, turn?.parts]).length;
@@ -44,6 +46,19 @@ export function AssistantPanel() {
       setText("");
       uploads.clear();
     }
+  }
+
+  /** Puts a request in the box for the owner to finish, with the cursor where their part goes. */
+  function fill(prompt: string) {
+    setText(prompt);
+    requestAnimationFrame(() => {
+      const box = inputRef.current;
+      if (!box) return;
+      box.focus();
+      const line = prompt.indexOf("\n");
+      const at = line >= 0 ? line : prompt.length;
+      box.setSelectionRange(at, at);
+    });
   }
 
   const entries = conversation?.display ?? [];
@@ -87,13 +102,15 @@ export function AssistantPanel() {
 
         {!loading && !entries.length && !running && (
           <div className="space-y-3">
+            {nextSteps && <NextSteps data={nextSteps} onSend={(p) => void submit(p)} onFill={fill} disabled={running} />}
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              Tell Claude what you want, in your own words: new pages, changes to wording, the menu, search results and more.
+              {nextSteps ? "Or tell Claude what you want, in your own words." : "Tell Claude what you want, in your own words: new pages, changes to wording, the menu, search results and more."}{" "}
               You can attach photos, PDFs, Word documents or any other file. Claude shows you every change first, and nothing
               happens until you press Apply.
             </p>
             {claude.ready && (
               <div className="flex flex-col items-start gap-2">
+                {nextSteps && <p className="text-xs text-zinc-500">Or try:</p>}
                 {suggestions.items.map((s) => (
                   <button
                     key={s}
@@ -132,7 +149,10 @@ export function AssistantPanel() {
         <ErrorText error={error} />
       </div>
 
-      <footer className="border-t border-zinc-200 p-3 dark:border-zinc-800">
+      <footer className="space-y-2 border-t border-zinc-200 p-3 dark:border-zinc-800">
+        {nextSteps && entries.length > 0 && !running && (
+          <NextSteps compact data={nextSteps} onSend={(p) => void submit(p)} onFill={fill} disabled={running} />
+        )}
         {!claude.ready ? (
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
             {claude.reason}{" "}

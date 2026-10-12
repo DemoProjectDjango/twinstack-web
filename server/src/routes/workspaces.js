@@ -18,6 +18,7 @@ import {
   startDeploy,
 } from "../publishing.js";
 import { requireAuth, requireGithub } from "../session.js";
+import { getNextSteps } from "../next-steps.js";
 import { assistantRouter } from "./assistant.js";
 import { handle, keyFor, requireJson } from "./helpers.js";
 import {
@@ -290,6 +291,13 @@ workspacesRouter.delete(
 workspacesRouter.get(
   "/:owner/:repo/missing-pages",
   handle(async (req, res) => res.json(await readMissingPages(keyFor(req)))),
+);
+
+/* What the site still needs, for the Ask Claude panel's "Next steps" (next-steps.js; no Claude). */
+
+workspacesRouter.get(
+  "/:owner/:repo/next-steps",
+  handle(async (req, res) => res.json(await getNextSteps(keyFor(req)))),
 );
 
 /* What the last "Build and check" found (the deploy's own check), and whether the site changed since. */

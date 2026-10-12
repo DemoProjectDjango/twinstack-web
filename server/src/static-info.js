@@ -138,10 +138,40 @@ export async function getStaticInfo(key) {
   return { sections };
 }
 
-export async function saveStaticInfo(key, id, next) {
+/**
+ * A section's new data as given. Claude's tool calls sometimes send it as JSON text rather than
+ * the object or list itself, which is read here (an action stored that way still applies).
+ */
+function parsedData(next) {
+  if (typeof next !== "string") return next;
+  try {
+    const parsed = JSON.parse(next);
+    return parsed !== null && typeof parsed === "object" ? parsed : next;
+  } catch {
+    return next;
+  }
+}
+
+/** What's wrong with `next` as a section's data, in words, or null. A top-level error has no field name. */
+function sectionError(section, data, next) {
+  const error = shapeError(shapeOf(section, pick(data, section.keys)), next, "");
+  return error ? error.replace(/^: /, "").replace(/^ must/, "The data must") : null;
+}
+
+/** What's wrong with `next` for section `id` (null when it would save), without saving it. */
+export async function checkStaticInfo(key, id, next) {
+  const section = SECTIONS.find((s) => s.id === id);
+  if (!section) return "Unknown section.";
+  const { data } = await readSection(workspaceDir(key), section);
+  if (data === null) return `${section.file} doesn't exist.`;
+  return sectionError(section, data, parsedData(next));
+}
+
+export async function saveStaticInfo(key, id, value) {
   const section = SECTIONS.find((s) => s.id === id);
   if (!section) throw new WorkspaceError("Unknown section.", 404);
-  if (next === undefined) throw new WorkspaceError("Nothing to save.", 400);
+  if (value === undefined) throw new WorkspaceError("Nothing to save.", 400);
+  const next = parsedData(value);
 
   const release = acquire(key, `saving ${section.file}`);
   try {
@@ -149,8 +179,8 @@ export async function saveStaticInfo(key, id, next) {
     const { text, data } = await readSection(dir, section);
     if (data === null) throw new WorkspaceError(`${section.file} doesn't exist.`, 404);
 
-    const error = shapeError(shapeOf(section, pick(data, section.keys)), next, "");
-    if (error) throw new WorkspaceError(error.replace(/^: /, ""), 400);
+    const error = sectionError(section, data, next);
+    if (error) throw new WorkspaceError(error, 400);
 
     // Only the picked keys change; everything else (and key order) is kept.
     const merged = section.keys ? Object.fromEntries(Object.entries(data).map(([k, v]) => [k, section.keys.includes(k) && k in next ? next[k] : v])) : next;

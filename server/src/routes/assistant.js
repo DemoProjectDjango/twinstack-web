@@ -15,6 +15,8 @@ import {
 import { composeUserMessage, knowledgeSection } from "../assistant/prompt.js";
 import { TOOLSET_VERSION, applyServerAction } from "../assistant/tools.js";
 import { anthropicClient, runTurn } from "../assistant/turn.js";
+import { runDetailsTurn } from "../assistant/details-turn.js";
+import { config } from "../config.js";
 import { archiveConversations, createConversation, findConversation, getAssistantModel, updateConversation } from "../db.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeFilesKeyFor, claudeKeyFor } from "../credits.js";
 import { getAccessToken } from "../github.js";
@@ -27,6 +29,13 @@ import { handle, keyFor } from "./helpers.js";
 // polls the turn for progress, the way it polls jobs, because streaming responses don't survive
 // the Next.js rewrite proxy. Proposed changes ("actions") wait for the owner: server-side ones are
 // applied here, the others run the site's commands from the browser and report back.
+
+// Messages about the site details (contact, social links, taglines, reviews, FAQ…) go to the cheaper
+// model first wherever they're sent from (assistant/details-turn.js); it hands anything else to Claude.
+const SITE_DETAILS_WORDS =
+  /\b(e-?mail|phone|telephone|mobile|whats ?app|instagram|facebook|linkedin|youtube|tiktok|twitter|social (media|links?|pages?)|tagline|slogan|testimonials?|reviews?|faq|frequently asked|opening hours|business hours|address|booking link)\b/i;
+// How long Claude's 1-hour cache of a conversation counts as still there (a little under the hour).
+const CACHE_FRESH_MS = 55 * 60 * 1000;
 
 export const assistantRouter = Router({ mergeParams: true });
 
@@ -256,8 +265,27 @@ assistantRouter.post(
 
     (async () => {
       let result = null;
+      const spending = () => beginSpend({ userId, siteId, runId: turn.id, kind: "assistant", charged: claude.charged });
       try {
-        result = await runTurn({
+        // Site details asked for on their own screen are data to fill in: the app's cheaper model
+        // does them (assistant/details-turn.js) when Claude runs on credits; null hands the turn to Claude.
+        if ((screen === "details" || SITE_DETAILS_WORDS.test(text)) && !continuing && text && !attachments.length && claude.charged && config.deepseekKey && config.fastPageModel) {
+          result = await runDetailsTurn({
+            key,
+            text,
+            model: config.fastPageModel,
+            apiKey: config.deepseekKey,
+            live: turn.live,
+            beginSpend: spending,
+            signal: turn.controller.signal,
+          }).catch((err) => {
+            if (err instanceof Anthropic.APIUserAbortError) throw err;
+            console.error("The site details model failed, so Claude takes the turn:", err.message);
+            return null;
+          });
+          if (!result) turn.live = { parts: [], actions: [] };
+        }
+        result ??= await runTurn({
           client,
           key,
           model,
@@ -266,7 +294,9 @@ assistantRouter.post(
           signal: turn.controller.signal,
           // Each request is capped to the balance, watched as it streams and charged as soon as it's
           // done, so the balance moves while Claude works and stops at the overdraft limit.
-          beginSpend: () => beginSpend({ userId, siteId, runId: turn.id, kind: "assistant", charged: claude.charged }),
+          beginSpend: spending,
+          // Claude's cache lasts an hour: past that, the whole history is written to it again.
+          cachedTokens: Date.now() - Date.parse(conversation.lastPrompt?.at ?? 0) < CACHE_FRESH_MS ? (conversation.lastPrompt?.tokens ?? 0) : 0,
         });
         turn.status = "done";
       } catch (err) {
@@ -290,7 +320,7 @@ assistantRouter.post(
         const usage = result?.usage;
         await updateConversation(conversation.id, userId, {
           $push: { display: entry, ...(result?.appended.length && { messages: { $each: result.appended } }) },
-          $set: actions,
+          $set: { ...actions, ...(result?.lastPrompt && { lastPrompt: { tokens: result.lastPrompt, at: new Date().toISOString() } }) },
           ...(usage && { $inc: Object.fromEntries(Object.entries(usage).map(([k, v]) => [`usage.${k}`, v])) }),
         });
       } catch (err) {

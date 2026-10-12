@@ -19,7 +19,7 @@ const MAX_JSON_REPLY_BYTES = 16 * 1024 * 1024;
 const UPSTREAM = (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/+$/, "");
 // deepseek-* models (TWINSTACK_FAST_MODEL, see config.js) go to DeepSeek's Anthropic-compatible API
 // with the app's DeepSeek key; it takes the same request and streams the same events.
-const DEEPSEEK_UPSTREAM = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/anthropic").replace(/\/+$/, "");
+export const DEEPSEEK_UPSTREAM = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/anthropic").replace(/\/+$/, "");
 const isDeepseek = (model) => typeof model === "string" && model.startsWith("deepseek-");
 // Headers the scripts send that Anthropic needs; everything else (the token above all) stays here.
 const FORWARD_HEADERS = ["content-type", "anthropic-version", "anthropic-beta"];

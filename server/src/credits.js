@@ -152,7 +152,12 @@ function inputEstimate(body) {
     }
     return value;
   });
-  return { tokens: Math.ceil(text.length / CHARS_PER_TOKEN) + media * MEDIA_TOKENS, cached: text.includes('"cache_control"') };
+  return {
+    tokens: Math.ceil(text.length / CHARS_PER_TOKEN) + media * MEDIA_TOKENS,
+    cached: text.includes('"cache_control"'),
+    // A 1-hour cache write costs 2x input, a 5-minute one 1.25x.
+    hourCache: /"ttl"\s*:\s*"1h"/.test(text),
+  };
 }
 
 /** Characters one streamed delta adds to the reply. */
@@ -169,6 +174,8 @@ class Spend {
   stopped = false;
   /** True when max_tokens was lowered to fit the balance, so a "max_tokens" stop means the credits ran out. */
   clamped = false;
+  /** Set when maxTokens refused the request although the balance is above zero: { needed, balance } in credits. */
+  shortfall = null;
   #info;
   #account;
   #usage = null;
@@ -183,17 +190,25 @@ class Spend {
 
   /**
    * The max_tokens to send instead of `requested`: no more than the balance buys down to
-   * -OVERDRAFT, after the request's estimated input. 0 when nothing is left for any output.
+   * -OVERDRAFT, after the request's estimated input. 0 when nothing is left for any output (the
+   * input alone would go past the limit). A cached request is priced as writing its cache, except
+   * `cachedTokens`, the part the caller knows is cached already (read at the cheap rate): a cache
+   * that has expired is written again in full, which costs more than the input itself.
    */
-  maxTokens(requested, body) {
+  maxTokens(requested, body, { cachedTokens = 0 } = {}) {
     this.requestedModel = body.model ?? null;
     if (!this.#account || !Number.isFinite(requested)) return requested;
     const price = priceOf(this.requestedModel ?? "");
     const input = inputEstimate(body);
-    const room = left(this.#account) + OVERDRAFT - input.tokens * creditsPerToken(input.cached ? price.cacheRead : price.input);
+    const read = input.cached ? Math.min(cachedTokens, input.tokens) : 0;
+    const writeRate = input.cached ? price.input * (input.hourCache ? 2 : 1.25) : price.input;
+    const inputCredits = read * creditsPerToken(price.cacheRead) + (input.tokens - read) * creditsPerToken(writeRate);
+    const room = left(this.#account) + OVERDRAFT - inputCredits;
     const allowed = Math.floor(room / creditsPerToken(price.output));
     if (allowed >= requested) return requested;
     this.clamped = true;
+    // Refused with credits still left: what reading the request would cost, for telling the owner.
+    if (allowed <= 0) this.shortfall = { needed: Math.ceil(inputCredits), balance: Math.floor(this.#account.balance) };
     return Math.max(0, allowed);
   }
 
