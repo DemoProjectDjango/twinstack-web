@@ -34,6 +34,10 @@ type AssistantValue = {
   error: unknown;
   open: boolean;
   setOpen: (open: boolean) => void;
+  /** Text another screen put in the message box for the owner to finish (`id` tells two apart); the panel takes it. */
+  draft: { text: string; id: number } | null;
+  /** Opens the panel with `text` in its message box, not sent. */
+  fillDraft: (text: string) => void;
   /** Sends the owner's message with any attached files (and opens the panel). Resolves to whether it was sent. */
   send: (text: string, attachments?: Attachment[]) => Promise<boolean>;
   stop: () => Promise<void>;
@@ -99,6 +103,11 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<{ text: string; id: number } | null>(null);
+  const fillDraft = useCallback((text: string) => {
+    setDraft((d) => ({ text, id: (d?.id ?? 0) + 1 }));
+    setOpen(true);
+  }, []);
   const [working, setWorking] = useState<Set<string>>(new Set());
   const [queued, setQueued] = useState<string[]>([]);
   // The assistant messages whose proposals have already led to an automatic "carry on".
@@ -561,6 +570,8 @@ ${tail(job.output)}`);
     error,
     open,
     setOpen,
+    draft,
+    fillDraft,
     send,
     stop,
     startOver,

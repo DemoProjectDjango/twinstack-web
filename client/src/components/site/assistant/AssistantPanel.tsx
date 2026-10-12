@@ -17,13 +17,27 @@ import { SUGGESTIONS } from "./suggestions";
 
 export function AssistantPanel() {
   const { claude } = useSite();
-  const { context, conversation, turn, loading, error, open, setOpen, send, stop, startOver, actions, applyAll, applyingAll, autoApply, setAutoApply } = useAssistant();
+  const { context, conversation, turn, loading, error, open, setOpen, draft, send, stop, startOver, actions, applyAll, applyingAll, autoApply, setAutoApply } = useAssistant();
   const [text, setText] = useState("");
   const uploads = useAttachmentUploads();
   const drop = useFileDrop(uploads.add, claude.ready);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const running = turn?.status === "running";
+
+  /** Puts a request in the box for the owner to finish, with the cursor where their part goes. */
+  function fillBox(prompt: string) {
+    setText(prompt);
+    requestAnimationFrame(() => {
+      const box = inputRef.current;
+      if (!box) return;
+      box.focus();
+      const line = prompt.indexOf("\n");
+      const at = line >= 0 ? line : prompt.length;
+      box.setSelectionRange(at, at);
+    });
+  }
+
   const nextSteps = useNextSteps(open, Object.values(actions).filter((a) => a.status === "applied").length);
 
   // Follow the conversation as it grows, like a chat.
@@ -37,6 +51,14 @@ export function AssistantPanel() {
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  // Text another screen left for the owner to finish (a "Fill in" step on Home).
+  const usedDraft = useRef(0);
+  useEffect(() => {
+    if (!open || !draft || draft.id === usedDraft.current) return;
+    usedDraft.current = draft.id;
+    fillBox(draft.text);
+  }, [draft, open]);
+
   if (!open) return null;
 
   async function submit(value = text) {
@@ -46,19 +68,6 @@ export function AssistantPanel() {
       setText("");
       uploads.clear();
     }
-  }
-
-  /** Puts a request in the box for the owner to finish, with the cursor where their part goes. */
-  function fill(prompt: string) {
-    setText(prompt);
-    requestAnimationFrame(() => {
-      const box = inputRef.current;
-      if (!box) return;
-      box.focus();
-      const line = prompt.indexOf("\n");
-      const at = line >= 0 ? line : prompt.length;
-      box.setSelectionRange(at, at);
-    });
   }
 
   const entries = conversation?.display ?? [];
@@ -102,7 +111,7 @@ export function AssistantPanel() {
 
         {!loading && !entries.length && !running && (
           <div className="space-y-3">
-            {nextSteps && <NextSteps data={nextSteps} onSend={(p) => void submit(p)} onFill={fill} disabled={running} />}
+            {nextSteps && <NextSteps data={nextSteps} onSend={(p) => void submit(p)} onFill={fillBox} disabled={running} />}
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               {nextSteps ? "Or tell Claude what you want, in your own words." : "Tell Claude what you want, in your own words: new pages, changes to wording, the menu, search results and more."}{" "}
               You can attach photos, PDFs, Word documents or any other file. Claude shows you every change first, and nothing
@@ -151,7 +160,7 @@ export function AssistantPanel() {
 
       <footer className="space-y-2 border-t border-zinc-200 p-3 dark:border-zinc-800">
         {nextSteps && entries.length > 0 && !running && (
-          <NextSteps compact data={nextSteps} onSend={(p) => void submit(p)} onFill={fill} disabled={running} />
+          <NextSteps compact data={nextSteps} onSend={(p) => void submit(p)} onFill={fillBox} disabled={running} />
         )}
         {!claude.ready ? (
           <p className="text-sm text-zinc-600 dark:text-zinc-400">

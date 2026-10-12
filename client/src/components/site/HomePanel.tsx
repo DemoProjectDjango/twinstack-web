@@ -6,6 +6,7 @@ import { api, workspacePath, type BrandInfo, type Publishing } from "@/lib/site-
 import { confirmModal } from "@/lib/confirm";
 import { useSite, type SiteSection } from "./site-context";
 import { Button, EmptyState, ErrorText, Notice, ScreenHeader, Segmented, Spinner, StepList, type Step } from "./ui";
+import { HomeNextSteps } from "./assistant/NextSteps";
 
 /** Remembers, per browser, that someone has looked at a screen (for ticking off "check your details"). */
 function visitedKey(owner: string, repo: string, section: SiteSection) {
@@ -120,7 +121,7 @@ export function HomePanel() {
         <h3 id="next-steps" className="font-semibold">
           Next steps
         </h3>
-        <StepList steps={steps} />
+        <HomeNextSteps fallback={<StepList steps={steps} />} />
       </section>
 
       <Preview
