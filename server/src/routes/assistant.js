@@ -16,6 +16,7 @@ import { composeUserMessage, knowledgeSection } from "../assistant/prompt.js";
 import { TOOLSET_VERSION, applyServerAction } from "../assistant/tools.js";
 import { anthropicClient, runTurn } from "../assistant/turn.js";
 import { runDetailsTurn } from "../assistant/details-turn.js";
+import { runQuickTurn } from "../assistant/quick-turn.js";
 import { config } from "../config.js";
 import { archiveConversations, createConversation, findConversation, getAssistantModel, updateConversation } from "../db.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeFilesKeyFor, claudeKeyFor } from "../credits.js";
@@ -43,6 +44,10 @@ const MAX_MESSAGE_CHARS = 8000;
 // The conversation document must stay well under MongoDB's 16 MB limit.
 const MAX_HISTORY_CHARS = 6_000_000;
 const MAX_SENT_ENTRIES = 300;
+// The work log a conversation starts with (freshKnowledge): the newest entries, and the summary
+// points of the newest of those.
+const FIRST_LOG_ENTRIES = 20;
+const DETAILED_LOG_ENTRIES = 8;
 const MAX_NOTES_CHARS = 20_000;
 const TURN_KEEP_MS = 30 * 60 * 1000;
 const STATUSES = ["running", "ready", "applied", "skipped", "failed"];
@@ -109,8 +114,12 @@ async function freshKnowledge(key, conversation) {
   const sent = new Set(conversation.knowledge?.sent ?? []);
   const newEntries = first ? entries : entries.filter((e) => !sent.has(e));
   const notesChanged = first || notes !== (conversation.knowledge?.notes ?? "");
+  // The assistant plans; the page writer reads the whole log itself (the site's knowledge.js). So a
+  // conversation starts with the newest entries only, the older of them without their summary
+  // points: the full log can be 60 entries of up to six lines, all of it sent on every request.
+  const shown = first ? newEntries.slice(-FIRST_LOG_ENTRIES).map((entry, i, all) => (i < all.length - DETAILED_LOG_ENTRIES ? entry.split("\n")[0] : entry)) : newEntries;
   return {
-    section: knowledgeSection({ notes: notesChanged ? notes : "", entries: newEntries, first }),
+    section: knowledgeSection({ notes: notesChanged ? notes : "", entries: shown, first }),
     state: { notes, sent: [...sent, ...newEntries].slice(-MAX_SENT_ENTRIES) },
   };
 }
@@ -185,6 +194,8 @@ assistantRouter.post(
     const context = req.body?.context && typeof req.body.context === "object" ? req.body.context : {};
     const screen = typeof context.screen === "string" ? context.screen.slice(0, 40) : "";
     const page = typeof context.page === "string" && /^content\/[\w./-]+\.md$/.test(context.page) ? context.page : null;
+    // The panel's "Make changes automatically" switch (on unless the browser says otherwise).
+    const autoApply = context.autoApply !== false;
     if (attachmentIds.length > MAX_ATTACHMENTS) throw new WorkspaceError(`Attach at most ${MAX_ATTACHMENTS} files to a message.`, 400);
     if (continuing && attachmentIds.length) throw new WorkspaceError("Attach files to your own messages.", 400);
 
@@ -229,7 +240,7 @@ assistantRouter.post(
     const outcomes = pendingOutcomes(conversation);
     const composed = composeUserMessage({
       text,
-      context: { screen, page },
+      context: { screen, page, autoApply },
       knowledge: knowledge.section,
       outcomes: outcomes.lines,
       continuing,
@@ -267,9 +278,18 @@ assistantRouter.post(
       let result = null;
       const spending = () => beginSpend({ userId, siteId, runId: turn.id, kind: "assistant", charged: claude.charged });
       try {
+        // A small change to one page needs no planning: it becomes the page edit straight away, with
+        // no model request (assistant/quick-turn.js); null hands the turn on.
+        if (!continuing && text && !attachments.length) {
+          result = await runQuickTurn({ key, text, openPage: page, autoApply, live: turn.live }).catch((err) => {
+            console.error("The quick page edit failed, so Claude takes the turn:", err.message);
+            return null;
+          });
+          if (!result) turn.live = { parts: [], actions: [] };
+        }
         // Site details asked for on their own screen are data to fill in: the app's cheaper model
         // does them (assistant/details-turn.js) when Claude runs on credits; null hands the turn to Claude.
-        if ((screen === "details" || SITE_DETAILS_WORDS.test(text)) && !continuing && text && !attachments.length && claude.charged && config.deepseekKey && config.fastPageModel) {
+        if (!result && (screen === "details" || SITE_DETAILS_WORDS.test(text)) && !continuing && text && !attachments.length && claude.charged && config.deepseekKey && config.fastPageModel) {
           result = await runDetailsTurn({
             key,
             text,

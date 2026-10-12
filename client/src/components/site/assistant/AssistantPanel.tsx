@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import type { AssistantPart, DisplayEntry } from "@/lib/assistant-api";
 import { useSite } from "../site-context";
 import { Button, ErrorText, Spinner, inputClass } from "../ui";
@@ -84,26 +84,26 @@ export function AssistantPanel() {
           Drop files to attach them
         </div>
       )}
-      <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-        <span aria-hidden="true">✦</span>
-        <h2 className="font-semibold">Ask Claude</h2>
-        <span className="ml-auto flex items-center gap-1">
-          <label
-            className="mr-1 flex cursor-pointer items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400"
-            title="On: Claude's changes are made as soon as it answers. Off: you apply or skip each one."
-          >
-            <input type="checkbox" checked={autoApply} onChange={(e) => setAutoApply(e.target.checked)} />
-            Make changes automatically
-          </label>
-          {conversation && (
-            <Button variant="ghost" className="px-2 py-1 text-xs" disabled={running} onClick={() => void startOver()}>
-              New conversation
-            </Button>
-          )}
-          <Button variant="ghost" className="px-2 py-1" aria-label="Close" onClick={() => setOpen(false)}>
-            ✕
-          </Button>
+      <header className="flex items-center gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+        <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-foreground text-base text-background">
+          ✦
         </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-sm font-semibold leading-5">Ask Claude</h2>
+          <AutoApplySwitch on={autoApply} onChange={setAutoApply} />
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5">
+          {conversation && (
+            <IconButton label="New conversation" disabled={running} onClick={() => void startOver()}>
+              <path d="M12 20h9" />
+              <path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </IconButton>
+          )}
+          <IconButton label="Close" onClick={() => setOpen(false)}>
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </IconButton>
+        </div>
       </header>
 
       <div ref={listRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
@@ -114,8 +114,10 @@ export function AssistantPanel() {
             {nextSteps && <NextSteps data={nextSteps} onSend={(p) => void submit(p)} onFill={fillBox} disabled={running} />}
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               {nextSteps ? "Or tell Claude what you want, in your own words." : "Tell Claude what you want, in your own words: new pages, changes to wording, the menu, search results and more."}{" "}
-              You can attach photos, PDFs, Word documents or any other file. Claude shows you every change first, and nothing
-              happens until you press Apply.
+              You can attach photos, PDFs, Word documents or any other file.{" "}
+              {autoApply
+                ? "Claude makes its changes as soon as it answers, and nothing goes live until you publish."
+                : "Claude shows you every change first, and nothing happens until you press Apply."}
             </p>
             {claude.ready && (
               <div className="flex flex-col items-start gap-2">
@@ -219,6 +221,46 @@ export function AssistantPanel() {
         )}
       </footer>
     </aside>
+  );
+}
+
+/** The "Make changes automatically" setting, as a switch under the panel's title. */
+function AutoApplySwitch({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={() => onChange(!on)}
+      title="On: Claude's changes are made as soon as it answers. Off: you apply or skip each one."
+      className="group mt-0.5 flex items-center gap-1.5 rounded text-xs text-zinc-600 focus-visible:outline-2 focus-visible:outline-offset-2 dark:text-zinc-400"
+    >
+      <span
+        aria-hidden="true"
+        className={`relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition-colors ${on ? "bg-foreground" : "bg-zinc-300 dark:bg-zinc-700"}`}
+      >
+        <span className={`absolute size-2.5 rounded-full bg-background shadow-sm transition-transform ${on ? "translate-x-3" : "translate-x-0.5"}`} />
+      </span>
+      <span className="truncate group-hover:text-foreground">{on ? "Makes changes automatically" : "Asks before each change"}</span>
+    </button>
+  );
+}
+
+/** A square button holding a 24×24 stroke icon (its paths are the children). */
+function IconButton({ label, children, ...props }: { label: string; children: ReactNode } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children">) {
+  return (
+    // Not <Button>: its padding would fight the fixed square size.
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className="grid size-8 place-items-center rounded-md text-zinc-600 hover:bg-zinc-100 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-900"
+      {...props}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        {children}
+      </svg>
+    </button>
   );
 }
 

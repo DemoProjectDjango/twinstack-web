@@ -45,37 +45,18 @@ const LOGO_FIELDS = ["logoText", "logo", "logoDark", "logoMark", "favicon"];
 const ATTACHMENT_ID = /^att_[a-f0-9]{16}$/;
 const MAX_IMAGES = 6;
 
+// The shared fields are explained once in the system prompt (HOW YOU WORK in prompt.js): every
+// word here is repeated on each change tool in every request.
 const imagesField = {
-  images: {
-    type: "array",
-    items: { type: "string" },
-    description: "Optional, up to 6 images for the writer to look at and place: an attached image's id (att_…, after add_file_to_site for it), a photo already on the site (assets/img/…, from list_images) or an https URL.",
-  },
+  images: { type: "array", items: { type: "string" }, description: "Up to 6: att_… ids (added with add_file_to_site first), assets/img/… paths or https URLs." },
 };
 
-const summaryField = {
-  summary: {
-    type: "string",
-    description: "What this change does, in one or two short plain-language sentences for the site owner (no file paths or technical words). Shown on the card they apply.",
-  },
-};
+const summaryField = { summary: { type: "string", description: "The owner's card text." } };
 // Which model writes it: small work goes to a faster, cheaper writer, complex work to Claude
 // (task-size.js; the label wins over the app's own rules, since only you know the conversation).
 const TASK_SIZES = ["small", "complex"];
-const taskSizeField = {
-  task_size: {
-    type: "string",
-    enum: TASK_SIZES,
-    description:
-      "How much design and building the change takes. small: changing or adding wording and facts, removing or hiding things, moving a part, one style tweak (a colour, a size), a plain section of text in the page's existing style. complex: anything interactive or animated (sliders, tabs, accordions, pop-ups, hover or scroll effects, forms, maps, embeds, scripts), a redesign or new look, layout changes or fixes for phones, a new section whose look has to be designed. When unsure, complex.",
-  },
-};
-const continueField = {
-  continue_after: {
-    type: "boolean",
-    description: "True when you need this change's result before proposing the next step (for example, pages must exist before you can write them). You'll get the result and can continue.",
-  },
-};
+const taskSizeField = { task_size: { type: "string", enum: TASK_SIZES } };
+const continueField = { continue_after: { type: "boolean" } };
 
 /** Builds a tool definition; every input streams as it's generated (eager_input_streaming). */
 function tool(name, description, properties, required = [], extra = {}) {
@@ -173,10 +154,10 @@ const TOOLS = [
   // ---------------------------------------------------------------- change
   tool(
     "edit_page",
-    "Proposes changing one existing page's wording or layout. A writer that knows the site's house style rewrites the page from your instruction, and the finished page is kept. The writer can't see this conversation: make the instruction complete and self-contained, with every fact, name, number and the tone the owner gave you.",
+    "Proposes changing one existing page's wording or layout; the writer rewrites it from your self-contained instruction.",
     {
-      file: { type: "string", description: "The page's file, e.g. content/pages/about.md" },
-      instruction: { type: "string", description: "What to change, fully specified (up to 4000 characters)." },
+      file: { type: "string", description: "e.g. content/pages/about.md" },
+      instruction: { type: "string", description: "Up to 4000 characters." },
       ...imagesField,
       ...taskSizeField,
       ...summaryField,
@@ -187,18 +168,15 @@ const TOOLS = [
   ),
   tool(
     "create_page",
-    "Proposes adding a new page. With a brief, the writer then writes it and it is kept; without one it starts as an empty page. Types: page (About, Contact…), post (dated blog/news article), service, product, case (case study), homepage (the page at the site's main address, only when the site has none), listing (a collection's own page that lists its pages, such as the Blog page; give collection). slug and hidden don't apply to homepage and listing.",
+    "Proposes adding a new page; with a brief the writer writes it, without one it starts empty. Types: page (About, Contact…), post (dated article), service, product, case (case study), homepage (only when the site has none), listing (a collection's page listing its pages, e.g. Blog; give collection). slug and hidden don't apply to homepage and listing.",
     {
       type: { type: "string", enum: CREATE_TYPES },
-      collection: { type: "string", description: "For type listing: the collection it lists, by name from get_site_overview (e.g. blog)." },
+      collection: { type: "string", description: "For listing: a collection name from get_site_overview." },
       title: { type: "string" },
-      slug: { type: "string", description: "Optional web address: lowercase letters, numbers and dashes. Made from the title when left out." },
-      address: {
-        type: "string",
-        description: "For type page only: the exact address the page must have, when a link already points there (e.g. /pricing or /services/design.html). Overrides slug. Use it for missing pages the site links to.",
-      },
-      hidden: { type: "boolean", description: "Keep it off the published site until the owner unhides it." },
-      brief: { type: "string", description: "Optional: what the page should say, complete and self-contained (facts, names, tone). Up to 4000 characters." },
+      slug: { type: "string", description: "Optional: lowercase letters, numbers, dashes. Default: from the title." },
+      address: { type: "string", description: "For page only: the exact address a link already points to (e.g. /pricing). Overrides slug." },
+      hidden: { type: "boolean", description: "Off the published site until unhidden." },
+      brief: { type: "string", description: "Optional, self-contained, up to 4000 characters." },
       ...imagesField,
       ...taskSizeField,
       ...summaryField,
@@ -216,10 +194,10 @@ const TOOLS = [
   ),
   tool(
     "add_file_to_site",
-    "Proposes adding a file the owner attached (att_…) to the site. Images go with the site's photos (assets/img/uploads/); any other file (a PDF menu, a price list…) goes in assets/files/ and is published at /assets/files/<name>, ready to link to. To show an attached photo on a page, propose this first and then edit_page with the same att_… id in images.",
+    "Proposes adding an attached file to the site: images go with the site's photos, any other file to /assets/files/<name>.",
     {
-      attachment: { type: "string", description: "The attachment's id, att_…" },
-      name: { type: "string", description: "Optional file name to use on the site, e.g. summer-menu.pdf." },
+      attachment: { type: "string", description: "att_…" },
+      name: { type: "string", description: "Optional, e.g. summer-menu.pdf." },
       ...summaryField,
       ...continueField,
     },
@@ -228,13 +206,13 @@ const TOOLS = [
   ),
   tool(
     "convert_page_from_html",
-    "Proposes replacing an existing page with a web page the owner attached as an .html file (saved from their old website). The old site's header, menu and footer are removed; by default the rest keeps its own look. Attach its stylesheets and scripts too if the owner sent them. The owner sees the result before keeping it. To bring it in as a new page, create_page first (continue_after), then convert into that page.",
+    "Proposes replacing an existing page with an attached .html page from an old website, without its old header, menu and footer. For a new page, create_page first (continue_after).",
     {
-      file: { type: "string", description: "The page it becomes, e.g. content/pages/about.md" },
-      attachment: { type: "string", description: "The .html attachment's id, att_…" },
-      extra_files: { type: "array", items: { type: "string" }, description: "Optional: att_… ids of the page's .css and .js files." },
-      keep_styles: { type: "boolean", description: "Keep the page looking as it did (default). False rewrites it in the site's own design." },
-      direction: { type: "string", description: "Optional guidance, e.g. what to call the page." },
+      file: { type: "string", description: "The page it becomes." },
+      attachment: { type: "string", description: "The .html att_… id." },
+      extra_files: { type: "array", items: { type: "string" }, description: "Optional: its .css and .js att_… ids." },
+      keep_styles: { type: "boolean", description: "Keep its own look (default); false rewrites it in the site's design." },
+      direction: { type: "string", description: "Optional guidance." },
       ...summaryField,
       ...continueField,
     },
@@ -263,13 +241,13 @@ const TOOLS = [
       fields: {
         type: "object",
         properties: {
-          metaTitle: { type: "string", description: "The title in search results." },
-          metaDescription: { type: "string", description: "The description in search results." },
-          focusKeyword: { type: "string", description: "The search phrase this page should be found for." },
-          ogImage: { type: "string", description: "Social image: a site path (/assets/img/…) or an https URL." },
+          metaTitle: { type: "string" },
+          metaDescription: { type: "string" },
+          focusKeyword: { type: "string" },
+          ogImage: { type: "string", description: "Social image: /assets/img/… or an https URL." },
           ogImageAlt: { type: "string" },
           canonical: { type: "string", description: "Only when another address has the same content." },
-          noindex: { type: "boolean", description: "Hide the page from search engines." },
+          noindex: { type: "boolean", description: "Hide from search engines." },
         },
         additionalProperties: false,
       },
@@ -300,9 +278,9 @@ const TOOLS = [
   ),
   tool(
     "design_header_and_footer",
-    "Proposes a new design for the header and footer, which every page shows. A designer that knows the site designs both together in the look of its pages, and they are kept. Their content stays the site's: the menu, button and footer links (update_menu_and_footer), logo and copyright. Use it to change how they look; the designer can't see this conversation, so put the look the owner described in the instruction.",
+    "Proposes a new look for the header and footer together (their links, logo and copyright stay as they are).",
     {
-      instruction: { type: "string", description: "Optional: the look wanted, complete and self-contained (up to 4000 characters). Leave out to match the site's pages." },
+      instruction: { type: "string", description: "Optional: the look wanted, self-contained. Leave out to match the site's pages." },
       ...taskSizeField,
       ...summaryField,
       ...continueField,
@@ -317,7 +295,7 @@ const TOOLS = [
       section: { type: "string", description: "The section id." },
       // Typed, so the data comes as JSON itself rather than as a string of JSON. Most sections are
       // objects; redirects is a list.
-      data: { anyOf: [{ type: "object" }, { type: "array" }], description: "The section's complete new data: the same object (or list) read_site_details returned, with only the asked-for values changed. Not a string." },
+      data: { anyOf: [{ type: "object" }, { type: "array" }], description: "JSON, not a string." },
       ...summaryField,
       ...continueField,
     },

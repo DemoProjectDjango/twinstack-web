@@ -110,6 +110,8 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
   }, []);
   const [working, setWorking] = useState<Set<string>>(new Set());
   const [queued, setQueued] = useState<string[]>([]);
+  // queueAuto (below) for setAutoApply, which is made before it.
+  const queueAutoRef = useRef(false);
   // The assistant messages whose proposals have already led to an automatic "carry on".
   const continued = useRef(new Set<string>());
   // Rendered on the server as automatic (the default), then read from this browser.
@@ -121,6 +123,9 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
       // Private windows may refuse; then the switch can't be changed.
     }
     window.dispatchEvent(new Event(AUTO_APPLY_EVENT));
+    // Turned off mid-way, the changes that haven't started yet wait for the owner. The one running
+    // finishes (its card shows it), and "Apply all" queues aren't automatic, so they carry on.
+    if (!on) setQueued((q) => (queueAutoRef.current ? [] : q));
   }, []);
   // Answers asked for in this browser tab (a message's entry id is its turn's id): only these are
   // carried out by themselves, never old proposals found when the conversation loads.
@@ -184,7 +189,7 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
       setError(null);
       setOpen(true);
       try {
-        const result = await assistantApi.send(owner, repo, { ...body, context });
+        const result = await assistantApi.send(owner, repo, { ...body, context: { ...context, autoApply } });
         if (result.turn?.id) startedTurns.current.add(result.turn.id);
         setConversation(result.conversation);
         setTurn(result.turn);
@@ -194,7 +199,7 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
         return false;
       }
     },
-    [owner, repo, context],
+    [owner, repo, context, autoApply],
   );
 
   const send = useCallback(
@@ -498,6 +503,9 @@ ${tail(job.output)}`);
 
   // Whether the queue was started by itself (automatic changes) rather than by "Apply all".
   const [queueAuto, setQueueAuto] = useState(false);
+  useEffect(() => {
+    queueAutoRef.current = queueAuto;
+  }, [queueAuto]);
   const applyAll = useCallback(
     (entry: DisplayEntry) => {
       if (entry.role !== "assistant") return;

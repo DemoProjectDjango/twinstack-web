@@ -85,7 +85,9 @@ export type Conversation = {
 };
 
 /** Where the owner is in the editor, so Claude knows what "this page" means. */
-export type AssistantContext = { screen: string; page?: string | null };
+// `autoApply` is the "Make changes automatically" switch, so Claude describes its changes the way
+// they'll happen (made at once, or waiting for the owner).
+export type AssistantContext = { screen: string; page?: string | null; autoApply?: boolean };
 
 const base = (owner: string, repo: string, rest = "") => workspacePath(owner, repo, `/assistant${rest}`);
 
