@@ -62,5 +62,7 @@ previewRouter.get("/:userId/:owner/:repo/:signature{/*path}", async (req, res) =
     const prefix = previewPath(key, kind).slice(0, -1);
     return res.type(extension).send(rebase(await fs.readFile(file, "utf8"), prefix));
   }
-  res.sendFile(file, { dotfiles: "deny" });
+  // Relative to `root`, so the dot-file check sees only the path inside the built site: a proposal
+  // build lives under the workspace's .git/, which an absolute path would always be refused for.
+  res.sendFile(path.relative(dist, file), { root: dist, dotfiles: "deny" });
 });
