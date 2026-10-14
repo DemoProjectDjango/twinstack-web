@@ -17,9 +17,9 @@ import { TOOLSET_VERSION, applyServerAction } from "../assistant/tools.js";
 import { anthropicClient, runTurn } from "../assistant/turn.js";
 import { runDetailsTurn } from "../assistant/details-turn.js";
 import { runQuickTurn } from "../assistant/quick-turn.js";
-import { config } from "../config.js";
 import { archiveConversations, createConversation, findConversation, getAssistantModel, updateConversation } from "../db.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeFilesKeyFor, claudeKeyFor } from "../credits.js";
+import { currentFastModel, fastModelKey } from "../fast-model.js";
 import { getAccessToken } from "../github.js";
 import { logWork, readDataFile, recentWorkLog } from "../site-files.js";
 import { WorkspaceError, getStatus, siteIdFor } from "../workspace.js";
@@ -288,13 +288,15 @@ assistantRouter.post(
           if (!result) turn.live = { parts: [], actions: [] };
         }
         // Site details asked for on their own screen are data to fill in: the app's cheaper model
-        // does them (assistant/details-turn.js) when Claude runs on credits; null hands the turn to Claude.
-        if (!result && (screen === "details" || SITE_DETAILS_WORDS.test(text)) && !continuing && text && !attachments.length && claude.charged && config.deepseekKey && config.fastPageModel) {
+        // (fast-model.js) does them (assistant/details-turn.js) when Claude runs on credits; null
+        // hands the turn to Claude.
+        const fastModel = currentFastModel();
+        if (!result && (screen === "details" || SITE_DETAILS_WORDS.test(text)) && !continuing && text && !attachments.length && claude.charged && fastModel) {
           result = await runDetailsTurn({
             key,
             text,
-            model: config.fastPageModel,
-            apiKey: config.deepseekKey,
+            model: fastModel,
+            apiKey: fastModelKey(fastModel),
             live: turn.live,
             beginSpend: spending,
             signal: turn.controller.signal,

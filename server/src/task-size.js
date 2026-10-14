@@ -1,4 +1,4 @@
-// How big a Claude request is, from its instruction, so the cheaper model (config.fastPageModel,
+// How big a Claude request is, from its instruction, so the cheaper model (fast-model.js,
 // TWINSTACK_FAST_MODEL) only gets the small ones. Rules only: no request, no cost, the same answer
 // every time. The route passes the result to the copy's scripts as TWINSTACK_TASK_SIZE.
 //

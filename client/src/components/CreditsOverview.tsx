@@ -8,7 +8,7 @@ import { api } from "@/lib/site-api";
 import { BuyCredits } from "./BuyCredits";
 import { Button, ErrorText, Notice, Segmented, Spinner } from "./site/ui";
 
-type Provider = "claude" | "deepseek";
+type Provider = "claude" | "deepseek" | "openai";
 
 type Tokens = { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number };
 
@@ -30,7 +30,7 @@ type Usage = {
 /** The credits used, merged (`credits`) and split by provider. */
 type UsageSummary = { credits: number; providers: Record<Provider, Tokens & { requests: number; credits: number }> };
 
-const PROVIDER_NAMES: Record<Provider, string> = { claude: "Claude", deepseek: "DeepSeek" };
+const PROVIDER_NAMES: Record<Provider, string> = { claude: "Claude", deepseek: "DeepSeek", openai: "ChatGPT" };
 
 type Purchase = { id: string; credits: number; priceCents: number; currency: string; provider: string; status: string; createdAt: string };
 
@@ -63,10 +63,21 @@ const MODEL_NAMES: Record<string, string> = {
   // Routine page work on a site that already has a design (the server's TWINSTACK_FAST_MODEL).
   "deepseek-flash": "DeepSeek Flash",
   "deepseek-v4-pro": "DeepSeek V4 Pro",
+  "gpt-6-luna": "GPT-6 Luna",
+  "gpt-6.1-sol": "GPT-6.1 Sol",
+  "gpt-6-sol": "GPT-6 Sol",
+  "gpt-6-astra": "GPT-6 Astra",
+  "gpt-5.6-luna": "GPT-5.6 Luna",
+  "gpt-5.6-terra": "GPT-5.6 Terra",
+  "gpt-5.6-sol": "GPT-5.6 Sol",
+  "gpt-5.5": "GPT-5.5",
+  "gpt-5.4": "GPT-5.4",
+  "gpt-5.4-mini": "GPT-5.4 mini",
+  "gpt-5.4-nano": "GPT-5.4 nano",
 };
 
-/** A model's display name; replies name dated snapshots (claude-haiku-4-5-20251001), shown as their alias. */
-const modelName = (model: string) => MODEL_NAMES[model] ?? MODEL_NAMES[model.replace(/-\d{8}$/, "")] ?? model;
+/** A model's display name; replies name dated snapshots (claude-haiku-4-5-20251001, gpt-6-luna-2026-09-01), shown as their alias. */
+const modelName = (model: string) => MODEL_NAMES[model] ?? MODEL_NAMES[model.replace(/-\d{8}$|-\d{4}-\d{2}-\d{2}$/, "")] ?? model;
 
 const tokens = (n: number) => formatCredits(n);
 
@@ -277,18 +288,19 @@ const TD = "px-3 py-2 align-top";
 
 const inputOf = (t: Tokens) => t.inputTokens + t.cacheReadTokens + t.cacheWriteTokens;
 
-/** The credits used, merged (one balance pays for both) and split between Claude and DeepSeek. */
+/** The credits used, merged (one balance pays for them all) and split between Claude, DeepSeek and ChatGPT. */
 function UsageSplit({ summary }: { summary: UsageSummary }) {
   const share = (credits: number) => (summary.credits > 0 ? `${Math.round((credits / summary.credits) * 100)}%` : "–");
   return (
-    <dl className="mb-4 grid gap-3 sm:grid-cols-3">
+    <dl className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
         <dt className="text-xs text-zinc-500">Credits used</dt>
         <dd className="text-lg font-medium tabular-nums">{formatCredits(summary.credits)}</dd>
-        <dd className="text-xs text-zinc-500">Claude and DeepSeek, from one balance</dd>
+        <dd className="text-xs text-zinc-500">Every model, from one balance</dd>
       </div>
       {(Object.keys(PROVIDER_NAMES) as Provider[]).map((p) => {
         const use = summary.providers[p];
+        if (!use) return null;
         return (
           <div key={p} className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
             <dt className="text-xs text-zinc-500">{PROVIDER_NAMES[p]}</dt>

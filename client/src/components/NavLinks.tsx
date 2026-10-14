@@ -16,7 +16,7 @@ const USER_LINKS: NavLink[] = [
   { href: "/#help", label: "Help", match: () => false },
 ];
 
-const ADMIN_LINK: NavLink = { href: "/admin/access", label: "Requests", match: (p) => p.startsWith("/admin") };
+const ADMIN_LINK: NavLink = { href: "/admin/access", label: "Admin", match: (p) => p.startsWith("/admin") };
 
 export function NavLinks({ signedIn, admin = false }: { signedIn: boolean; admin?: boolean }) {
   const pathname = usePathname();

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { AccessRequests } from "@/components/AccessRequests";
+import { AdminTabs } from "@/components/AdminTabs";
 import { getUser } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Access requests · Twinstack" };
@@ -13,6 +14,7 @@ export default async function AdminAccessPage() {
 
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-12">
+      <AdminTabs />
       <h1 className="text-2xl font-semibold tracking-tight">Access requests</h1>
       <p className="mt-1 text-sm text-zinc-500">
         People who asked to create websites. Approving or denying sends them an email.

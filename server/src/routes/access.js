@@ -2,12 +2,14 @@ import { Router } from "express";
 import { config } from "../config.js";
 import { listAccessRequests, publicUser, requestAccess, setAccessStatus } from "../db.js";
 import { sendEmail } from "../email.js";
+import { FastModelError, fastModelView, setFastModel } from "../fast-model.js";
 import { requireAuth } from "../session.js";
 import { requireJson } from "./helpers.js";
 
 // Who may create sites. An account asks once (POST /api/access/request), which emails the admins
 // (ADMIN_EMAILS); an admin approves or denies it on /admin/access, which emails the account.
 // Approving is a POST from that page, never a link in an email: mail scanners open links.
+// Admins also pick the cheaper "fast" model (DeepSeek or OpenAI) on /admin/models (fast-model.js).
 
 const MAX_MESSAGE = 500;
 
@@ -88,4 +90,20 @@ adminRouter.post("/access/:id", async (req, res) => {
         },
   );
   res.json({ requests: await listAccessRequests(), emailed });
+});
+
+adminRouter.get("/models", (req, res) => {
+  res.json(fastModelView());
+});
+
+adminRouter.put("/models", async (req, res) => {
+  const model = req.body?.model;
+  if (typeof model !== "string" || !model) return res.status(400).json({ error: "Choose a model." });
+  try {
+    await setFastModel(model, req.user.email);
+  } catch (err) {
+    if (!(err instanceof FastModelError)) throw err;
+    return res.status(400).json({ error: err.message });
+  }
+  res.json(fastModelView());
 });

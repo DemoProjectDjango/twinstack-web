@@ -91,9 +91,10 @@ export function ConfirmHost() {
           <h2 id="confirm-title" className="text-lg font-semibold">
             {title}
           </h2>
-          <p id="confirm-message" className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+          {/* A div, so a message may hold paragraphs and lists as well as plain text. */}
+          <div id="confirm-message" className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
             {current.message}
-          </p>
+          </div>
           <div className="mt-6 flex flex-wrap justify-end gap-2">
             <button
               ref={cancelButton}

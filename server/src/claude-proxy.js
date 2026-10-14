@@ -1,7 +1,10 @@
 import { randomBytes } from "node:crypto";
 import http from "node:http";
+import { providerOf } from "./ai-providers.js";
 import { config } from "./config.js";
 import { OUT_OF_CREDITS, beginSpend, countableRequest } from "./credits.js";
+import { fastModelKey } from "./fast-model.js";
+import { sendToOpenAI } from "./openai-bridge.js";
 
 // The site's Claude scripts never see the app's Anthropic key: a copy is a repo its owner can
 // change, so its scripts could print any key they're given. Instead a Claude command run on
@@ -11,16 +14,16 @@ import { OUT_OF_CREDITS, beginSpend, countableRequest } from "./credits.js";
 // key, streams the reply back, and charges what the reply's usage says. A reply still running when
 // the account reaches the overdraft limit is stopped and ended as a "max_tokens" reply, so the
 // script keeps what was written. It listens on a loopback port of its own, so it isn't reachable through
-// Nginx, and a token only works while its job runs. Requests for deepseek-* models (the page
-// editor's cheaper model) are sent to DeepSeek instead, and charged the same way.
+// Nginx, and a token only works while its job runs. Requests for the cheaper "fast" model
+// (fast-model.js) go to its provider instead, and are charged the same way: deepseek-* models to
+// DeepSeek, OpenAI ones to OpenAI (translated by openai-bridge.js).
 
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
 const MAX_JSON_REPLY_BYTES = 16 * 1024 * 1024;
 const UPSTREAM = (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/+$/, "");
-// deepseek-* models (TWINSTACK_FAST_MODEL, see config.js) go to DeepSeek's Anthropic-compatible API
-// with the app's DeepSeek key; it takes the same request and streams the same events.
+// deepseek-* models (TWINSTACK_FAST_MODEL, see fast-model.js) go to DeepSeek's Anthropic-compatible
+// API with the app's DeepSeek key; it takes the same request and streams the same events.
 export const DEEPSEEK_UPSTREAM = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/anthropic").replace(/\/+$/, "");
-const isDeepseek = (model) => typeof model === "string" && model.startsWith("deepseek-");
 // Headers the scripts send that Anthropic needs; everything else (the token above all) stays here.
 const FORWARD_HEADERS = ["content-type", "anthropic-version", "anthropic-beta"];
 const RETURN_HEADERS = /^(content-type|request-id|retry-after|anthropic-|x-should-retry)/i;
@@ -111,19 +114,20 @@ async function handle(req, res) {
   }
   if (!request || typeof request !== "object") return sendError(res, 400, "invalid_request_error", "The request isn't a Claude message.");
   const requestedModel = request.model ?? null;
-  const deepseek = isDeepseek(requestedModel);
-  if (deepseek && !config.deepseekKey) return sendError(res, 400, "invalid_request_error", `${requestedModel} isn't available on this server.`);
+  const provider = providerOf(requestedModel);
+  if (provider !== "claude" && !fastModelKey(requestedModel)) return sendError(res, 400, "invalid_request_error", `${requestedModel} isn't available on this server.`);
 
   const spend = await beginSpend({ ...grant, kind: "command" });
   if (!spend) return sendError(res, 402, "billing_error", OUT_OF_CREDITS);
   try {
     // No more output than the balance pays for down to the overdraft limit.
-    // DeepSeek has no token count: its requests keep the estimate.
-    const count = deepseek ? async () => null : (body) => countInputTokens(req, body);
+    // Only Claude has a token count: DeepSeek and OpenAI requests keep the estimate.
+    const count = provider === "claude" ? (body) => countInputTokens(req, body) : async () => null;
     const maxTokens = await spend.fitMaxTokens(request.max_tokens, request, {}, count);
     if (maxTokens === 0) return sendError(res, 402, "billing_error", OUT_OF_CREDITS);
+    if (provider === "openai") return await forwardOpenAI(res, { ...request, max_tokens: maxTokens }, spend);
     if (maxTokens !== request.max_tokens) body = Buffer.from(JSON.stringify({ ...request, max_tokens: maxTokens }));
-    await forward(req, res, body, deepseek, spend);
+    await forward(req, res, body, provider === "deepseek", spend);
   } finally {
     // A stopped reply is charged for what was used up to then.
     await spend.finish();
@@ -192,12 +196,8 @@ async function forward(req, res, body, deepseek, spend) {
         if (event?.type === "content_block_start") openBlock = event.index;
         else if (event?.type === "content_block_stop") openBlock = null;
         if (spend.track(event)) {
-          // The credits are spent down to the overdraft limit: stop Claude, and end the reply as one
-          // cut off at its token limit, so the script keeps what was written.
           controller.abort();
-          if (openBlock != null) res.write(sse({ type: "content_block_stop", index: openBlock }));
-          res.write(sse({ type: "message_delta", delta: { stop_reason: "max_tokens", stop_sequence: null }, usage: { output_tokens: spend.usage?.output_tokens ?? 0 } }));
-          res.end(sse({ type: "message_stop" }));
+          endAtLimit(res, openBlock, spend);
           return;
         }
       }
@@ -217,5 +217,54 @@ async function forward(req, res, body, deepseek, spend) {
         // Not a message: nothing to charge.
       }
     }
+  }
+}
+
+/**
+ * The credits are spent down to the overdraft limit: the model was stopped, so end the reply as one
+ * cut off at its token limit, and the script keeps what was written.
+ */
+function endAtLimit(res, openBlock, spend) {
+  if (openBlock != null) res.write(sse({ type: "content_block_stop", index: openBlock }));
+  res.write(sse({ type: "message_delta", delta: { stop_reason: "max_tokens", stop_sequence: null }, usage: { output_tokens: spend.usage?.output_tokens ?? 0 } }));
+  res.end(sse({ type: "message_stop" }));
+}
+
+/** forward for an OpenAI model: the request (an object) goes through openai-bridge.js, the reply comes back as Claude's. */
+async function forwardOpenAI(res, request, spend) {
+  const controller = new AbortController();
+  res.on("close", () => {
+    if (!res.writableFinished) controller.abort();
+  });
+  const reply = await sendToOpenAI(request, { apiKey: config.openaiKey, signal: controller.signal });
+  if (reply.body) {
+    res.writeHead(reply.status, { "content-type": "application/json", ...reply.headers });
+    return res.end(JSON.stringify(reply.body));
+  }
+  if (reply.message) {
+    res.writeHead(200, { "content-type": "application/json", ...reply.headers });
+    res.end(JSON.stringify(reply.message));
+    spend.track({ type: "message_start", message: reply.message });
+    spend.track({ type: "message_delta", usage: reply.message.usage });
+    return;
+  }
+
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", ...reply.headers });
+  let openBlock = null;
+  try {
+    for await (const event of reply.events) {
+      res.write(sse(event));
+      if (event.type === "content_block_start") openBlock = event.index;
+      else if (event.type === "content_block_stop") openBlock = null;
+      if (spend.track(event)) {
+        controller.abort();
+        endAtLimit(res, openBlock, spend);
+        return;
+      }
+    }
+    res.end();
+  } catch (err) {
+    if (!controller.signal.aborted) console.error("Claude proxy stream from OpenAI failed:", err.message);
+    res.destroy();
   }
 }

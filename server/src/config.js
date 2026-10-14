@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { FAST_MODEL_ID } from "./ai-providers.js";
 
 function required(name) {
   const value = process.env[name];
@@ -10,12 +11,16 @@ function required(name) {
   return value;
 }
 
-/** The cheaper page model (a deepseek-* id), or null: needs DEEPSEEK_API_KEY, off with FAST_PAGE_MODEL=off. */
+/**
+ * FAST_PAGE_MODEL: the cheaper model (a deepseek-* or OpenAI id), "off", or null when unset. The
+ * admin's choice on /admin/models takes its place (fast-model.js); it's the default until then.
+ */
 function fastPageModel() {
-  if (!process.env.DEEPSEEK_API_KEY?.trim()) return null;
-  const chosen = process.env.FAST_PAGE_MODEL?.trim() || "deepseek-flash";
-  if (chosen === "off") return null;
-  if (!/^deepseek-[\w.-]+$/.test(chosen)) throw new Error(`FAST_PAGE_MODEL must be a deepseek-* model or "off", not "${chosen}".`);
+  const chosen = process.env.FAST_PAGE_MODEL?.trim();
+  if (!chosen) return null;
+  if (chosen !== "off" && !FAST_MODEL_ID.test(chosen)) {
+    throw new Error(`FAST_PAGE_MODEL must be a deepseek-* or OpenAI (gpt-*) model or "off", not "${chosen}".`);
+  }
   return chosen;
 }
 
@@ -63,11 +68,13 @@ export const config = {
   // talk to Claude through the metering proxy (claude-proxy.js). Unset, only accounts with their
   // own key can use Claude.
   platformAnthropicKey: process.env.PLATFORM_ANTHROPIC_KEY?.trim() || null,
-  // The app's DeepSeek key. With it, the metering proxy sends deepseek-* requests to DeepSeek, and
-  // Claude commands on credits get `fastPageModel` as TWINSTACK_FAST_MODEL: the site's page editor
-  // uses it for routine page work once the site has a design to follow, and falls back to the
-  // account's Claude model when its result fails the checks. FAST_PAGE_MODEL=off turns that off.
+  // The app's DeepSeek and OpenAI keys, for the cheaper "fast" model (fast-model.js). The metering
+  // proxy sends deepseek-* requests to DeepSeek and OpenAI ones to OpenAI, and Claude commands on
+  // credits get the fast model as TWINSTACK_FAST_MODEL: the site's page editor uses it for routine
+  // page work once the site has a design to follow, and falls back to the account's Claude model
+  // when its result fails the checks. A fast model whose provider has no key here isn't used.
   deepseekKey: process.env.DEEPSEEK_API_KEY?.trim() || null,
+  openaiKey: process.env.OPENAI_API_KEY?.trim() || null,
   fastPageModel: fastPageModel(),
   // Buying credits adds them at once without taking a payment, until a payment provider is set
   // up. On by default; set CREDITS_DEMO_PURCHASES=false to turn buying off.

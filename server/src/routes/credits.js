@@ -24,7 +24,7 @@ creditsRouter.get(
 /**
  * `?type=usage|purchases&before=<ISO date>&limit=<1-100>`, newest first. Usage comes a run per
  * item (one job or assistant answer, its credits merged and split by model), and its newest page
- * also carries `summary`: the credits used, merged and split by provider (Claude, DeepSeek).
+ * also carries `summary`: the credits used, merged and split by provider (Claude, DeepSeek, OpenAI).
  */
 creditsRouter.get(
   "/history",

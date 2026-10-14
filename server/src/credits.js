@@ -30,21 +30,57 @@ const PRICES = {
   // request is never charged too little.
   "deepseek-flash": { input: 0.3, output: 1.2, cacheRead: 0.006 },
   "deepseek-v4-pro": { input: 1.32, output: 3.96, cacheRead: 0.044 },
+  // OpenAI (claude-proxy.js, openai-bridge.js), standard tier as listed on 2026-10-14. A request
+  // whose input passes `long.above` tokens is charged the long-context prices instead.
+  "gpt-6-luna": { input: 0.1, output: 0.5, cacheRead: 0.01, long: { above: 272_000, input: 0.2, output: 0.75, cacheRead: 0.02 } },
+  "gpt-6.1-sol": { input: 2, output: 10, cacheRead: 0.1, long: { above: 272_000, input: 4, output: 15, cacheRead: 0.2 } },
+  "gpt-6-sol": { input: 2, output: 10, cacheRead: 0.2, long: { above: 272_000, input: 4, output: 15, cacheRead: 0.4 } },
+  "gpt-6-astra": { input: 10, output: 50, cacheRead: 1, long: { above: 272_000, input: 20, output: 75, cacheRead: 2 } },
+  "gpt-5.6-luna": { input: 0.2, output: 1.2, cacheRead: 0.02, long: { above: 272_000, input: 0.4, output: 1.8, cacheRead: 0.04 } },
+  "gpt-5.6-terra": { input: 2, output: 12, cacheRead: 0.2, long: { above: 272_000, input: 4, output: 18, cacheRead: 0.4 } },
+  "gpt-5.6-sol": { input: 4, output: 20, cacheRead: 0.4, long: { above: 272_000, input: 8, output: 30, cacheRead: 0.8 } },
+  "gpt-5.5": { input: 5, output: 30, cacheRead: 0.5, long: { above: 272_000, input: 10, output: 45, cacheRead: 1 } },
+  "gpt-5.4": { input: 2.5, output: 15, cacheRead: 0.25, long: { above: 272_000, input: 5, output: 22.5, cacheRead: 0.5 } },
+  // OpenAI lists no long-context prices for these.
+  "gpt-5.4-mini": { input: 0.75, output: 4.5, cacheRead: 0.075 },
+  "gpt-5.4-nano": { input: 0.2, output: 1.25, cacheRead: 0.02 },
 };
 const UNKNOWN_PRICE = { input: 15, output: 75, cacheRead: 1.5 };
 const WEB_SEARCH_USD = 0.01;
 
-// Replies name the model as a dated snapshot (claude-haiku-4-5-20251001): priced as its alias.
-const priceOf = (model) => PRICES[model] ?? PRICES[model.replace(/-\d{8}$/, "")] ?? UNKNOWN_PRICE;
+// Replies name the model as a dated snapshot (claude-haiku-4-5-20251001, gpt-6-luna-2026-09-01):
+// priced as its alias.
+const listedPrice = (model) => PRICES[model] ?? PRICES[model.replace(/-\d{8}$|-\d{4}-\d{2}-\d{2}$/, "")] ?? UNKNOWN_PRICE;
+
+/**
+ * A listed model's prices in dollars per million tokens, as admins see them on /admin/models:
+ * `{ input, output, cacheRead, long? }`, or null when the model isn't in PRICES.
+ */
+export function listedPrices(model) {
+  const price = PRICES[model];
+  return price ? { ...price, ...(price.long && { long: { ...price.long } }) } : null;
+}
+
+/**
+ * A model's prices for a request with `inputTokens` of input (all of it, cached or not): the
+ * long-context ones past their limit. Without a count (an estimate before the request is sent),
+ * the dearer of the two, so a request is never allowed more than the balance pays for.
+ */
+function priceOf(model, inputTokens = null) {
+  const price = listedPrice(model);
+  if (!price.long) return price;
+  return inputTokens == null || inputTokens > price.long.above ? price.long : price;
+}
 
 /**
  * What a request costs in credits (rounded up). With a refusal fallback the reply may come from a
  * different model than the one asked for, so it's charged at the dearer of the two.
  */
 export function creditsFor(usage, ...models) {
-  const prices = models.filter(Boolean).map(priceOf);
-  const price = prices.length ? prices.reduce((a, b) => (b.output > a.output ? b : a)) : UNKNOWN_PRICE;
   const write = usage.cache_creation_input_tokens ?? 0;
+  const input = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + write;
+  const prices = models.filter(Boolean).map((model) => priceOf(model, input));
+  const price = prices.length ? prices.reduce((a, b) => (b.output > a.output ? b : a)) : UNKNOWN_PRICE;
   const writeHour = Math.min(write, usage.cache_creation?.ephemeral_1h_input_tokens ?? 0);
   const tokensUsd =
     ((usage.input_tokens ?? 0) * price.input +
@@ -97,7 +133,7 @@ export async function claudeFilesKeyFor(userId) {
 }
 
 /**
- * Records one finished Claude (or DeepSeek, through the proxy) request and charges it when it ran
+ * Records one finished Claude (or DeepSeek or OpenAI, through the proxy) request and charges it when it ran
  * on the app's key. `runId` groups the requests of one job, assistant answer or site update for
  * the credits history. Returns the credits charged. Never throws: a failed record mustn't fail the
  * work already done.

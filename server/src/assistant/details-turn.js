@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
+import { providerOf } from "../ai-providers.js";
 import { DEEPSEEK_UPSTREAM } from "../claude-proxy.js";
+import { createMessage } from "../openai-bridge.js";
 import { getStaticInfo } from "../static-info.js";
 import { runTool, toolInfo } from "./tools.js";
 
 // Site details asked for on the Site details screen (site name, contact details, social links, FAQ,
 // testimonials…) are filling in data, not designing or writing pages, so the app's cheaper model
-// (config.fastPageModel, on DeepSeek) does them in one request instead of a whole Claude turn. Its
+// (fast-model.js, on DeepSeek or OpenAI) does them in one request instead of a whole Claude turn. Its
 // changes become the same update_site_details proposals Claude makes (same checks, same cards), and
 // the turn joins the conversation like any other. Anything it can't do (another kind of request, a
 // reply it can't get right) returns null, and the turn goes to Claude as usual.
@@ -40,14 +42,27 @@ function parseReply(text) {
 }
 
 /**
- * Runs the owner's site-details request on `model` (a deepseek-* id) with the app's DeepSeek `apiKey`.
+ * Runs the owner's site-details request on `model` (a deepseek-* or OpenAI id) with the app's key for
+ * its provider, `apiKey`.
  * `beginSpend()` starts the request's Spend (credits.js); null means no credits. Fills `live` like
  * runTurn and resolves to runTurn's result, or null to let Claude take the turn.
  */
 export async function runDetailsTurn({ key, text, model, apiKey, live, onUpdate = () => {}, beginSpend, signal }) {
   const { sections } = await getStaticInfo(key);
   if (!sections.length) return null;
-  const client = new Anthropic({ apiKey, baseURL: DEEPSEEK_UPSTREAM, maxRetries: 1 });
+  // DeepSeek takes Claude's request as it is; OpenAI's goes through openai-bridge.js.
+  const send =
+    providerOf(model) === "openai"
+      ? async (params) => {
+          try {
+            return await createMessage(params, { apiKey, signal });
+          } catch (err) {
+            // Stopped by the owner: the same error the Anthropic SDK throws, which the route rethrows.
+            if (signal?.aborted) throw new Anthropic.APIUserAbortError();
+            throw err;
+          }
+        }
+      : (params) => new Anthropic({ apiKey, baseURL: DEEPSEEK_UPSTREAM, maxRetries: 1 }).messages.create(params, { signal });
   // The layout too: an empty list shows no example of its items' fields.
   const described = sections
     .map((s) => `SECTION ${s.id} (${s.label}): ${s.description}\nFIELDS: ${JSON.stringify(s.shape)}\nDATA: ${JSON.stringify(s.data)}`)
@@ -69,7 +84,7 @@ export async function runDetailsTurn({ key, text, model, apiKey, live, onUpdate 
     }
     let message;
     try {
-      message = await client.messages.create(params, { signal });
+      message = await send(params);
     } finally {
       await spend.finish(message ? { model: message.model, usage: message.usage } : {});
     }

@@ -8,6 +8,7 @@ import { config } from "../config.js";
 import { getClaudeModel } from "../db.js";
 import { issueProxyToken } from "../claude-proxy.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeKeyFor } from "../credits.js";
+import { currentFastModel } from "../fast-model.js";
 import { getAccessToken } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
 import {
@@ -190,7 +191,7 @@ workspacesRouter.post(
         if (claude.charged) {
           const siteId = await siteIdFor(key).catch(() => null);
           proxy = issueProxyToken({ userId: req.user.id, siteId, command: name });
-          let fastModel = config.fastPageModel;
+          let fastModel = currentFastModel();
           if (fastModel && command.sized) {
             sized = taskSize(command.sized(input));
             // Copies made before sizing ignore TWINSTACK_TASK_SIZE: keep complex work off the

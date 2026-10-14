@@ -7,6 +7,7 @@ import { accessRouter, adminRouter } from "./routes/access.js";
 import { authRouter } from "./routes/auth.js";
 import { creditsRouter } from "./routes/credits.js";
 import { startClaudeProxy } from "./claude-proxy.js";
+import { loadFastModelChoice } from "./fast-model.js";
 import { previewRouter } from "./routes/preview.js";
 import { settingsRouter } from "./routes/settings.js";
 import { jobsRouter, workspacesRouter } from "./routes/workspaces.js";
@@ -129,6 +130,7 @@ app.use((req, res) => {
 
 // Fail fast: without the database nothing that needs sign-in works.
 await connectDb();
+await loadFastModelChoice();
 console.log(`Connected to MongoDB (${config.mongo.dbName})`);
 // Claude commands run on credits reach Claude only through it.
 await startClaudeProxy();

@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { MongoClient, ObjectId } from "mongodb";
 import { DEFAULT_ASSISTANT_MODEL, DEFAULT_MODEL, isClaudeModel } from "./claude-models.js";
+import { PROVIDERS, providerOf } from "./ai-providers.js";
 import { config } from "./config.js";
 
 // MongoDB holds everything that outlives a browser session:
@@ -18,6 +19,8 @@ import { config } from "./config.js";
 //   claudeUsage one document per Claude request made for a user (tokens in and
 //               out, and the credits it cost), the account's usage history
 //   creditPurchases  one document per purchase of Claude credits
+//   appSettings one document per app-wide setting an admin changes (_id = the
+//               setting's name), e.g. "fastModel": which cheaper model runs
 //
 // An account's Claude credits are users.credits ({ balance, granted, purchased,
 // used }), changed only with $inc so concurrent requests can't lose an update.
@@ -65,6 +68,7 @@ const workLogForgotten = () => db.collection("workLogForgotten");
 const conversations = () => db.collection("assistantConversations");
 const claudeUsage = () => db.collection("claudeUsage");
 const creditPurchases = () => db.collection("creditPurchases");
+const appSettings = () => db.collection("appSettings");
 
 function objectId(id) {
   return ObjectId.isValid(id) ? new ObjectId(id) : null;
@@ -493,9 +497,6 @@ const historyPage = (collection, userId, { before, limit }) =>
     .limit(limit)
     .toArray();
 
-/** Which AI a model belongs to: "deepseek" for deepseek-* models, else "claude". */
-export const providerOf = (model) => (typeof model === "string" && model.startsWith("deepseek-") ? "deepseek" : "claude");
-
 const TOKEN_FIELDS = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "webSearches"];
 
 /**
@@ -552,7 +553,7 @@ export function usageRun({ _id, createdAt, startedAt, kind, command, requests })
   };
 }
 
-/** The account's Claude and DeepSeek use, a run per entry, newest first. */
+/** The account's Claude, DeepSeek and OpenAI use, a run per entry, newest first. */
 export async function listClaudeUsage(userId, page) {
   const runs = await claudeUsage().aggregate(usageRunsPipeline(userId, page)).toArray();
   return runs.map(usageRun);
@@ -565,7 +566,16 @@ export function usageByProviderPipeline(userId) {
     { $match: { userId } },
     {
       $group: {
-        _id: { $cond: [{ $regexMatch: { input: { $ifNull: ["$model", ""] }, regex: "^deepseek-" } }, "deepseek", "claude"] },
+        // The same rule as providerOf.
+        _id: {
+          $switch: {
+            branches: [
+              { case: { $regexMatch: { input: { $ifNull: ["$model", ""] }, regex: "^deepseek-" } }, then: "deepseek" },
+              { case: { $regexMatch: { input: { $ifNull: ["$model", ""] }, regex: "^(gpt-|o[0-9])" } }, then: "openai" },
+            ],
+            default: "claude",
+          },
+        },
         requests: { $sum: 1 },
         credits: { $sum: { $cond: [{ $eq: ["$charged", true] }, { $ifNull: ["$credits", 0] }, 0] } },
         ...Object.fromEntries(TOKEN_FIELDS.map((f) => [f, sum(f)])),
@@ -575,8 +585,8 @@ export function usageByProviderPipeline(userId) {
 }
 
 /**
- * The account's use split by provider (`providers.claude`, `providers.deepseek`) and merged
- * (`credits`: everything charged, from the one balance both are paid from).
+ * The account's use split by provider (`providers.claude`, `.deepseek`, `.openai`) and merged
+ * (`credits`: everything charged, from the one balance they're all paid from).
  */
 export async function usageByProvider(userId) {
   const rows = await claudeUsage().aggregate(usageByProviderPipeline(userId)).toArray();
@@ -585,13 +595,25 @@ export async function usageByProvider(userId) {
 
 export function usageTotals(rows) {
   const empty = () => ({ requests: 0, credits: 0, ...Object.fromEntries(TOKEN_FIELDS.map((f) => [f, 0])) });
-  const providers = { claude: empty(), deepseek: empty() };
+  const providers = Object.fromEntries(PROVIDERS.map((p) => [p, empty()]));
   for (const { _id, ...totals } of rows) Object.assign(providers[_id], totals);
-  return { credits: providers.claude.credits + providers.deepseek.credits, providers };
+  return { credits: PROVIDERS.reduce((sum, p) => sum + providers[p].credits, 0), providers };
 }
 
 /** The account's credit purchases, newest first. */
 export async function listCreditPurchases(userId, page) {
   const docs = await historyPage(creditPurchases(), userId, page);
   return docs.map(({ _id, userId: _u, ...rest }) => ({ id: _id.toHexString(), ...rest }));
+}
+
+/* ------------------------------------------------------------ app settings */
+
+/** An app-wide setting's document (`{ _id, value, updatedAt, updatedBy }`), or null when never set. */
+export function getAppSetting(name) {
+  return appSettings().findOne({ _id: name });
+}
+
+/** Saves an app-wide setting, recording which admin changed it. */
+export async function setAppSetting(name, value, updatedBy) {
+  await appSettings().updateOne({ _id: name }, { $set: { value, updatedAt: new Date(), updatedBy } }, { upsert: true });
 }
