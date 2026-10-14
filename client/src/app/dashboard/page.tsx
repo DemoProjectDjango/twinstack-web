@@ -30,7 +30,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
       </div>
 
       <div className="mt-6">
-        <Dashboard githubLogin={user.github?.login ?? null} />
+        <Dashboard githubLogin={user.github?.login ?? null} email={user.email} access={user.access} />
       </div>
     </main>
   );

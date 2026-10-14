@@ -16,9 +16,11 @@ const USER_LINKS: NavLink[] = [
   { href: "/#help", label: "Help", match: () => false },
 ];
 
-export function NavLinks({ signedIn }: { signedIn: boolean }) {
+const ADMIN_LINK: NavLink = { href: "/admin/access", label: "Requests", match: (p) => p.startsWith("/admin") };
+
+export function NavLinks({ signedIn, admin = false }: { signedIn: boolean; admin?: boolean }) {
   const pathname = usePathname();
-  const links = signedIn ? USER_LINKS : GUEST_LINKS;
+  const links = signedIn ? (admin ? [...USER_LINKS, ADMIN_LINK] : USER_LINKS) : GUEST_LINKS;
 
   return (
     <ul className="flex items-center gap-1 text-sm">

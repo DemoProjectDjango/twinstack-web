@@ -44,6 +44,14 @@ export async function connectDb() {
   ]);
   // Accounts from before credits get the free allowance once.
   await users().updateMany({ credits: { $exists: false } }, { $set: { credits: startingCredits() } });
+  // Accounts that made a site before access requests existed keep their access.
+  const owners = (await siteCopies().distinct("userId")).map(objectId).filter(Boolean);
+  if (owners.length) {
+    await users().updateMany(
+      { _id: { $in: owners }, access: { $exists: false } },
+      { $set: { access: { status: "approved", decidedAt: new Date(), decidedBy: "had a site already" } } },
+    );
+  }
 }
 
 export async function closeDb() {
@@ -97,12 +105,25 @@ function tryDecrypt(secret, aad, label) {
 
 export class DuplicateEmailError extends Error {}
 
+export const isAdminEmail = (email) => typeof email === "string" && config.adminEmails.includes(email.toLowerCase());
+
+/**
+ * Whether the account may create sites from the template: "none" (never asked), "pending",
+ * "approved" or "denied". Admins are always approved.
+ */
+function accessOf(doc) {
+  if (isAdminEmail(doc.email)) return { status: "approved", requestedAt: null };
+  return { status: doc.access?.status ?? "none", requestedAt: doc.access?.requestedAt ?? null };
+}
+
 /** What the rest of the app (and the browser, via /api/me) sees of an account. */
 export function publicUser(doc) {
   return {
     id: doc._id.toHexString(),
     email: doc.email,
     name: doc.name,
+    admin: isAdminEmail(doc.email),
+    access: accessOf(doc),
     github: doc.github
       ? {
           id: doc.github.id,
@@ -144,6 +165,58 @@ export async function findUserById(id) {
 
 export async function recordLogin(id) {
   await users().updateOne({ _id: objectId(id) }, { $set: { lastLoginAt: new Date() }, $inc: { loginCount: 1 } });
+}
+
+/* ----------------------------------------------------------------- access */
+
+// Creating sites needs the owner's approval (users.access): the account asks once, an admin
+// approves or denies it on /admin/access.
+
+const ACCESS_STATUSES = ["approved", "denied"];
+
+/** Marks the account's request as pending. Returns false when it's already pending, approved or denied. */
+export async function requestAccess(id, message) {
+  const { modifiedCount } = await users().updateOne(
+    { _id: objectId(id), "access.status": { $nin: ["pending", ...ACCESS_STATUSES] } },
+    { $set: { access: { status: "pending", requestedAt: new Date(), message } } },
+  );
+  return modifiedCount === 1;
+}
+
+/** Every account that asked for access or was given it, pending first, then newest first. */
+export async function listAccessRequests() {
+  const docs = await users()
+    .find(
+      { access: { $exists: true } },
+      { projection: { email: 1, name: 1, createdAt: 1, "github.login": 1, access: 1 } },
+    )
+    .toArray();
+  const order = { pending: 0, approved: 1, denied: 2 };
+  const time = (doc) => (doc.access.requestedAt ?? doc.access.decidedAt ?? doc.createdAt ?? new Date(0)).getTime();
+  return docs
+    .sort((a, b) => (order[a.access.status] ?? 3) - (order[b.access.status] ?? 3) || time(b) - time(a))
+    .map((doc) => ({
+      id: doc._id.toHexString(),
+      email: doc.email,
+      name: doc.name,
+      githubLogin: doc.github?.login ?? null,
+      status: doc.access.status,
+      message: doc.access.message ?? "",
+      requestedAt: doc.access.requestedAt ?? null,
+      decidedAt: doc.access.decidedAt ?? null,
+    }));
+}
+
+/** Approves or denies an account. Returns its document, or null when there's no such account. */
+export async function setAccessStatus(id, status, decidedBy) {
+  if (!ACCESS_STATUSES.includes(status)) throw new Error(`Unknown access status: ${status}`);
+  const _id = objectId(id);
+  if (!_id) return null;
+  return users().findOneAndUpdate(
+    { _id },
+    { $set: { "access.status": status, "access.decidedAt": new Date(), "access.decidedBy": decidedBy } },
+    { returnDocument: "after" },
+  );
 }
 
 /* ----------------------------------------------------------------- github */

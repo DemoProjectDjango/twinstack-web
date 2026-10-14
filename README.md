@@ -43,8 +43,19 @@ appear on the dashboard (`server/src/sites.js`). A repo counts as a copy only if
 which records it by repo id (so renaming it is fine). Copies made before that record existed can be recorded with
 `npm --prefix server run record-copies -- <owner/repo> …`.
 
-- The **template** can only be duplicated. It isn't listed on the dashboard (it's the **Create my site** action), and the API refuses to open it.
+- The **template** can only be duplicated, and only by approved accounts (below). It isn't listed on the dashboard (it's the **Create my site** action), and the API refuses to open it.
 - **Copies** can only be managed, not duplicated.
+
+### Who can create sites
+
+Creating a site needs approval. An account clicks **Request access** on the dashboard
+(`POST /api/access/request`), which emails the admins (`ADMIN_EMAILS`). An admin approves or denies it on
+`/admin/access`, and the account gets an email (Resend, `RESEND_API_KEY`; without it, emails are printed to the
+server log). Admins are always approved, and accounts that already had a site are approved when the server starts.
+
+The template stays private with no collaborators: approved accounts copy it, install files from it and update from
+it with the app's read-only `TEMPLATE_GITHUB_TOKEN`. Their own GitHub token is still used for their own repos. New
+sites are always public, because GitHub Pages can't publish a private repo on a free plan.
 
 ### Scopes
 
@@ -59,7 +70,7 @@ access). Users can request access from <https://github.com/settings/connections/
 ### Duplicating a repository
 
 **Create my site** on the dashboard duplicates the site template. It calls
-`POST /api/repos/:owner/:repo/duplicate` with `{ name, private }`, and Express:
+`POST /api/repos/:owner/:repo/duplicate` with `{ name, private }` (`private` defaults to false), and Express:
 
 1. creates the new repo in the user's account (`POST /user/repos`),
 2. `git clone --bare`s the source into a temp dir and pushes every branch and tag (full history),
@@ -125,9 +136,8 @@ How it works:
 - The preview is served from a signed URL (`/api/preview/...`) into an iframe sandboxed to an
   opaque origin, so the site's scripts can't call this app's API as the user.
 - Opening a site runs that repo's code on the server. Only copies duplicated through the app can be
-  opened, and duplicating needs read access to the template on GitHub. So keep the template private:
-  giving someone access to it on GitHub is what lets them build sites here, and a public template
-  lets anyone in. Container isolation is not implemented yet.
+  opened, and duplicating needs an admin's approval (see "Who can create sites"). So approve only people
+  you trust, and keep the template private. Container isolation is not implemented yet.
 
 ### Publishing and custom domains
 

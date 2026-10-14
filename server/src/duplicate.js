@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { githubFetch } from "./github.js";
+import { ReauthRequiredError, githubFetch } from "./github.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -66,17 +66,26 @@ async function git(args, { cwd, env }) {
 
 /**
  * Creates `newName` in the user's account and pushes every branch and tag
- * (full history) of `owner/repo` into it.
+ * (full history) of `owner/repo` into it. The source is read with
+ * `sourceToken` (the app's template token, see sites.js) when given, so the
+ * user needn't have access to it; the new repo is always created and pushed
+ * with the user's own `accessToken`.
  */
-export async function duplicateRepo({ accessToken, userLogin, owner, repo, newName, isPrivate }) {
+export async function duplicateRepo({ accessToken, sourceToken = accessToken, userLogin, owner, repo, newName, isPrivate }) {
   if (!OWNER_PATTERN.test(owner) || !isValidRepoName(repo)) {
     throw new DuplicateError("Invalid source repository.", 400);
   }
-  const source = await githubJson(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, accessToken);
+  const source = await githubJson(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, sourceToken).catch((err) => {
+    // The app's token being refused isn't fixed by the user reconnecting GitHub.
+    if (sourceToken === accessToken || !(err instanceof ReauthRequiredError)) throw err;
+    console.error(`GitHub rejected the template token (expired or revoked?) reading ${owner}/${repo}.`);
+    throw new DuplicateError("The website template can't be read right now. Please try again later.", 503);
+  });
   if (source.res.status === 404) throw new DuplicateError("Source repository not found.", 404);
   if (!source.res.ok) throw new Error(`GitHub GET repo failed with ${source.res.status}`);
 
   const env = gitEnv(accessToken);
+  const sourceEnv = sourceToken === accessToken ? env : gitEnv(sourceToken);
   const created = await githubJson("/user/repos", accessToken, {
     method: "POST",
     body: {
@@ -112,7 +121,7 @@ export async function duplicateRepo({ accessToken, userLogin, owner, repo, newNa
   try {
     // A bare clone fetches only branches and tags (not refs/pull/*, which
     // GitHub refuses on push), which is exactly what we want to copy.
-    await git(["clone", "--bare", "--quiet", source.body.clone_url, repoDir], { cwd: workDir, env });
+    await git(["clone", "--bare", "--quiet", source.body.clone_url, repoDir], { cwd: workDir, env: sourceEnv });
 
     // An empty source has no refs; the new empty repo is already a faithful copy.
     if (await hasRefs(repoDir, env)) {

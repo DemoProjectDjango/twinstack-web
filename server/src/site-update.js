@@ -9,6 +9,7 @@ import { jobEnv, npmCli } from "./commands.js";
 import { config } from "./config.js";
 import { GIT_TIMEOUT_MS } from "./duplicate.js";
 import { githubFetch } from "./github.js";
+import { appTokenError } from "./sites.js";
 import { WorkspaceError, git, listChanges, markInstalled, readMeta, tryGit, workspaceDir } from "./workspace.js";
 
 // One-click site updates: brings a copy up to the template's newest commit on its default branch
@@ -60,9 +61,11 @@ const MAX_COMMITS = 50;
 let commitsCache = { at: 0, value: [] };
 
 /** The template's latest commits on its default branch, newest first: `{ sha, date, message }`. */
-async function templateCommits(accessToken) {
+async function templateCommits(token) {
   if (Date.now() - commitsCache.at < COMMITS_TTL_MS) return commitsCache.value;
-  const res = await githubFetch(`/repos/${config.siteTemplate}/commits?per_page=${MAX_COMMITS}`, accessToken);
+  const res = await githubFetch(`/repos/${config.siteTemplate}/commits?per_page=${MAX_COMMITS}`, token).catch((err) => {
+    throw appTokenError(err, token);
+  });
   if (!res.ok) throw new Error(`GitHub returned ${res.status} for the template's commits`);
   const value = (await res.json()).map((c) => ({ sha: c.sha, date: c.commit?.committer?.date ?? null, message: c.commit?.message ?? "" }));
   commitsCache = { at: Date.now(), value };
@@ -101,11 +104,11 @@ async function lastUpdate(dir, branch) {
  * What the site screens show: the date of the newest template commit the published site has, the
  * template's newest, the changes in between (commit messages) and whether Undo is possible.
  */
-export async function getUpdateStatus(key, accessToken) {
+export async function getUpdateStatus(key, accessToken, templateToken = accessToken) {
   const dir = workspaceDir(key);
   const meta = await readMeta(dir);
   const published = `origin/${meta.defaultBranch}`;
-  const [commits, last] = await Promise.all([templateCommits(accessToken), lastUpdate(dir, meta.defaultBranch)]);
+  const [commits, last] = await Promise.all([templateCommits(templateToken), lastUpdate(dir, meta.defaultBranch)]);
   // A commit the copy doesn't have isn't even in its object store, so the check just fails.
   let have = -1;
   for (let i = 0; i < commits.length; i++) {
@@ -367,7 +370,7 @@ function identity(user) {
  * `anthropicKey` is null when Claude can't run (`noClaude` says why); `beginSpend()` starts each of
  * its requests' Spend (credits.js), which caps, records and charges it.
  */
-export function siteUpdateSteps({ key, accessToken, user, anthropicKey, model, noClaude, beginSpend }) {
+export function siteUpdateSteps({ key, accessToken, templateToken = accessToken, user, anthropicKey, model, noClaude, beginSpend }) {
   const dir = workspaceDir(key);
   const work = updateDir(key);
   const before = updateDir(key, "-before");
@@ -382,7 +385,7 @@ export function siteUpdateSteps({ key, accessToken, user, anthropicKey, model, n
         const branch = s.meta.defaultBranch;
         await git(dir, ["fetch", "--quiet", "--prune", "origin"], { accessToken });
         // The template's newest commit on its default branch (its HEAD) is the update.
-        await git(dir, ["fetch", "--quiet", "--no-tags", templateUrl(), `+HEAD:${TEMPLATE_REF}`], { accessToken });
+        await git(dir, ["fetch", "--quiet", "--no-tags", templateUrl(), `+HEAD:${TEMPLATE_REF}`], { accessToken: templateToken });
         s.base = (await git(dir, ["rev-parse", `origin/${branch}`])).trim();
         s.incoming = (await git(dir, ["rev-parse", `${TEMPLATE_REF}^{commit}`])).trim();
         if ((await tryGit(dir, ["merge-base", "--is-ancestor", s.incoming, s.base])) !== null) {

@@ -75,6 +75,20 @@ export const config = {
   // The site repo users copy. Only it can be duplicated, it is never managed
   // directly, and only copies of it can be managed.
   siteTemplate: (process.env.SITE_TEMPLATE_REPO || "DemoProjectDjango/twinstack-site").toLowerCase(),
+  // A read-only GitHub token for the template (a fine-grained token with Contents: read on that
+  // one repo). Approved accounts copy, install from and update from the template with it, so
+  // nobody needs to be a collaborator on it. Unset, each account's own GitHub token is used.
+  templateToken: process.env.TEMPLATE_GITHUB_TOKEN?.trim() || null,
+  // Accounts (by sign-in email) that review access requests on /admin/access. Always approved.
+  adminEmails: (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+  // Email through Resend (resend.com). Unset, emails are written to the server log instead.
+  email: {
+    resendKey: process.env.RESEND_API_KEY?.trim() || null,
+    from: process.env.EMAIL_FROM?.trim() || "Twinstack <onboarding@resend.dev>",
+  },
   // Where site working copies are cloned. Must survive restarts to keep
   // uncommitted work, so point it at persistent disk outside tmp in production.
   workspacesDir: path.resolve(process.env.WORKSPACES_DIR || path.join(tmpdir(), "twinstack-workspaces")),

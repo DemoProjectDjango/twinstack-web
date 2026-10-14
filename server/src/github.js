@@ -105,7 +105,12 @@ export async function listRepos(accessToken) {
     url = nextPageUrl(res.headers.get("link"));
   }
 
-  return repos.map((repo) => ({
+  return repos.map(toRepo);
+}
+
+/** The app's shape of a GitHub repository object. */
+export function toRepo(repo) {
+  return {
     id: repo.id,
     name: repo.name,
     fullName: repo.full_name,
@@ -119,7 +124,7 @@ export async function listRepos(accessToken) {
     stars: repo.stargazers_count,
     updatedAt: repo.updated_at,
     permission: repo.permissions?.admin ? "admin" : repo.permissions?.push ? "write" : "read",
-  }));
+  };
 }
 
 /** A text file from a repository's default branch, or null if it isn't there. */

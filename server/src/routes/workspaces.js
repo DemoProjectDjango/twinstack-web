@@ -8,7 +8,7 @@ import { config } from "../config.js";
 import { getClaudeModel } from "../db.js";
 import { issueProxyToken } from "../claude-proxy.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeKeyFor } from "../credits.js";
-import { getAccessToken, readRepoFile } from "../github.js";
+import { getAccessToken } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
 import {
   PUBLISHING_FILES,
@@ -64,6 +64,7 @@ import { SEO_FILES, SEO_MARKERS, installSeo, readSeo } from "../seo.js";
 import { readCheckReport } from "../site-check.js";
 import { readMissingPages } from "../missing-pages.js";
 import { getUpdateStatus, siteUpdateSteps, undoSiteUpdate } from "../site-update.js";
+import { readTemplateFile, templateToken } from "../sites.js";
 import {
   WorkspaceError,
   acquire,
@@ -359,7 +360,7 @@ workspacesRouter.post(
     const accessToken = await getAccessToken(req, res);
     const files = {};
     for (const file of MD_EDIT_FILES) {
-      const content = await readRepoFile(accessToken, config.siteTemplate, file);
+      const content = await readTemplateFile(req.user, accessToken, file);
       if (content === null) {
         throw new WorkspaceError(`The template (${config.siteTemplate}) doesn't have ${file} yet. Push it to GitHub first.`, 409);
       }
@@ -444,7 +445,7 @@ workspacesRouter.post(
     const accessToken = await getAccessToken(req, res);
     const files = {};
     for (const file of PUBLISHING_FILES) {
-      const content = await readRepoFile(accessToken, config.siteTemplate, file);
+      const content = await readTemplateFile(req.user, accessToken, file);
       if (content === null || (file.endsWith("deploy.yml") && !content.includes("BASE_PATH"))) {
         throw new WorkspaceError(`The template (${config.siteTemplate}) doesn't have the new ${file} yet. Push it to GitHub first.`, 409);
       }
@@ -461,7 +462,8 @@ workspacesRouter.get(
   "/:owner/:repo/site-update",
   handle(async (req, res) => {
     const key = keyFor(req);
-    res.json(await getUpdateStatus(key, await getAccessToken(req, res)));
+    const accessToken = await getAccessToken(req, res);
+    res.json(await getUpdateStatus(key, accessToken, templateToken(req.user, accessToken)));
   }),
 );
 
@@ -489,7 +491,7 @@ workspacesRouter.post(
     const release = acquire(key, "updating the site");
     const endActivity = claude ? beginClaudeActivity(userId) : () => {};
     try {
-      const { steps, cleanup } = siteUpdateSteps({ key, accessToken, user: req.user.github, anthropicKey: claude?.apiKey ?? null, model, noClaude, beginSpend: startSpend });
+      const { steps, cleanup } = siteUpdateSteps({ key, accessToken, templateToken: templateToken(req.user, accessToken), user: req.user.github, anthropicKey: claude?.apiKey ?? null, model, noClaude, beginSpend: startSpend });
       const job = startJob({
         key,
         userId: req.user.id,
@@ -543,7 +545,7 @@ workspacesRouter.post(
     const accessToken = await getAccessToken(req, res);
     const files = {};
     for (const file of SEO_FILES) {
-      const content = await readRepoFile(accessToken, config.siteTemplate, file);
+      const content = await readTemplateFile(req.user, accessToken, file);
       if (content === null || (SEO_MARKERS[file] && !content.includes(SEO_MARKERS[file]))) {
         throw new WorkspaceError(`The template (${config.siteTemplate}) doesn't have the new ${file} yet. Push it to GitHub first.`, 409);
       }
@@ -703,7 +705,7 @@ workspacesRouter.post(
     const accessToken = await getAccessToken(req, res);
     const files = {};
     for (const file of HEADER_FOOTER_FILES) {
-      const content = await readRepoFile(accessToken, config.siteTemplate, file);
+      const content = await readTemplateFile(req.user, accessToken, file);
       const marker = HEADER_FOOTER_MARKERS[file] ?? APPEARANCE_MARKER;
       if (content === null || !content.includes(marker)) {
         throw new WorkspaceError(`The template (${config.siteTemplate}) doesn't have the new ${file} yet. Push it to GitHub first.`, 409);

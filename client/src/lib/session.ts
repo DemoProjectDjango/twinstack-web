@@ -11,11 +11,20 @@ export type GithubAccount = {
   profileUrl: string;
 };
 
+/** Whether the account may create sites: it asks once, and an admin approves or denies it. */
+export type Access = {
+  status: "none" | "pending" | "approved" | "denied";
+  requestedAt: string | null;
+};
+
 /** An email + password account; GitHub is connected to it separately. */
 export type User = {
   id: string;
   email: string;
   name: string;
+  /** Reviews access requests on /admin/access (ADMIN_EMAILS on the server). */
+  admin: boolean;
+  access: Access;
   github: GithubAccount | null;
 };
 

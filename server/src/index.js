@@ -2,7 +2,8 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import { config } from "./config.js";
 import { connectDb, recordSiteCopy } from "./db.js";
-import { isTemplate, withSiteRoles } from "./sites.js";
+import { hasTemplateAccess, isTemplate, templateToken, withSiteRoles } from "./sites.js";
+import { accessRouter, adminRouter } from "./routes/access.js";
 import { authRouter } from "./routes/auth.js";
 import { creditsRouter } from "./routes/credits.js";
 import { startClaudeProxy } from "./claude-proxy.js";
@@ -36,8 +37,8 @@ app.get("/api/me", requireAuth, (req, res) => {
 app.get("/api/repos", requireAuth, requireGithub, async (req, res) => {
   try {
     const accessToken = await getAccessToken(req, res);
-    // Only the site template and copies of it are shown.
-    res.json({ repos: await withSiteRoles(await listRepos(accessToken)) });
+    // Only the site template (for approved accounts) and copies of it are shown.
+    res.json({ repos: await withSiteRoles(await listRepos(accessToken), req.user) });
   } catch (err) {
     if (err instanceof ReauthRequiredError) {
       return res.status(401).json({ error: "reauth_required" });
@@ -55,7 +56,12 @@ app.post("/api/repos/:owner/:repo/duplicate", requireAuth, requireGithub, async 
     return res.status(403).json({ error: "Only the TwinStack site template can be duplicated." });
   }
 
-  const { name, private: isPrivate = true } = req.body ?? {};
+  if (!hasTemplateAccess(req.user)) {
+    return res.status(403).json({ error: "access_required", message: "Your account needs to be approved before you can create a site." });
+  }
+
+  // Public unless asked: GitHub Pages can't publish a private repo on a free plan.
+  const { name, private: isPrivate = false } = req.body ?? {};
   if (!isValidRepoName(name)) {
     return res.status(400).json({ error: "Use 1-100 letters, numbers, '.', '-' or '_' for the name." });
   }
@@ -72,6 +78,7 @@ app.post("/api/repos/:owner/:repo/duplicate", requireAuth, requireGithub, async 
     const accessToken = await getAccessToken(req, res);
     const repo = await duplicateRepo({
       accessToken,
+      sourceToken: templateToken(req.user, accessToken),
       userLogin: req.user.github.login,
       owner: req.params.owner,
       repo: req.params.repo,
@@ -106,6 +113,8 @@ app.post("/api/repos/:owner/:repo/duplicate", requireAuth, requireGithub, async 
   }
 });
 
+app.use("/api/access", accessRouter);
+app.use("/api/admin", adminRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/credits", creditsRouter);
 app.use("/api/workspaces", workspacesRouter);

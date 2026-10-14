@@ -310,8 +310,17 @@ DATA_ENCRYPTION_KEY=paste-second-secret
 MONGODB_URI=mongodb://twinstack:APP_PASSWORD@127.0.0.1:27017/twinstack?authSource=twinstack
 MONGODB_DB=twinstack
 
-# Keep this repo private: anyone who can read it can duplicate it and build sites here.
+# Keep this repo private. Nobody needs to be a collaborator on it: accounts ask for access on
+# the dashboard, you approve them at https://builder.mydomain.com/admin/access, and approved
+# accounts read the template with TEMPLATE_GITHUB_TOKEN (a fine-grained token with only
+# Contents: read-only on this one repo; it expires, so renew it before it does).
 SITE_TEMPLATE_REPO=DemoProjectDjango/twinstack-site
+TEMPLATE_GITHUB_TOKEN=github_pat_...
+# The sign-in emails of the accounts that approve requests. Register them before going live.
+ADMIN_EMAILS=you@example.com
+# Emails about requests, sent through https://resend.com from a domain verified there.
+RESEND_API_KEY=re_...
+EMAIL_FROM=Twinstack <noreply@mydomain.com>
 WORKSPACES_DIR=/var/lib/twinstack/workspaces
 
 # The app's Anthropic key: Claude runs on it for every account without its own key, paid for
@@ -466,9 +475,14 @@ curl https://api.mydomain.com/api/health         # {"ok":true}  (Express directl
 
 In your browser:
 
-1. Go to `https://builder.mydomain.com` and click **Create an account**.
+1. Go to `https://builder.mydomain.com` and click **Create an account**, with an email in `ADMIN_EMAILS` (admins are
+   always approved).
 2. On the dashboard, click **Connect GitHub** and approve the permissions. You come back to the dashboard connected.
-3. Your site template appears under **Site repositories**. **Duplicate** it, then click **Manage site** on your copy.
+3. Click **Create my site**, then **Open editor** on your copy.
+
+Other people click **Request access** on their dashboard. You get an email, and approve or deny them on **Requests**
+(`/admin/access`); they get an email either way. Accounts that already had a site are approved automatically when
+the server starts.
 
 If **Manage site** says "Only sites duplicated from … in this app can be managed here", that repo wasn't made with the
 **Duplicate** button. Duplicate the template instead, or record an existing copy on the server with

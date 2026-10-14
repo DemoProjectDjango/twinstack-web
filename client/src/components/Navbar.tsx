@@ -17,7 +17,7 @@ export async function Navbar() {
         </Link>
 
         <div className="hidden sm:block">
-          <NavLinks signedIn={Boolean(user)} />
+          <NavLinks signedIn={Boolean(user)} admin={user?.admin} />
         </div>
 
         <div className="ml-auto flex items-center gap-3">
@@ -66,7 +66,7 @@ export async function Navbar() {
 
       {/* Small screens: the links get their own row. */}
       <div className="border-t border-zinc-200 px-2 py-1 sm:hidden dark:border-zinc-800">
-        <NavLinks signedIn={Boolean(user)} />
+        <NavLinks signedIn={Boolean(user)} admin={user?.admin} />
       </div>
     </header>
   );

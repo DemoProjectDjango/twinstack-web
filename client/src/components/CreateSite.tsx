@@ -22,7 +22,6 @@ type Status =
 export function CreateSite({ template, login, onCreated, onCancel }: { template: Repo; login: string; onCreated: (repo: Repo) => void; onCancel?: () => void }) {
   const [siteName, setSiteName] = useState("");
   const [customName, setCustomName] = useState<string | null>(null);
-  const [isPrivate, setIsPrivate] = useState(false);
   const [status, setStatus] = useState<Status>({ state: "idle" });
   const [stage, setStage] = useState(0);
   const nameId = useId();
@@ -45,7 +44,8 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
       const res = await fetch(`/api/repos/${template.owner}/${template.name}/duplicate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, private: isPrivate }),
+        // Always public: GitHub Pages can't publish a private repo on a free plan.
+        body: JSON.stringify({ name, private: false }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -53,7 +53,9 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
         return setStatus({
           state: "error",
           reauth,
-          message: reauth ? (data.message ?? "Your GitHub access has expired.") : (data.error ?? "Creating the site didn't work. Try again."),
+          message: reauth
+            ? (data.message ?? "Your GitHub access has expired.")
+            : (data.message ?? data.error ?? "Creating the site didn't work. Try again."),
         });
       }
       setStatus({ state: "done", repo: data.repo });
@@ -133,15 +135,6 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
               className={`${inputClass} mt-1 font-mono`}
             />
             <span className="mt-1 block text-xs text-zinc-500">Also the last part of the web address.</span>
-          </label>
-          <label className="flex items-start gap-2 text-sm">
-            <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} className="mt-1" />
-            <span>
-              Keep the site&apos;s files private on GitHub
-              <span className="block text-xs text-zinc-500">
-                The published site is public either way. Publishing a private one needs a paid GitHub plan.
-              </span>
-            </span>
           </label>
         </div>
       </Details>

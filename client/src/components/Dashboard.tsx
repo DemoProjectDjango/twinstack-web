@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { claudeAccess } from "@/lib/claude";
 import { useCredits } from "@/lib/credits";
 import { cantManage, type Repo } from "@/lib/repos";
+import type { Access } from "@/lib/session";
 import { CreateSite } from "./CreateSite";
 import { GitHubIcon } from "./GitHubIcon";
 import { Button, EmptyState, Notice, StepList, type Step } from "./site/ui";
@@ -17,14 +18,18 @@ type Sites =
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
 /**
- * The signed-in home: the setup steps until the first site exists (connect GitHub, create the
- * site, optionally set up Claude), then the user's sites.
+ * The signed-in home: the setup steps until the first site exists (connect GitHub, get approved,
+ * create the site, optionally set up Claude), then the user's sites.
  */
-export function Dashboard({ githubLogin }: { githubLogin: string | null }) {
+export function Dashboard({ githubLogin, email, access: initialAccess }: { githubLogin: string | null; email: string; access: Access }) {
   const [sites, setSites] = useState<Sites>(githubLogin ? { status: "loading" } : { status: "ready", repos: [] });
   const credits = useCredits();
   const claude = credits ? claudeAccess(credits) : null;
   const [creating, setCreating] = useState(false);
+  const [access, setAccess] = useState(initialAccess);
+  const [requesting, setRequesting] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const approved = access.status === "approved";
 
   useEffect(() => {
     let cancelled = false;
@@ -49,6 +54,25 @@ export function Dashboard({ githubLogin }: { githubLogin: string | null }) {
   const copies = repos.filter((r) => r.role === "copy");
   const loaded = sites.status === "ready";
   const setupDone = Boolean(githubLogin) && loaded && copies.length > 0;
+
+  async function requestAccess() {
+    setRequesting(true);
+    setRequestError(null);
+    try {
+      const res = await fetch("/api/access/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return setRequestError(data.error ?? "Your request couldn't be sent. Please try again.");
+      setAccess(data.access);
+    } catch {
+      setRequestError("Your request couldn't be sent. Check your internet connection and try again.");
+    } finally {
+      setRequesting(false);
+    }
+  }
 
   function added(repo: Repo) {
     setSites((s) => (s.status === "ready" ? { ...s, repos: [repo, ...s.repos] } : s));
@@ -83,17 +107,29 @@ export function Dashboard({ githubLogin }: { githubLogin: string | null }) {
       ),
     },
     {
+      id: "access",
+      title: "Get approved",
+      text: <AccessText access={access} email={email} error={requestError} />,
+      done: approved,
+      action:
+        access.status === "none" ? (
+          <Button variant={githubLogin ? "primary" : "secondary"} disabled={requesting} onClick={() => void requestAccess()}>
+            {requesting ? "Sending…" : "Request access"}
+          </Button>
+        ) : null,
+    },
+    {
       id: "site",
       title: "Create your site",
-      text: !githubLogin
-        ? "Your own copy of the TwinStack website, ready to make yours."
-        : !loaded
-          ? "Checking your GitHub account…"
-          : template
-            ? "Your own copy of the TwinStack website, ready to make yours."
-            : `Your GitHub account (@${githubLogin}) can't see the TwinStack template yet. Ask its owner to give you access, then refresh this page.`,
+      text: !approved
+        ? "Once you're approved, one click makes your own copy of the TwinStack website, ready to make yours."
+        : !githubLogin || template
+          ? "Your own copy of the TwinStack website, ready to make yours."
+          : !loaded
+            ? "Checking your GitHub account…"
+            : "Creating sites isn't available right now. Please try again later.",
       done: copies.length > 0,
-      action: githubLogin && !creating ? createAction : null,
+      action: githubLogin && approved && !creating ? createAction : null,
     },
     {
       id: "claude",
@@ -126,7 +162,7 @@ export function Dashboard({ githubLogin }: { githubLogin: string | null }) {
       {!setupDone && sites.status !== "error" && (
         <section aria-labelledby="setup-heading" className="space-y-3">
           <h2 id="setup-heading" className="font-semibold">
-            Get started in {githubLogin ? "two more steps" : "three steps"}
+            Get started in {stepsLeft(steps)}
           </h2>
           <StepList steps={steps} />
         </section>
@@ -156,10 +192,8 @@ export function Dashboard({ githubLogin }: { githubLogin: string | null }) {
         </section>
       )}
 
-      {githubLogin && loaded && copies.length === 0 && !template && (
-        <EmptyState title="No sites yet">
-          Once the TwinStack template is shared with @{githubLogin}, you can create your site here.
-        </EmptyState>
+      {githubLogin && loaded && copies.length === 0 && !template && approved && (
+        <EmptyState title="No sites yet">Creating sites isn&apos;t available right now. Please try again later.</EmptyState>
       )}
 
       {setupDone && claude && !claude.ready && (
@@ -173,6 +207,30 @@ export function Dashboard({ githubLogin }: { githubLogin: string | null }) {
       )}
     </div>
   );
+}
+
+const STEP_WORDS = ["", "one more step", "two more steps", "three steps", "four steps"];
+
+/** "two more steps": how many required steps are left. */
+function stepsLeft(steps: Step[]) {
+  const left = steps.filter((s) => !s.optional && !s.done).length;
+  return STEP_WORDS[left] ?? `${left} steps`;
+}
+
+/** Where the account's request stands, in plain words. */
+function AccessText({ access, email, error }: { access: Access; email: string; error: string | null }) {
+  if (error) return <span className="text-red-600 dark:text-red-400">{error}</span>;
+  if (access.status === "pending") {
+    const sent = access.requestedAt ? ` on ${dateFormat.format(new Date(access.requestedAt))}` : "";
+    return (
+      <>
+        Request sent{sent}. We&apos;ll email you at <span className="font-medium">{email}</span> as soon as you&apos;re approved.
+        You can connect GitHub in the meantime.
+      </>
+    );
+  }
+  if (access.status === "denied") return <>Sorry, your account can&apos;t create sites at the moment.</>;
+  return <>We approve each new account by hand. Ask once, and we&apos;ll email you at {email} when you can start.</>;
 }
 
 function SiteCard({ repo, login }: { repo: Repo; login: string }) {
