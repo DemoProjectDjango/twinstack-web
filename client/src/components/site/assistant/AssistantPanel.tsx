@@ -9,6 +9,7 @@ import { ActionCard } from "./ActionCard";
 import { AttachButton, PendingChips, SentAttachments, useAttachmentUploads, useFileDrop } from "./Attachments";
 import { useAssistant } from "./AssistantProvider";
 import { NextSteps, useNextSteps } from "./NextSteps";
+import { OutOfCredits } from "./OutOfCredits";
 import { RichText } from "./RichText";
 import { SUGGESTIONS } from "./suggestions";
 
@@ -294,7 +295,7 @@ function Entry({
   }
   return (
     <div className="space-y-2">
-      <Parts parts={entry.parts} />
+      <Parts parts={entry.parts} offerCredits={last && !running} />
       {entry.error && <p className="text-sm text-red-600 dark:text-red-400">{entry.error}</p>}
       {openCount > 1 && last && (
         <Button variant="primary" className="text-xs" disabled={applyingAll || running} onClick={onApplyAll}>
@@ -305,12 +306,16 @@ function Entry({
   );
 }
 
-function Parts({ parts }: { parts: AssistantPart[] }) {
+/** `offerCredits`: show the buy-credits card under an out-of-credits note (only the latest answer's). */
+function Parts({ parts, offerCredits = false }: { parts: AssistantPart[]; offerCredits?: boolean }) {
   return (
     <>
       {parts.map((part, i) =>
         part.type === "text" ? (
-          <RichText key={i} text={part.text} />
+          <div key={i} className="space-y-2">
+            <RichText text={part.text} />
+            {offerCredits && part.credits && <OutOfCredits reason={part.credits} />}
+          </div>
         ) : part.type === "activity" ? (
           <p key={i} className="flex items-center gap-2 text-xs text-zinc-500">
             <span aria-hidden="true" className="size-1.5 rounded-full bg-zinc-400" />

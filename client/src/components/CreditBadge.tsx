@@ -14,10 +14,77 @@ function level(credits: Credits) {
 }
 
 const TONE = {
-  ok: "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900",
-  low: "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300",
-  empty: "border-red-300 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-900 dark:bg-red-950 dark:text-red-400",
+  ok: "border-zinc-300 text-zinc-700 hover:border-zinc-400 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900",
+  low: "border-amber-300 bg-amber-50 text-amber-800 hover:border-amber-400 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300",
+  empty: "border-red-300 bg-red-50 text-red-700 hover:border-red-400 hover:bg-red-100 dark:border-red-900 dark:bg-red-950 dark:text-red-400",
 };
+
+// The ring's filled part: what's left.
+const RING = { ok: "text-emerald-500", low: "text-amber-500", empty: "text-red-500" };
+
+/** Counts from the shown number to `target` whenever it changes (at once with reduced motion). */
+function useCountUp(target: number, ms = 600) {
+  const [shown, setShown] = useState(target);
+  const from = useRef(target);
+  useEffect(() => {
+    const start = from.current;
+    if (start === target) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const began = performance.now();
+    let frame = requestAnimationFrame(function tick(now) {
+      const t = reduce ? 1 : Math.min(1, (now - began) / ms);
+      const value = start + (target - start) * (1 - (1 - t) ** 3);
+      from.current = value;
+      setShown(value);
+      if (t < 1) frame = requestAnimationFrame(tick);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [target, ms]);
+  return shown;
+}
+
+/**
+ * A ring filled to `share` (0-1) of the way round. `working` spins a short arc over it while Claude
+ * is running. Decorative: the numbers beside it carry the meaning.
+ */
+function CreditRing({ share, tone, size, stroke, working = false }: { share: number; tone: keyof typeof RING; size: number; stroke: number; working?: boolean }) {
+  const r = (size - stroke) / 2;
+  const length = 2 * Math.PI * r;
+  const filled = Math.min(1, Math.max(0, share));
+  return (
+    <span aria-hidden="true" className="relative inline-grid shrink-0 place-items-center" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-current opacity-15" />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={length}
+          // A sliver shows even at a few credits, so the ring never looks broken.
+          strokeDashoffset={length * (1 - (filled > 0 ? Math.max(filled, 0.03) : 0))}
+          className={`stroke-current transition-[stroke-dashoffset] duration-700 ease-out motion-reduce:transition-none ${RING[tone]}`}
+        />
+      </svg>
+      {working && (
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0 animate-spin motion-reduce:animate-none">
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={`${length * 0.2} ${length}`}
+            className="stroke-sky-500"
+          />
+        </svg>
+      )}
+    </span>
+  );
+}
 
 /** The navbar's Claude credits: the balance (live while Claude works) and a menu to buy more. */
 export function CreditBadge() {
@@ -41,13 +108,15 @@ export function CreditBadge() {
     };
   }, [open]);
 
+  const shownBalance = useCountUp(credits?.balance ?? 0);
+
   if (failed || !credits) return null;
 
   const own = credits.source === "own";
   const off = credits.source === "none";
   const tone = own || off ? "ok" : level(credits);
   const total = credits.granted + credits.purchased;
-  const usedShare = total > 0 ? Math.min(1, Math.max(0, (total - credits.balance) / total)) : 1;
+  const remainingShare = total > 0 ? Math.max(0, credits.balance) / total : 0;
 
   return (
     <div ref={box} className="relative">
@@ -57,25 +126,28 @@ export function CreditBadge() {
         aria-controls={menuId}
         onClick={() => setOpen((o) => !o)}
         title={own ? "Claude uses your own Anthropic key" : off ? "Claude isn't available yet" : `${formatCredits(credits.balance)} Claude credits left`}
-        className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm tabular-nums ${TONE[tone]}`}
+        className={`group flex items-center gap-2 rounded-full border py-1 pl-1 pr-2.5 text-sm tabular-nums shadow-sm transition-all hover:-translate-y-px hover:shadow focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 active:translate-y-0 motion-reduce:transform-none ${TONE[tone]} ${open ? "ring-2 ring-zinc-300 dark:ring-zinc-700" : ""}`}
       >
-        <span aria-hidden="true">✦</span>
+        <span className="relative grid place-items-center">
+          <CreditRing share={own || off ? 1 : remainingShare} tone={tone} size={24} stroke={3} working={credits.active} />
+          <span aria-hidden="true" className="absolute text-[10px] leading-none transition-transform group-hover:scale-125">
+            ✦
+          </span>
+        </span>
         {own ? (
           <span>Own key</span>
         ) : off ? (
           <span>Claude off</span>
         ) : (
           <span>
-            {formatCredits(credits.balance)}
+            {formatCredits(shownBalance)}
             <span className="hidden lg:inline"> credits</span>
           </span>
         )}
-        {credits.active && (
-          <span className="relative flex size-2" aria-label="Claude is working">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-sky-400 opacity-75" />
-            <span className="relative inline-flex size-2 rounded-full bg-sky-500" />
-          </span>
-        )}
+        {credits.active && <span className="sr-only">Claude is working</span>}
+        <svg aria-hidden="true" viewBox="0 0 12 12" className={`size-3 opacity-60 transition-transform ${open ? "rotate-180" : ""}`}>
+          <path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       </button>
 
       {open && (
@@ -96,24 +168,29 @@ export function CreditBadge() {
             <p className="text-sm text-zinc-600 dark:text-zinc-400">Claude isn&apos;t available right now. Try again later.</p>
           ) : (
             <>
-              <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Claude credits</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums">{formatCredits(credits.balance)}</p>
-              <p className="text-xs text-zinc-500">
-                {credits.balance > 0
-                  ? `About ${creditsValue(credits.balance, credits.creditsPerDollar)} of Claude use left`
-                  : "Buy more credits to keep using Claude."}
-              </p>
-              <div
-                className="mt-3 h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
+              <div className="flex items-center gap-4">
+                <span className="relative grid place-items-center">
+                  <CreditRing share={remainingShare} tone={tone} size={72} stroke={7} working={credits.active} />
+                  <span className="absolute text-sm font-semibold tabular-nums">{Math.round(Math.min(1, remainingShare) * 100)}%</span>
+                </span>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Claude credits</p>
+                  <p className="text-2xl font-semibold tabular-nums">{formatCredits(shownBalance)}</p>
+                  <p className="text-xs text-zinc-500">
+                    {credits.balance > 0
+                      ? `About ${creditsValue(credits.balance, credits.creditsPerDollar)} of Claude use left`
+                      : "Buy more credits to keep using Claude."}
+                  </p>
+                </div>
+              </div>
+              <p
+                className="mt-3 text-xs text-zinc-500"
                 role="meter"
-                aria-label="Credits used"
+                aria-label="Credits left"
                 aria-valuemin={0}
                 aria-valuemax={total}
-                aria-valuenow={total - Math.max(0, credits.balance)}
+                aria-valuenow={Math.max(0, credits.balance)}
               >
-                <div className={`h-full ${tone === "ok" ? "bg-foreground" : tone === "low" ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${(1 - usedShare) * 100}%` }} />
-              </div>
-              <p className="mt-1 text-xs text-zinc-500">
                 {formatCredits(credits.used)} used of {formatCredits(total)}
                 {credits.active && " · updating while Claude works"}
               </p>

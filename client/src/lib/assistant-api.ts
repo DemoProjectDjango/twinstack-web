@@ -59,7 +59,9 @@ export type AssistantAction = {
 };
 
 export type AssistantPart =
-  | { type: "text"; text: string }
+  // `credits`: the note Claude stopped with for want of credits ("out"), or of enough to pick the
+  // conversation up again ("short"); the chat offers to buy more under the latest one.
+  | { type: "text"; text: string; credits?: "out" | "short" }
   | { type: "activity"; label: string }
   | { type: "action"; id: string };
 

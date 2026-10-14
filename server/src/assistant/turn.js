@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { countInputTokens } from "../credits.js";
 import { SYSTEM_PROMPT } from "./prompt.js";
 import { TOOL_DEFINITIONS, runTool, toolInfo } from "./tools.js";
 
@@ -38,11 +39,19 @@ const SHARED_TOKENS = Math.ceil(JSON.stringify({ SYSTEM_PROMPT, TOOL_DEFINITIONS
 const CACHE_FRESH_MS = 55 * 60 * 1000;
 let sharedCachedAt = 0;
 
-/** What to tell the owner when a request was refused although they still have credits. */
-const tooCostlyNote = ({ needed, balance }) =>
-  `I've stopped before starting, because picking this conversation up again would cost about ${needed.toLocaleString("en")} credits and you have ${balance.toLocaleString("en")}. Claude re-reads a whole conversation when it's been idle for a while. Start a new conversation (top right) to carry on for much less, or buy more credits.`;
+/**
+ * What to tell the owner when a request was refused although they still have credits. A new
+ * conversation is suggested only when there's an earlier one to leave behind (`fresh` is false):
+ * otherwise the cost is the instructions themselves, which a new conversation reads just the same.
+ */
+const tooCostlyNote = ({ needed, balance, fresh }) => {
+  const cost = `about ${needed.toLocaleString("en")} credits and you have ${balance.toLocaleString("en")}`;
+  return fresh
+    ? `I've stopped before starting, because reading your request along with my instructions would cost ${cost}. It costs more when Claude hasn't been used for an hour or so. Buy more credits below and I'll carry on.`
+    : `I've stopped before starting, because picking this conversation up again would cost ${cost}. Claude re-reads a whole conversation when it's been idle for a while. Start a new conversation to carry on for less, or buy more credits below.`;
+};
 
-const OUT_OF_CREDITS_NOTE = "I've stopped here because your Claude credits have run out. Buy more credits, then tell me to carry on.";
+const OUT_OF_CREDITS_NOTE = "I've stopped here because your Claude credits have run out. Buy more credits below and I'll carry on.";
 
 const PROPOSED ="Shown to the owner as a card. It is NOT applied yet: they'll apply or skip it, and the next message will tell you which.";
 
@@ -104,10 +113,18 @@ export async function runTurn({ client, key, model: requested, history, live, on
       };
       const spend = await beginSpend();
       const sharedWarm = Date.now() - sharedCachedAt < CACHE_FRESH_MS ? SHARED_TOKENS : 0;
-      params.max_tokens = spend?.maxTokens(MAX_TOKENS, params, { cachedTokens: Math.max(sharedWarm, step === 0 ? cachedTokens : lastPrompt) }) ?? 0;
+      const cached = { cachedTokens: Math.max(sharedWarm, step === 0 ? cachedTokens : lastPrompt) };
+      // Counted exactly when it's close: a request whose reading alone passes the limit is charged and gets nothing.
+      params.max_tokens = (await spend?.fitMaxTokens(MAX_TOKENS, params, cached, (body) => countInputTokens(client, body))) ?? 0;
       if (!params.max_tokens) {
         await spend?.finish();
-        live.parts.push({ type: "text", text: spend?.shortfall ? tooCostlyNote(spend.shortfall) : OUT_OF_CREDITS_NOTE });
+        // `start` is 1 when the owner's message is the conversation's first.
+        const shortfall = spend?.shortfall && { ...spend.shortfall, fresh: start <= 1 };
+        live.parts.push(
+          shortfall
+            ? { type: "text", text: tooCostlyNote(shortfall), credits: shortfall.fresh ? "out" : "short" }
+            : { type: "text", text: OUT_OF_CREDITS_NOTE, credits: "out" },
+        );
         stopReason = "out_of_credits";
         break;
       }
@@ -184,7 +201,7 @@ export async function runTurn({ client, key, model: requested, history, live, on
       if (spend.stopped || (spend.clamped && message.stop_reason === "max_tokens")) {
         const content = (message ?? cutOff).content.filter((b) => b.type === "text" && b.text);
         if (content.length) messages.push({ role: "assistant", content });
-        live.parts.push({ type: "text", text: OUT_OF_CREDITS_NOTE });
+        live.parts.push({ type: "text", text: OUT_OF_CREDITS_NOTE, credits: "out" });
         stopReason = "out_of_credits";
         break;
       }

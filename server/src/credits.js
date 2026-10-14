@@ -128,6 +128,13 @@ export const OVERDRAFT = 200;
 const CHARS_PER_TOKEN = 3.5;
 // An image or document sent by reference or as base64 counts as this many input tokens.
 const MEDIA_TOKENS = 1600;
+// Anthropic adds instructions of its own to any request that sends tools.
+const TOOLS_TOKENS = 500;
+// The estimate is rough (a request of 11,078 tokens was once estimated under 9,300), so when it comes
+// within this factor of what the balance allows, the request is counted exactly first (countableRequest).
+const TIGHT = 1.5;
+// When the exact count can't be had, the estimate is padded by this much instead.
+const UNSURE = 1.3;
 
 const creditsPerToken = (dollarsPerMillion) => (dollarsPerMillion / 1e6) * CREDITS_PER_USD;
 
@@ -153,11 +160,32 @@ function inputEstimate(body) {
     return value;
   });
   return {
-    tokens: Math.ceil(text.length / CHARS_PER_TOKEN) + media * MEDIA_TOKENS,
+    tokens: Math.ceil(text.length / CHARS_PER_TOKEN) + media * MEDIA_TOKENS + (body.tools?.length ? TOOLS_TOKENS : 0),
     cached: text.includes('"cache_control"'),
     // A 1-hour cache write costs 2x input, a 5-minute one 1.25x.
     hourCache: /"ttl"\s*:\s*"1h"/.test(text),
   };
+}
+
+// The fields of a messages request that count_tokens takes; the rest (max_tokens, stream, fallbacks…)
+// only shape the reply.
+const COUNT_FIELDS = ["model", "messages", "system", "tools", "tool_choice", "thinking", "context_management", "output_config", "mcp_servers", "cache_control"];
+
+/** A request's body as Anthropic's count_tokens endpoint takes it. */
+export const countableRequest = (body) => Object.fromEntries(COUNT_FIELDS.filter((f) => body[f] !== undefined).map((f) => [f, body[f]]));
+
+/**
+ * A request's exact input tokens from Anthropic's count_tokens endpoint (free), counted with the
+ * SDK `client` the request will be sent with; null when it can't be had.
+ */
+export async function countInputTokens(client, params) {
+  try {
+    const { input_tokens } = await client.beta.messages.countTokens({ ...countableRequest(params), ...(params.betas && { betas: params.betas }) });
+    return input_tokens;
+  } catch (err) {
+    console.warn(`Couldn't count a Claude request's tokens: ${err.message}`);
+    return null;
+  }
 }
 
 /** Characters one streamed delta adds to the reply. */
@@ -189,20 +217,50 @@ class Spend {
   }
 
   /**
-   * The max_tokens to send instead of `requested`: no more than the balance buys down to
-   * -OVERDRAFT, after the request's estimated input. 0 when nothing is left for any output (the
-   * input alone would go past the limit). A cached request is priced as writing its cache, except
-   * `cachedTokens`, the part the caller knows is cached already (read at the cheap rate): a cache
-   * that has expired is written again in full, which costs more than the input itself.
+   * What reading the request costs in credits. A cached request is priced as writing its cache,
+   * except `cachedTokens`, the part the caller knows is cached already (read at the cheap rate): a
+   * cache that has expired is written again in full, which costs more than the input itself.
+   * `inputTokens` is the request's exact size when it was counted (null when it couldn't be: the
+   * estimate is padded instead).
    */
-  maxTokens(requested, body, { cachedTokens = 0 } = {}) {
+  #inputCredits(body, { cachedTokens = 0, inputTokens } = {}) {
+    const price = priceOf(body.model ?? "");
+    const input = inputEstimate(body);
+    const tokens = inputTokens ?? (inputTokens === null ? Math.ceil(input.tokens * UNSURE) : input.tokens);
+    const read = input.cached ? Math.min(cachedTokens, tokens) : 0;
+    const writeRate = input.cached ? price.input * (input.hourCache ? 2 : 1.25) : price.input;
+    return read * creditsPerToken(price.cacheRead) + (tokens - read) * creditsPerToken(writeRate);
+  }
+
+  /**
+   * Whether the estimated cost of reading the request comes close enough to what the balance allows
+   * that it should be counted exactly (countableRequest) before maxTokens. Never for a request that
+   * isn't charged.
+   */
+  isTight(body, options) {
+    if (!this.#account) return false;
+    return this.#inputCredits(body, options) * TIGHT >= left(this.#account) + OVERDRAFT;
+  }
+
+  /**
+   * maxTokens, with the request counted exactly by `count(body)` (resolving to its input tokens, or
+   * null) first when the estimate is close to the limit (isTight).
+   */
+  async fitMaxTokens(requested, body, options, count) {
+    if (this.isTight(body, options)) options = { ...options, inputTokens: await count(body) };
+    return this.maxTokens(requested, body, options);
+  }
+
+  /**
+   * The max_tokens to send instead of `requested`: no more than the balance buys down to
+   * -OVERDRAFT, after reading the request (#inputCredits, which takes the same `options`). 0 when
+   * nothing is left for any output (the input alone would go past the limit).
+   */
+  maxTokens(requested, body, options = {}) {
     this.requestedModel = body.model ?? null;
     if (!this.#account || !Number.isFinite(requested)) return requested;
     const price = priceOf(this.requestedModel ?? "");
-    const input = inputEstimate(body);
-    const read = input.cached ? Math.min(cachedTokens, input.tokens) : 0;
-    const writeRate = input.cached ? price.input * (input.hourCache ? 2 : 1.25) : price.input;
-    const inputCredits = read * creditsPerToken(price.cacheRead) + (input.tokens - read) * creditsPerToken(writeRate);
+    const inputCredits = this.#inputCredits(body, options);
     const room = left(this.#account) + OVERDRAFT - inputCredits;
     const allowed = Math.floor(room / creditsPerToken(price.output));
     if (allowed >= requested) return requested;

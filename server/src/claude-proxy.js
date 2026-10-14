@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import http from "node:http";
 import { config } from "./config.js";
-import { OUT_OF_CREDITS, beginSpend } from "./credits.js";
+import { OUT_OF_CREDITS, beginSpend, countableRequest } from "./credits.js";
 
 // The site's Claude scripts never see the app's Anthropic key: a copy is a repo its owner can
 // change, so its scripts could print any key they're given. Instead a Claude command run on
@@ -118,13 +118,35 @@ async function handle(req, res) {
   if (!spend) return sendError(res, 402, "billing_error", OUT_OF_CREDITS);
   try {
     // No more output than the balance pays for down to the overdraft limit.
-    const maxTokens = spend.maxTokens(request.max_tokens, request);
+    // DeepSeek has no token count: its requests keep the estimate.
+    const count = deepseek ? async () => null : (body) => countInputTokens(req, body);
+    const maxTokens = await spend.fitMaxTokens(request.max_tokens, request, {}, count);
     if (maxTokens === 0) return sendError(res, 402, "billing_error", OUT_OF_CREDITS);
     if (maxTokens !== request.max_tokens) body = Buffer.from(JSON.stringify({ ...request, max_tokens: maxTokens }));
     await forward(req, res, body, deepseek, spend);
   } finally {
     // A stopped reply is charged for what was used up to then.
     await spend.finish();
+  }
+}
+
+/** The request's exact input tokens from Anthropic's count_tokens (free), or null when it can't be had. */
+async function countInputTokens(req, request) {
+  const headers = { "x-api-key": config.platformAnthropicKey, "content-type": "application/json" };
+  for (const name of ["anthropic-version", "anthropic-beta"]) if (req.headers[name]) headers[name] = req.headers[name];
+  headers["anthropic-version"] ??= "2023-06-01";
+  try {
+    const res = await fetch(`${UPSTREAM}/v1/messages/count_tokens`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(countableRequest(request)),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`count_tokens answered ${res.status}`);
+    return (await res.json()).input_tokens ?? null;
+  } catch (err) {
+    console.warn(`Couldn't count a Claude request's tokens: ${err.message}`);
+    return null;
   }
 }
 

@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { anthropicClient } from "./assistant/turn.js";
 import { jobEnv, npmCli } from "./commands.js";
 import { config } from "./config.js";
+import { countInputTokens } from "./credits.js";
 import { GIT_TIMEOUT_MS } from "./duplicate.js";
 import { githubFetch } from "./github.js";
 import { appTokenError } from "./sites.js";
@@ -266,7 +267,7 @@ async function mergeWithClaude(client, model, conflict, beginSpend) {
   };
   const outOfCredits = `Your Claude credits ran out before Claude finished combining ${file}. Buy more credits, then try again.`;
   const spend = await beginSpend();
-  params.max_tokens = spend?.maxTokens(MAX_TOKENS, params) ?? 0;
+  params.max_tokens = (await spend?.fitMaxTokens(MAX_TOKENS, params, {}, (body) => countInputTokens(client, body))) ?? 0;
   let message;
   try {
     if (!params.max_tokens) throw new Error(outOfCredits);
