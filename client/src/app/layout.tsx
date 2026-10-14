@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Twinstack",
-  description: "Copy the TwinStack site to your GitHub account and manage it from the browser.",
+  description: "Build your website step by step, make it yours, and publish it with one click. No code needed.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

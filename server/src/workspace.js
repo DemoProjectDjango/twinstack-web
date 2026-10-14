@@ -177,10 +177,21 @@ const syncs = new Map();
 
 async function syncWorkspace(key, info, accessToken) {
   const dir = workspaceDir(key);
-  const cloned = existsSync(path.join(dir, ".git"));
+  let cloned = existsSync(path.join(dir, ".git"));
 
   // A running command owns the working copy; show its state instead of fetching under it.
   if (cloned && busy.has(key)) return;
+
+  // The folder is named after the repo, but a repo deleted on GitHub and made again under the same
+  // name is a different repo (a new id): its folder holds the deleted site's history and unpublished
+  // changes, so it's cloned again instead. Folders from before the id was recorded are kept.
+  if (cloned) {
+    const previousId = await readMeta(dir).then((meta) => meta.id, () => undefined);
+    if (previousId !== undefined && previousId !== info.id) {
+      console.log(`Workspace ${key} was for a deleted repo (${previousId}); cloning ${info.full_name} (${info.id}) afresh.`);
+      cloned = false;
+    }
+  }
 
   const release = acquire(key, "syncing with GitHub");
   try {

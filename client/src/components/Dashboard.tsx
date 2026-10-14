@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { claudeAccess } from "@/lib/claude";
 import { useCredits } from "@/lib/credits";
 import { cantManage, type Repo } from "@/lib/repos";
@@ -17,12 +17,46 @@ type Sites =
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
+// The last site list per GitHub login, so a returning user sees their sites at once instead of
+// the setup steps while GitHub answers. A per-browser convenience: anything wrong with it is ignored.
+const cacheKey = (login: string) => `twinstack:sites:${login}`;
+const noSubscription = () => () => {};
+
+function readCache(login: string | null): string | null {
+  if (!login) return null;
+  try {
+    return localStorage.getItem(cacheKey(login));
+  } catch {
+    return null;
+  }
+}
+
+function parseCache(raw: string | null): Repo[] | null {
+  try {
+    const repos = JSON.parse(raw ?? "null");
+    return Array.isArray(repos) ? repos : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(login: string, repos: Repo[]) {
+  try {
+    localStorage.setItem(cacheKey(login), JSON.stringify(repos));
+  } catch {
+    // Storage full or blocked: the list just loads from GitHub next time.
+  }
+}
+
 /**
  * The signed-in home: the setup steps until the first site exists (connect GitHub, get approved,
  * create the site, optionally set up Claude), then the user's sites.
  */
 export function Dashboard({ githubLogin, email, access: initialAccess }: { githubLogin: string | null; email: string; access: Access }) {
   const [sites, setSites] = useState<Sites>(githubLogin ? { status: "loading" } : { status: "ready", repos: [] });
+  // Read after hydration (the server has no list), shown until GitHub answers, and kept if it fails.
+  const cachedRaw = useSyncExternalStore(noSubscription, () => readCache(githubLogin), () => null);
+  const cached = useMemo(() => parseCache(cachedRaw), [cachedRaw]);
   const credits = useCredits();
   const claude = credits ? claudeAccess(credits) : null;
   const [creating, setCreating] = useState(false);
@@ -49,10 +83,15 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
     };
   }, [githubLogin]);
 
-  const repos = sites.status === "ready" ? sites.repos : [];
+  // Saves every list GitHub gives, including one with a site just created.
+  useEffect(() => {
+    if (githubLogin && sites.status === "ready") writeCache(githubLogin, sites.repos);
+  }, [githubLogin, sites]);
+
+  const repos = sites.status === "ready" ? sites.repos : (cached ?? []);
   const template = repos.find((r) => r.role === "template") ?? null;
   const copies = repos.filter((r) => r.role === "copy");
-  const loaded = sites.status === "ready";
+  const loaded = sites.status === "ready" || Boolean(cached);
   const setupDone = Boolean(githubLogin) && loaded && copies.length > 0;
 
   async function requestAccess() {
@@ -159,7 +198,9 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
           <Notice tone="warning">Your sites couldn&apos;t be loaded from GitHub. Refresh the page to try again.</Notice>
         ))}
 
-      {!setupDone && sites.status !== "error" && (
+      {sites.status === "loading" && !cached && <SitesLoading />}
+
+      {!setupDone && loaded && sites.status !== "error" && (
         <section aria-labelledby="setup-heading" className="space-y-3">
           <h2 id="setup-heading" className="font-semibold">
             Get started in {stepsLeft(steps)}
@@ -174,20 +215,41 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
 
       {setupDone && (
         <section aria-labelledby="sites-heading" className="space-y-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 id="sites-heading" className="font-semibold">
-              Your sites
-            </h2>
-            {template && !creating && (
-              <Button className="ml-auto" onClick={() => setCreating(true)}>
-                + Create another site
-              </Button>
-            )}
-          </div>
+          <h2 id="sites-heading" className="font-semibold">
+            Your sites
+          </h2>
           <ul className="grid gap-3 sm:grid-cols-2">
             {copies.map((repo) => (
               <SiteCard key={repo.id} repo={repo} login={githubLogin!} />
             ))}
+            {/* There's no limit on sites: the card makes another, or says why it can't yet. */}
+            {approved && template && !creating && (
+              <li>
+                <button
+                  type="button"
+                  onClick={() => setCreating(true)}
+                  className="flex h-full min-h-32 w-full flex-col items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center hover:border-foreground hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
+                >
+                  <span className="font-medium">+ Create a new site</span>
+                  <span className="mt-1 text-xs text-zinc-500">Start another website from the same ready-made design.</span>
+                </button>
+              </li>
+            )}
+            {!approved && (
+              <li className="flex flex-col justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-sm dark:border-zinc-700">
+                <p className="font-medium">Create a new site</p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  <AccessText access={access} email={email} error={requestError} />
+                </p>
+                {access.status === "none" && (
+                  <div className="mt-3">
+                    <Button variant="primary" disabled={requesting} onClick={() => void requestAccess()}>
+                      {requesting ? "Sending…" : "Request access"}
+                    </Button>
+                  </div>
+                )}
+              </li>
+            )}
           </ul>
         </section>
       )}
@@ -209,7 +271,27 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
   );
 }
 
-const STEP_WORDS = ["", "one more step", "two more steps", "three steps", "four steps"];
+/** Placeholder cards while the site list loads, so neither the setup steps nor the sites flash up first. */
+function SitesLoading() {
+  return (
+    <section aria-busy="true" aria-labelledby="sites-loading-heading" className="space-y-3">
+      <h2 id="sites-loading-heading" className="font-semibold">
+        Loading your sites…
+      </h2>
+      <ul className="grid gap-3 sm:grid-cols-2" aria-hidden="true">
+        {[0, 1].map((i) => (
+          <li key={i} className="flex flex-col rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+            <span className="h-4 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+            <span className="mt-2 h-3 w-40 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
+            <span className="mt-5 h-8 w-24 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+const STEP_WORDS =["", "one more step", "two more steps", "three steps", "four steps"];
 
 /** "two more steps": how many required steps are left. */
 function stepsLeft(steps: Step[]) {
@@ -229,7 +311,7 @@ function AccessText({ access, email, error }: { access: Access; email: string; e
       </>
     );
   }
-  if (access.status === "denied") return <>Sorry, your account can&apos;t create sites at the moment.</>;
+  if (access.status === "denied") return <>Sorry, your account can&apos;t create new sites at the moment.</>;
   return <>We approve each new account by hand. Ask once, and we&apos;ll email you at {email} when you can start.</>;
 }
 

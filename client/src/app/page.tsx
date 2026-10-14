@@ -3,26 +3,30 @@ import { getUser } from "@/lib/session";
 
 const STEPS = [
   {
-    title: "Sign up and connect GitHub",
-    text: "Create your account, then connect GitHub: the free service that stores your site and puts it on the web.",
+    title: "Create your account",
+    text: "Sign up with your email address and a password. It's free.",
+  },
+  {
+    title: "Connect GitHub and get approved",
+    text: "Connect GitHub, the free service that stores your site and puts it on the web, and ask for access. We email you when you're approved.",
   },
   {
     title: "Create your site",
-    text: "Give it a name. You get your own copy of the TwinStack website with its own web address.",
+    text: "Give it a name and you get a ready-made website of your own, with its own free web address.",
   },
   {
     title: "Make it yours and publish",
-    text: "Add your logo and pages, check the preview, and press Publish. Your site is live a minute later.",
+    text: "Add your logo, details and pages, check the preview, and press Publish. Your site is live a minute or two later.",
   },
 ];
 
 const FEATURES = [
   ["Pages", "Add pages, blog posts, services and products, and write them in plain text."],
   ["Design", "Upload your logo, pick colours, and arrange the menu and footer with a live preview."],
-  ["Claude, if you want it", "Give Claude your notes and it writes the page, or ask it to change a page in your own words. You always see the result first."],
+  ["Ask Claude", "Tell Claude what you want in your own words: write a page from your notes, change a section, or fix the design."],
   ["Bring your old site", "Upload pages saved from your old website and Claude fits them into the new one."],
   ["Found on Google", "See how each page shows up in search results and when it's shared, and improve it."],
-  ["One-click publishing", "See every change before it goes live, undo what you don't want, and publish with one button."],
+  ["You decide what goes live", "Every change waits in a preview until you press Publish, and you can undo anything you don't want first."],
 ];
 
 const HELP = [
@@ -35,8 +39,20 @@ const HELP = [
     a: "GitHub is a free service that stores your site's files and publishes your site on the web. You create a GitHub account once and connect it; after that, Twinstack does everything there for you.",
   },
   {
-    q: "What does Claude cost?",
-    a: "Claude is optional. To use it, add your own Anthropic API key in Settings; its use is billed to your Anthropic account. Everything else works without it.",
+    q: "Why do I need to be approved?",
+    a: "We're letting people in a few at a time. After you sign up, press Request access on your dashboard. We'll email you as soon as your account is approved, and you can then create your site.",
+  },
+  {
+    q: "What does it cost?",
+    a: "Building and publishing your site is free, and so is GitHub, which hosts it. Claude is optional and runs on credits: every account starts with 10,000 free credits, and the Credits page shows your balance and what each request used. Everything else works without Claude.",
+  },
+  {
+    q: "What will my web address be? Can I use my own domain?",
+    a: "Your site gets a free address like yourname.github.io/your-site. If you own a domain name, you can connect it on the Publish screen.",
+  },
+  {
+    q: "Can other people see my site's files?",
+    a: "Yes. GitHub's free hosting needs your site's files to be public, so once you publish, anyone can see them, including draft pages that aren't on the live site. Don't put anything private in your site.",
   },
   {
     q: "It says my GitHub connection has expired",
@@ -44,7 +60,7 @@ const HELP = [
   },
   {
     q: "I can't create a site",
-    a: "Your GitHub account needs access to the TwinStack template. Ask its owner to share it with you, then refresh the page.",
+    a: "Your dashboard lists the steps: GitHub has to be connected and your account approved. If your request is still waiting, we'll email you when it's answered.",
   },
   {
     q: "A button is greyed out while something is happening",
@@ -102,7 +118,7 @@ export default async function Home() {
         <h2 id="how-heading" className="text-center text-2xl font-semibold tracking-tight">
           How it works
         </h2>
-        <ol className="mt-8 grid gap-4 sm:grid-cols-3">
+        <ol className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {STEPS.map((step, index) => (
             <li key={step.title} className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
               <span className="grid size-8 place-items-center rounded-full bg-foreground text-sm font-medium text-background">
