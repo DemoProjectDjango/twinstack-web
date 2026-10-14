@@ -10,8 +10,13 @@ import { runTool, toolInfo } from "./tools.js";
 // testimonials…) are filling in data, not designing or writing pages, so the app's cheaper model
 // (fast-model.js, on DeepSeek or OpenAI) does them in one request instead of a whole Claude turn. Its
 // changes become the same update_site_details proposals Claude makes (same checks, same cards), and
-// the turn joins the conversation like any other. Anything it can't do (another kind of request, a
-// reply it can't get right) returns null, and the turn goes to Claude as usual.
+// the turn joins the conversation like any other. Another kind of request returns null, and the turn
+// goes to Claude as usual; a site-details request it can't get right (an unusable or cut-off reply,
+// changes that fail the checks twice, an error) returns DETAILS_FAILED, and the route gives the turn
+// to DETAILS_FALLBACK_MODEL rather than the account's own (often Opus) model.
+
+/** What runDetailsTurn resolves to when the request was site details but the fast model couldn't do it. */
+export const DETAILS_FAILED = Object.freeze({ failed: true });
 
 const MAX_TOKENS = 8000;
 const TOOL = "update_site_details";
@@ -89,11 +94,12 @@ export async function runDetailsTurn({ key, text, model, apiKey, live, onUpdate 
       await spend.finish(message ? { model: message.model, usage: message.usage } : {});
     }
     for (const field of Object.keys(usage)) usage[field] += message.usage?.[field] ?? 0;
-    if (message.stop_reason === "max_tokens") return null;
+    if (message.stop_reason === "max_tokens") return failed(model, "its reply was cut off");
 
     const replyText = message.content.filter((b) => b.type === "text").map((b) => b.text).join("");
     const reply = parseReply(replyText);
-    if (!reply || reply.handoff === true || typeof reply.reply !== "string") return null;
+    if (reply?.handoff === true) return null;
+    if (!reply || typeof reply.reply !== "string") return failed(model, `its reply wasn't the JSON asked for: ${replyText.slice(0, 200)}`);
     const changes = Array.isArray(reply.changes) ? reply.changes : [];
 
     // Each change through the same checks as Claude's proposals.
@@ -105,7 +111,7 @@ export async function runDetailsTurn({ key, text, model, apiKey, live, onUpdate 
       else actions.push(outcome.action);
     }
     if (problems.length) {
-      if (attempt === 2) return null;
+      if (attempt === 2) return failed(model, `its changes failed the checks twice: ${problems.join("; ").slice(0, 300)}`);
       messages.push({ role: "assistant", content: replyText }, { role: "user", content: `These changes can't be saved:\n- ${problems.join("\n- ")}\nReply again with the corrected JSON object only.` });
       continue;
     }
@@ -134,5 +140,11 @@ export async function runDetailsTurn({ key, text, model, apiKey, live, onUpdate 
     const appended = [{ role: "assistant", content: [{ type: "text", text: proposed ? `${reply.reply}\n\n${proposed}` : reply.reply }] }];
     return { appended, actions: made, usage, model: message.model ?? model, stopReason: "end_turn" };
   }
-  return null;
+  return DETAILS_FAILED;
+}
+
+/** Logs why the fast model couldn't do a site-details request, and says so to the route. */
+function failed(model, why) {
+  console.warn(`The site details model (${model}) couldn't do it, so Claude takes the turn: ${why}`);
+  return DETAILS_FAILED;
 }

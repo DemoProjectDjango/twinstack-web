@@ -15,7 +15,7 @@ import {
 import { composeUserMessage, knowledgeSection } from "../assistant/prompt.js";
 import { TOOLSET_VERSION, applyServerAction } from "../assistant/tools.js";
 import { anthropicClient, runTurn } from "../assistant/turn.js";
-import { runDetailsTurn } from "../assistant/details-turn.js";
+import { DETAILS_FAILED, runDetailsTurn } from "../assistant/details-turn.js";
 import { runQuickTurn } from "../assistant/quick-turn.js";
 import { archiveConversations, createConversation, findConversation, getAssistantModel, updateConversation } from "../db.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeFilesKeyFor, claudeKeyFor } from "../credits.js";
@@ -35,6 +35,9 @@ import { handle, keyFor } from "./helpers.js";
 // model first wherever they're sent from (assistant/details-turn.js); it hands anything else to Claude.
 const SITE_DETAILS_WORDS =
   /\b(e-?mail|phone|telephone|mobile|whats ?app|instagram|facebook|linkedin|youtube|tiktok|twitter|social (media|links?|pages?)|tagline|slogan|testimonials?|reviews?|faq|frequently asked|opening hours|business hours|address|booking link)\b/i;
+// The Claude model for a site-details request the fast model couldn't do (DETAILS_FAILED), whatever
+// the account's assistant model: filling in data doesn't need Opus or Fable.
+const DETAILS_FALLBACK_MODEL = "claude-sonnet-5-5";
 // How long Claude's 1-hour cache of a conversation counts as still there (a little under the hour).
 const CACHE_FRESH_MS = 55 * 60 * 1000;
 
@@ -276,6 +279,8 @@ assistantRouter.post(
 
     (async () => {
       let result = null;
+      // The Claude model this turn runs on, if Claude takes it: the account's, or Sonnet (below).
+      let turnModel = model;
       const spending = () => beginSpend({ userId, siteId, runId: turn.id, kind: "assistant", charged: claude.charged });
       try {
         // A small change to one page needs no planning: it becomes the page edit straight away, with
@@ -288,8 +293,8 @@ assistantRouter.post(
           if (!result) turn.live = { parts: [], actions: [] };
         }
         // Site details asked for on their own screen are data to fill in: the app's cheaper model
-        // (fast-model.js) does them (assistant/details-turn.js) when Claude runs on credits; null
-        // hands the turn to Claude.
+        // (fast-model.js) does them (assistant/details-turn.js) when Claude runs on credits. null
+        // hands the turn to Claude (not site details); DETAILS_FAILED hands it to Sonnet.
         const fastModel = currentFastModel();
         if (!result && (screen === "details" || SITE_DETAILS_WORDS.test(text)) && !continuing && text && !attachments.length && claude.charged && fastModel) {
           result = await runDetailsTurn({
@@ -303,22 +308,29 @@ assistantRouter.post(
           }).catch((err) => {
             if (err instanceof Anthropic.APIUserAbortError) throw err;
             console.error("The site details model failed, so Claude takes the turn:", err.message);
-            return null;
+            return DETAILS_FAILED;
           });
+          if (result === DETAILS_FAILED) {
+            result = null;
+            turnModel = DETAILS_FALLBACK_MODEL;
+          }
           if (!result) turn.live = { parts: [], actions: [] };
         }
+        // Claude's cache lasts an hour and belongs to one model: past the hour, or on another model
+        // than the last request's, the whole history is written to it again.
+        const last = conversation.lastPrompt;
+        const cacheWarm = Date.now() - Date.parse(last?.at ?? 0) < CACHE_FRESH_MS && (!last?.model || last.model === turnModel);
         result ??= await runTurn({
           client,
           key,
-          model,
+          model: turnModel,
           history: conversation.messages,
           live: turn.live,
           signal: turn.controller.signal,
           // Each request is capped to the balance, watched as it streams and charged as soon as it's
           // done, so the balance moves while Claude works and stops at the overdraft limit.
           beginSpend: spending,
-          // Claude's cache lasts an hour: past that, the whole history is written to it again.
-          cachedTokens: Date.now() - Date.parse(conversation.lastPrompt?.at ?? 0) < CACHE_FRESH_MS ? (conversation.lastPrompt?.tokens ?? 0) : 0,
+          cachedTokens: cacheWarm ? (last?.tokens ?? 0) : 0,
         });
         turn.status = "done";
       } catch (err) {
@@ -342,7 +354,7 @@ assistantRouter.post(
         const usage = result?.usage;
         await updateConversation(conversation.id, userId, {
           $push: { display: entry, ...(result?.appended.length && { messages: { $each: result.appended } }) },
-          $set: { ...actions, ...(result?.lastPrompt && { lastPrompt: { tokens: result.lastPrompt, at: new Date().toISOString() } }) },
+          $set: { ...actions, ...(result?.lastPrompt && { lastPrompt: { tokens: result.lastPrompt, model: turnModel, at: new Date().toISOString() } }) },
           ...(usage && { $inc: Object.fromEntries(Object.entries(usage).map(([k, v]) => [`usage.${k}`, v])) }),
         });
       } catch (err) {
