@@ -36,6 +36,7 @@ const APPLY_LABEL: Partial<Record<AssistantAction["tool"], string>> = {
   create_page: "Create it",
   delete_page: "Remove page",
   add_file_to_site: "Add it",
+  create_image: "Save it",
   convert_page_from_html: "Bring it in",
   create_missing_pages: "Create them",
   write_search_text_for_all_pages: "Write it",
@@ -85,6 +86,48 @@ function BeforeAfter({ rows }: { rows: [string, unknown, unknown][] }) {
 function imageRows(images: unknown): [string, ReactNode][] {
   const list = Array.isArray(images) ? (images as string[]) : [];
   return list.length ? [["Photos", list.map((i) => (i.startsWith("att_") ? "an attached photo" : i)).join(", ")]] : [];
+}
+
+const LOGO_USES: Record<string, string> = {
+  logo: "Logo",
+  logoDark: "Logo on dark backgrounds",
+  logoMark: "Small mark",
+  favicon: "Browser-tab icon",
+};
+
+const svgUrl = (preview: unknown) => (typeof preview === "string" && preview.startsWith("data:image/svg+xml;") ? preview : null);
+
+/**
+ * A drawn image (create_image), shown on a light and a dark background so the owner sees it as the
+ * header and the footer will, with its square version (the small mark and browser-tab icon) when it
+ * has one. Previews are the checked SVGs as data: URLs, which an <img> never runs anything from.
+ */
+function DrawnImage({ preview, markPreview }: { preview: unknown; markPreview: unknown }) {
+  const image = svgUrl(preview);
+  const mark = svgUrl(markPreview);
+  if (!image) return null;
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        {["bg-white", "bg-zinc-900"].map((background) => (
+          <div key={background} className={`grid h-24 place-items-center rounded-md border border-zinc-200 p-3 dark:border-zinc-800 ${background}`}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={image} alt="The drawn image" className="max-h-full max-w-full object-contain" />
+          </div>
+        ))}
+      </div>
+      {mark && (
+        <div className="flex items-center gap-3 rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+          {/* The size it's shown at in the header, then the browser tab's. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={mark} alt="Its square version" className="size-10" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={mark} alt="" className="size-4" />
+          <span className="text-xs text-zinc-500">Small mark and browser-tab icon</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** What exactly the change does, for anyone who wants to check. */
@@ -152,6 +195,20 @@ function ChangeDetails({ action }: { action: AssistantAction }) {
       const fields = (input.fields ?? {}) as Record<string, unknown>;
       const before = (meta.before ?? {}) as Record<string, unknown>;
       return <BeforeAfter rows={Object.keys(fields).map((f) => [SEO_LABELS[f] ?? f, before[f], fields[f]])} />;
+    }
+    case "create_image": {
+      const useAs = Array.isArray(input.useAs) ? (input.useAs as string[]) : [];
+      const markFields = input.markSvg && Array.isArray(input.markFields) ? (input.markFields as string[]) : [];
+      const uses = (fields: string[]) => fields.map((f) => LOGO_USES[f] ?? f).join(", ");
+      return (
+        <Rows
+          rows={[
+            ["Saved as", `/${show(meta.path)}`],
+            ["Used as", useAs.length ? uses(useAs) : "Not used anywhere yet"],
+            ...(markFields.length ? ([["Square version", `/${show(meta.markPath)}, used as ${uses(markFields)}`]] as [string, ReactNode][]) : []),
+          ]}
+        />
+      );
     }
     case "update_logo_settings": {
       const brand = (input.brand ?? {}) as Record<string, unknown>;
@@ -221,6 +278,9 @@ export function ActionCard({ id }: { id: string }) {
         <StatusBadge action={action} busy={busy} />
       </div>
       <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">{action.summary}</p>
+      {action.tool === "create_image" && (
+        <DrawnImage preview={(action.meta as Record<string, unknown>).preview} markPreview={(action.meta as Record<string, unknown>).markPreview} />
+      )}
 
       <div className="mt-2">
         <Details summary="What exactly changes">

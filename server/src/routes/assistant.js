@@ -391,6 +391,7 @@ const LOGGED_FILE = {
   create_missing_pages: () => "scripts/site-tree.md",
   update_page_search_settings: (a) => a.input.file,
   add_file_to_site: (a, file) => file,
+  create_image: (a, file) => file,
 };
 
 async function logApplied(key, action, file) {

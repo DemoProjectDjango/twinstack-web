@@ -4,6 +4,7 @@ import { addAttachmentToSite, readAttachmentMeta, sitePathFor } from "./attachme
 import { getBrand, saveBrand } from "../brand.js";
 import { getNavigation, saveNavigation } from "../navigation.js";
 import { readSeo } from "../seo.js";
+import { DRAWN_DIR, MAX_SVG_CHARS, checkSvg, drawnName, saveDrawnImage, svgAspect, svgPreview } from "../svg.js";
 import {
   IMAGE_PATH,
   deletePage,
@@ -42,6 +43,8 @@ const CREATE_TYPES = [...PAGE_TYPES, "homepage", "listing"];
 const MAX_READ_CHARS = 80_000;
 const SEO_FIELD_NAMES = ["metaTitle", "metaDescription", "focusKeyword", "ogImage", "ogImageAlt", "canonical", "noindex"];
 const LOGO_FIELDS = ["logoText", "logo", "logoDark", "logoMark", "favicon"];
+// The logo settings a drawn image can be used as (create_image's use_as).
+const LOGO_IMAGE_FIELDS = LOGO_FIELDS.filter((f) => f !== "logoText");
 const ATTACHMENT_ID = /^att_[a-f0-9]{16}$/;
 const MAX_IMAGES = 6;
 
@@ -316,6 +319,20 @@ const TOOLS = [
     },
     ["brand", "summary"],
     { kind: "change", runs: "server", title: "Change the logo" },
+  ),
+  tool(
+    "create_image",
+    "Proposes an image you draw as SVG (a logo, icon, badge, divider or simple illustration), saved with the site's images. use_as also makes it the logo: logo, logoDark (on the dark footer), logoMark (the small square mark beside the name) or favicon (the browser-tab icon). A new logo (use_as logo) must come with mark_svg.",
+    {
+      svg: { type: "string", description: "One complete <svg> with a viewBox: shapes, text, gradients, patterns, clips, masks and filters only." },
+      name: { type: "string", description: "Short file name, e.g. logo or logo-mark." },
+      use_as: { type: "array", items: { type: "string", enum: LOGO_IMAGE_FIELDS } },
+      mark_svg: { type: "string", description: "With use_as logo: a square version in the same style (an initial or emblem, readable at 16px, square viewBox) that becomes the small mark and the browser-tab icon." },
+      ...summaryField,
+      ...continueField,
+    },
+    ["svg", "name", "summary"],
+    { kind: "change", runs: "server", title: "Create an image" },
   ),
   tool(
     "update_stylesheet",
@@ -692,6 +709,53 @@ async function prepareChange(name, input, key) {
       const current = await getBrand(key);
       return { ...base, input: { brand }, meta: { before: current.brand } };
     }
+    case "create_image": {
+      const { svg, problem } = checkSvg(str(input, "svg", { max: MAX_SVG_CHARS }));
+      if (problem) throw new ToolInputError(`That SVG can't be used: ${problem}. Draw it again.`);
+      const name = drawnName(str(input, "name", { max: 100 }));
+      const wanted = input?.use_as ?? [];
+      if (!Array.isArray(wanted) || wanted.some((f) => !LOGO_IMAGE_FIELDS.includes(f))) {
+        throw new ToolInputError(`use_as may list only ${LOGO_IMAGE_FIELDS.join(", ")}.`);
+      }
+      const useAs = [...new Set(wanted)];
+      if (useAs.some((f) => f === "logoMark" || f === "favicon")) {
+        const aspect = svgAspect(svg);
+        if (!aspect || aspect < 0.8 || aspect > 1.25) throw new ToolInputError("The small mark and the browser-tab icon must be square: give the svg a square viewBox, such as 0 0 64 64.");
+      }
+      // A new logo brings its own square mark, so the browser tab doesn't keep showing the old one
+      // (the favicon falls back to the mark) and a wide logo isn't squeezed into 16 pixels.
+      let mark = null;
+      if (input?.mark_svg) {
+        const checked = checkSvg(str(input, "mark_svg", { max: MAX_SVG_CHARS }));
+        if (checked.problem) throw new ToolInputError(`That mark_svg can't be used: ${checked.problem}. Draw it again.`);
+        const aspect = svgAspect(checked.svg);
+        if (!aspect || aspect < 0.8 || aspect > 1.25) throw new ToolInputError("mark_svg must be square: give it a square viewBox, such as 0 0 64 64.");
+        mark = checked.svg;
+      } else if (useAs.includes("logo") && !useAs.includes("favicon")) {
+        throw new ToolInputError("A new logo needs a matching browser-tab icon: add mark_svg, a square version in the same style (an initial or emblem, readable at 16px).");
+      }
+      let before = null;
+      let markFields = [];
+      if (useAs.length || mark) {
+        const current = await getBrand(key);
+        // Older sites' headers and footers show only the small mark.
+        if (!current.supported && useAs.some((f) => f !== "logoMark")) {
+          throw new ToolInputError("This site's header and footer are older and only show the small mark: use_as may only be logoMark here.");
+        }
+        before = current.brand;
+        if (mark) markFields = current.supported ? ["logoMark", "favicon"] : ["logoMark"];
+      }
+      return {
+        ...base,
+        input: { svg, name, useAs: useAs.filter((f) => !markFields.includes(f)), markSvg: mark, markFields },
+        meta: {
+          path: `${DRAWN_DIR}/${name}.svg`,
+          preview: svgPreview(svg),
+          ...(mark && { markPath: `${DRAWN_DIR}/${name}-mark.svg`, markPreview: svgPreview(mark) }),
+          before,
+        },
+      };
+    }
     case "update_stylesheet": {
       const file = str(input, "file", { max: 300 });
       const current = await readCss(key, file);
@@ -753,6 +817,8 @@ export async function runTool(name, input, key) {
 
 /* --------------------------------------------------------------- applying */
 
+const LOGO_LABELS = { logo: "logo", logoDark: "logo on dark backgrounds", logoMark: "small mark", favicon: "browser-tab icon" };
+
 /**
  * Applies a `runs: "server"` action the user pressed Apply on. Returns a short result for Claude
  * (and the card) as a string, or `{ result, data }` when the browser needs more (the path a file
@@ -780,6 +846,25 @@ export async function applyServerAction(key, action, { accessToken, user } = {})
     case "update_logo_settings":
       await saveBrand(key, input.brand);
       return "Saved the logo settings.";
+    case "create_image": {
+      const saved = await saveDrawnImage(key, input.name, input.svg);
+      const useAs = input.useAs ?? [];
+      const markFields = input.markSvg ? (input.markFields ?? []) : [];
+      const brand = Object.fromEntries(useAs.map((field) => [field, `/${saved}`]));
+      let markSaved = null;
+      if (input.markSvg) {
+        markSaved = await saveDrawnImage(key, `${input.name}-mark`, input.markSvg);
+        for (const field of markFields) brand[field] = `/${markSaved}`;
+      }
+      if (Object.keys(brand).length) await saveBrand(key, brand);
+      const list = (fields) => {
+        const labels = fields.map((f) => LOGO_LABELS[f]);
+        return labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}` : labels[0];
+      };
+      const used = useAs.length ? ` and set it as the ${list(useAs)}` : "";
+      const markNote = markSaved ? ` Its square version, ${markSaved}, is now the ${list(markFields)}.` : "";
+      return { result: `Saved it as ${saved} (published at /${saved})${used}.${markNote}`, data: { path: saved } };
+    }
     case "update_stylesheet":
       await saveCss(key, input.file, input.content, meta.version);
       return `Saved ${input.file}.`;

@@ -30,6 +30,7 @@ export type ActionTool =
   | "design_header_and_footer"
   | "update_site_details"
   | "update_logo_settings"
+  | "create_image"
   | "update_stylesheet"
   | "update_notes_for_claude"
   | "schedule_page"
