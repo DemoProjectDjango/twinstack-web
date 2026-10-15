@@ -19,6 +19,56 @@
   }
 }
 
+/*
+ * The site editor's status strip (StatusStrip.tsx): a thin neutral border with one short streak of
+ * the status's colour gliding around it. The strip is padded by the border's width and its inner box
+ * covers the rest. The angle is a registered property so it can animate; without motion it stays still.
+ */
+@property --strip-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes strip-flow {
+  to {
+    --strip-angle: 360deg;
+  }
+}
+
+.status-strip-border {
+  --strip-line: #e4e4e7;
+  --strip-accent: #0ea5e9;
+  background:
+    conic-gradient(from var(--strip-angle), var(--strip-accent), transparent 25%, transparent 75%, var(--strip-accent)),
+    var(--strip-line);
+  animation: strip-flow 3.5s linear infinite;
+}
+
+.status-strip-border[data-flow="done"] {
+  --strip-accent: #22c55e;
+}
+
+.status-strip-border[data-flow="failed"] {
+  --strip-accent: #ef4444;
+}
+
+.status-strip-border[data-flow="cancelled"] {
+  --strip-accent: #a1a1aa;
+}
+
+@media (prefers-color-scheme: dark) {
+  .status-strip-border {
+    --strip-line: #27272a;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-strip-border {
+    animation: none;
+  }
+}
+
 /* Keep anchored sections clear of the sticky navbar. */
 html {
   scroll-padding-top: 5rem;

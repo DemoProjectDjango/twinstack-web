@@ -9,9 +9,13 @@ import { Button, Spinner } from "./ui";
 // How long "Done" stays up after a command succeeds.
 const DONE_MS = 2500;
 
+// The colours that flow around the strip's border (`.status-strip-border` in globals.css).
+type Flow = "working" | "done" | "failed" | "cancelled";
+
 /**
  * What the site is doing right now, in a few words, pinned to the bottom of the screen. The full
  * command output lives on the Build tools screen, one click away, for when something goes wrong.
+ * While it's showing, a streak of the status's colour glides around its thin border, so it's noticed.
  */
 export function StatusStrip({ onShowLog }: { onShowLog: () => void }) {
   const { job, status } = useSite();
@@ -35,7 +39,7 @@ export function StatusStrip({ onShowLog }: { onShowLog: () => void }) {
   }
 
   let content: React.ReactNode = null;
-  let tone = "border-zinc-200 bg-background dark:border-zinc-800";
+  let flow: Flow = "working";
   // A check that fails has found problems, not gone wrong: the Publish screen lists them, and Build tools shows its log.
   const foundProblems = job?.command === "check" && job.status === "failed";
 
@@ -58,13 +62,13 @@ export function StatusStrip({ onShowLog }: { onShowLog: () => void }) {
     );
   } else if (job && (job.status === "failed" || job.status === "cancelled") && dismissed !== job.id && !foundProblems) {
     const failed = job.status === "failed";
-    tone = failed
-      ? "border-red-300 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
-      : "border-zinc-200 bg-background dark:border-zinc-800";
+    flow = failed ? "failed" : "cancelled";
     content = (
       <>
-        <span aria-hidden="true">{failed ? "⚠" : "■"}</span>
-        <span className="min-w-0 flex-1">
+        <span aria-hidden="true" className={failed ? "text-red-600 dark:text-red-400" : "text-zinc-400"}>
+          {failed ? "⚠" : "■"}
+        </span>
+        <span className="min-w-0 flex-1 truncate">
           {friendlyJobLabel(job.command, job.label)} {failed ? "didn't work." : "was cancelled."}
         </span>
         {failed && (
@@ -78,10 +82,12 @@ export function StatusStrip({ onShowLog }: { onShowLog: () => void }) {
       </>
     );
   } else if (finishedOk && doneHidden !== finishedOk) {
-    tone = "border-green-300 bg-green-50 text-green-900 dark:border-green-900 dark:bg-green-950 dark:text-green-200";
+    flow = "done";
     content = (
       <>
-        <span aria-hidden="true">✓</span>
+        <span aria-hidden="true" className="text-green-600 dark:text-green-400">
+          ✓
+        </span>
         <span className="min-w-0 flex-1 truncate">{friendlyJobDone(job!.command)}</span>
       </>
     );
@@ -90,8 +96,9 @@ export function StatusStrip({ onShowLog }: { onShowLog: () => void }) {
   return (
     <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
       {content && (
-        <div className={`pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-lg border px-4 py-2.5 text-sm shadow-lg ${tone}`}>
-          {content}
+        <div className="status-strip-border pointer-events-auto w-full max-w-md rounded-lg p-px shadow-md shadow-black/5" data-flow={flow}>
+          {/* One fixed height for every status, with or without buttons. */}
+          <div className="flex h-11 items-center gap-3 rounded-[7px] bg-background px-4 text-sm">{content}</div>
         </div>
       )}
     </div>
