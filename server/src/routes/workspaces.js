@@ -66,6 +66,7 @@ import { APPEARANCE_MARKER, HEADER_FOOTER_FILES, HEADER_FOOTER_MARKERS, getNavig
 import { SEO_FILES, SEO_MARKERS, installSeo, readSeo } from "../seo.js";
 import { readCheckReport } from "../site-check.js";
 import { readMissingPages } from "../missing-pages.js";
+import { editPreviewText } from "../text-edit.js";
 import { getUpdateStatus, siteUpdateSteps, undoSiteUpdate } from "../site-update.js";
 import { readTemplateFile, templateToken } from "../sites.js";
 import {
@@ -305,6 +306,18 @@ workspacesRouter.put(
     const { file, content, version } = req.body ?? {};
     const page = await savePage(key, file, content, version);
     res.json({ page, status: await getStatus(key) });
+  }),
+);
+
+/* Text typed straight into the preview (the Home screen's "Edit text"): one element's text before and after. */
+
+workspacesRouter.post(
+  "/:owner/:repo/pages/text",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const { address, before, after, index, count } = req.body ?? {};
+    const { file } = await editPreviewText(key, { address, before, after, index, count });
+    res.json({ file, status: await getStatus(key) });
   }),
 );
 

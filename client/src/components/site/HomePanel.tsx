@@ -7,6 +7,7 @@ import { confirmModal } from "@/lib/confirm";
 import { useSite, type SiteSection } from "./site-context";
 import { Button, EmptyState, ErrorText, Notice, ScreenHeader, Segmented, Spinner, StepList, type Step } from "./ui";
 import { HomeNextSteps } from "./assistant/NextSteps";
+import { EditablePreview } from "./EditablePreview";
 
 /** Remembers, per browser, that someone has looked at a screen (for ticking off "check your details"). */
 function visitedKey(owner: string, repo: string, section: SiteSection) {
@@ -364,7 +365,7 @@ export function ToolsNotice({ compact = false }: { compact?: boolean }) {
 
 /** The latest build of the site, rebuilt by the editor after every change. */
 function Preview({ empty, onStarterPages, onAddPage, busy }: { empty: boolean; onStarterPages: () => void; onAddPage: () => void; busy: boolean }) {
-  const { status, version, job } = useSite();
+  const { status, job } = useSite();
   const [width, setWidth] = useState<"desktop" | "phone">("desktop");
   const updating = job?.status === "running" && (job.command === "preview" || job.command === "install");
 
@@ -415,16 +416,7 @@ function Preview({ empty, onStarterPages, onAddPage, busy }: { empty: boolean; o
           Start with the pages the site plan lists (home, about, contact and so on), or add your own one at a time.
         </EmptyState>
       ) : status.previewUrl ? (
-        // Sandboxed without allow-same-origin: the site's scripts can't act as the user on this app.
-        <iframe
-          key={version}
-          src={status.previewUrl}
-          title="Site preview"
-          sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-          className={`mx-auto block h-[40rem] rounded-md border border-zinc-200 bg-white dark:border-zinc-800 ${
-            width === "phone" ? "w-[390px] max-w-full" : "w-full"
-          } ${updating ? "opacity-60" : ""}`}
-        />
+        <EditablePreview dimmed={updating} phone={width === "phone"} />
       ) : (
         <div className="flex h-60 items-center justify-center gap-3 rounded-md border border-dashed border-zinc-300 text-sm text-zinc-500 dark:border-zinc-700">
           {updating ? (

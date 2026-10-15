@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Router } from "express";
@@ -9,6 +9,15 @@ import { PREVIEW_ROOTS, WorkspaceError, assertRepoRef, previewPath, verifyPrevie
 // origin: the site's scripts then can't call this app's API as the user.
 
 export const previewRouter = Router();
+
+// The site preview's "Edit text" (preview/inline-edit.js): idle until the editor's page turns it on
+// with a message, and only ever talking to that page.
+const INLINE_EDIT = `<script>${readFileSync(new URL("../preview/inline-edit.js", import.meta.url), "utf8")}</script>`;
+
+function withInlineEdit(html) {
+  const at = html.lastIndexOf("</body>");
+  return at === -1 ? html + INLINE_EDIT : html.slice(0, at) + INLINE_EDIT + html.slice(at);
+}
 
 const HEADERS = {
   "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox",
@@ -60,7 +69,8 @@ previewRouter.get("/:userId/:owner/:repo/:signature{/*path}", async (req, res) =
   const extension = path.extname(file).toLowerCase();
   if (extension === ".html" || extension === ".css") {
     const prefix = previewPath(key, kind).slice(0, -1);
-    return res.type(extension).send(rebase(await fs.readFile(file, "utf8"), prefix));
+    const text = rebase(await fs.readFile(file, "utf8"), prefix);
+    return res.type(extension).send(extension === ".html" && kind === "site" ? withInlineEdit(text) : text);
   }
   // Relative to `root`, so the dot-file check sees only the path inside the built site: a proposal
   // build lives under the workspace's .git/, which an absolute path would always be refused for.
