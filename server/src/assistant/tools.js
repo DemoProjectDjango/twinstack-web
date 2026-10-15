@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { addAttachmentToSite, readAttachmentMeta, sitePathFor } from "./attachments.js";
+import { addAttachmentToSite, readAttachmentMeta, saveMadeImage, sitePathFor } from "./attachments.js";
 import { getBrand, saveBrand } from "../brand.js";
 import { getNavigation, saveNavigation } from "../navigation.js";
 import { readSeo } from "../seo.js";
 import { DRAWN_DIR, MAX_SVG_CHARS, checkSvg, drawnName, saveDrawnImage, svgAspect, svgPreview } from "../svg.js";
+import { ImageError, MAX_PROMPT_CHARS, QUALITIES, SHAPES, generateImage } from "../images.js";
 import {
   IMAGE_PATH,
   deletePage,
@@ -47,6 +48,11 @@ const LOGO_FIELDS = ["logoText", "logo", "logoDark", "logoMark", "favicon"];
 const LOGO_IMAGE_FIELDS = LOGO_FIELDS.filter((f) => f !== "logoText");
 const ATTACHMENT_ID = /^att_[a-f0-9]{16}$/;
 const MAX_IMAGES = 6;
+// Where pictures made by the image model (create_image with a prompt) go in the site.
+const GENERATED_DIR = "assets/img/generated";
+
+/** Whether an image's width over height is close enough to square for a mark or favicon. */
+const isSquare = (aspect) => Boolean(aspect) && aspect >= 0.8 && aspect <= 1.25;
 
 // The shared fields are explained once in the system prompt (HOW YOU WORK in prompt.js): every
 // word here is repeated on each change tool in every request.
@@ -322,17 +328,22 @@ const TOOLS = [
   ),
   tool(
     "create_image",
-    "Proposes an image you draw as SVG (a logo, icon, badge, divider or simple illustration), saved with the site's images. use_as also makes it the logo: logo, logoDark (on the dark footer), logoMark (the small square mark beside the name) or favicon (the browser-tab icon). A new logo (use_as logo) must come with mark_svg.",
+    "Proposes an image for the site, saved with its images: either svg, one you draw (a logo, icon, badge, divider or simple illustration), or prompt, a picture an image model makes (a photo or detailed illustration; it costs the owner credits). use_as also makes it the logo: logo, logoDark (on the dark footer), logoMark (the small square mark beside the name) or favicon (the browser-tab icon). A new logo (use_as logo) must come with mark_svg.",
     {
       svg: { type: "string", description: "One complete <svg> with a viewBox: shapes, text, gradients, patterns, clips, masks and filters only." },
+      prompt: { type: "string", description: "Instead of svg: the picture in detail (subject, setting, style, light, colours from the site's look). No text in it unless asked." },
+      shape: { type: "string", enum: SHAPES, description: "With prompt. wide is a banner (16:9). Default landscape." },
+      quality: { type: "string", enum: QUALITIES, description: "With prompt. high costs about three times medium; low is for drafts. Default medium." },
+      transparent: { type: "boolean", description: "With prompt: a transparent background (a cut-out or icon)." },
       name: { type: "string", description: "Short file name, e.g. logo or logo-mark." },
       use_as: { type: "array", items: { type: "string", enum: LOGO_IMAGE_FIELDS } },
       mark_svg: { type: "string", description: "With use_as logo: a square version in the same style (an initial or emblem, readable at 16px, square viewBox) that becomes the small mark and the browser-tab icon." },
       ...summaryField,
       ...continueField,
     },
-    ["svg", "name", "summary"],
-    { kind: "change", runs: "server", title: "Create an image" },
+    ["name", "summary"],
+    // The picture is made when proposed, so the card shows it.
+    { kind: "change", runs: "server", title: "Create an image", working: (input) => (input?.prompt ? "Making the picture" : null) },
   ),
   tool(
     "update_stylesheet",
@@ -544,7 +555,7 @@ async function runRead(name, input, key) {
  * card's before/after) and anything the apply step needs (a version to detect edits in between).
  * Returns the normalised input and meta, or throws ToolInputError for Claude to fix.
  */
-async function prepareChange(name, input, key) {
+async function prepareChange(name, input, key, context) {
   const summary = str(input, "summary", { max: 600 });
   const continueAfter = input?.continue_after === true;
   const base = { summary, continueAfter };
@@ -710,8 +721,23 @@ async function prepareChange(name, input, key) {
       return { ...base, input: { brand }, meta: { before: current.brand } };
     }
     case "create_image": {
-      const { svg, problem } = checkSvg(str(input, "svg", { max: MAX_SVG_CHARS }));
-      if (problem) throw new ToolInputError(`That SVG can't be used: ${problem}. Draw it again.`);
+      // Drawn (svg) or made by the image model (prompt), never both.
+      const made = typeof input?.prompt === "string" && input.prompt.trim() !== "";
+      if (made === (typeof input?.svg === "string" && input.svg.trim() !== "")) throw new ToolInputError("Send either svg (an image you draw) or prompt (a picture to make), not both.");
+      let svg = null;
+      let picture = null;
+      if (made) {
+        const shape = input.shape ?? "landscape";
+        const quality = input.quality ?? "medium";
+        if (!SHAPES.includes(shape)) throw new ToolInputError(`shape must be one of ${SHAPES.join(", ")}.`);
+        if (!QUALITIES.includes(quality)) throw new ToolInputError(`quality must be one of ${QUALITIES.join(", ")}.`);
+        if (input.transparent !== undefined && typeof input.transparent !== "boolean") throw new ToolInputError("transparent must be true or false.");
+        picture = { prompt: str(input, "prompt", { max: MAX_PROMPT_CHARS }).trim(), shape, quality, transparent: input.transparent === true };
+      } else {
+        const checked = checkSvg(str(input, "svg", { max: MAX_SVG_CHARS }));
+        if (checked.problem) throw new ToolInputError(`That SVG can't be used: ${checked.problem}. Draw it again.`);
+        svg = checked.svg;
+      }
       const name = drawnName(str(input, "name", { max: 100 }));
       const wanted = input?.use_as ?? [];
       if (!Array.isArray(wanted) || wanted.some((f) => !LOGO_IMAGE_FIELDS.includes(f))) {
@@ -719,8 +745,9 @@ async function prepareChange(name, input, key) {
       }
       const useAs = [...new Set(wanted)];
       if (useAs.some((f) => f === "logoMark" || f === "favicon")) {
-        const aspect = svgAspect(svg);
-        if (!aspect || aspect < 0.8 || aspect > 1.25) throw new ToolInputError("The small mark and the browser-tab icon must be square: give the svg a square viewBox, such as 0 0 64 64.");
+        if (picture ? picture.shape !== "square" : !isSquare(svgAspect(svg))) {
+          throw new ToolInputError(picture ? "The small mark and the browser-tab icon must be square: set shape to square." : "The small mark and the browser-tab icon must be square: give the svg a square viewBox, such as 0 0 64 64.");
+        }
       }
       // A new logo brings its own square mark, so the browser tab doesn't keep showing the old one
       // (the favicon falls back to the mark) and a wide logo isn't squeezed into 16 pixels.
@@ -728,8 +755,7 @@ async function prepareChange(name, input, key) {
       if (input?.mark_svg) {
         const checked = checkSvg(str(input, "mark_svg", { max: MAX_SVG_CHARS }));
         if (checked.problem) throw new ToolInputError(`That mark_svg can't be used: ${checked.problem}. Draw it again.`);
-        const aspect = svgAspect(checked.svg);
-        if (!aspect || aspect < 0.8 || aspect > 1.25) throw new ToolInputError("mark_svg must be square: give it a square viewBox, such as 0 0 64 64.");
+        if (!isSquare(svgAspect(checked.svg))) throw new ToolInputError("mark_svg must be square: give it a square viewBox, such as 0 0 64 64.");
         mark = checked.svg;
       } else if (useAs.includes("logo") && !useAs.includes("favicon")) {
         throw new ToolInputError("A new logo needs a matching browser-tab icon: add mark_svg, a square version in the same style (an initial or emblem, readable at 16px).");
@@ -745,13 +771,29 @@ async function prepareChange(name, input, key) {
         before = current.brand;
         if (mark) markFields = current.supported ? ["logoMark", "favicon"] : ["logoMark"];
       }
+      const markMeta = mark && { markPath: `${DRAWN_DIR}/${name}-mark.svg`, markPreview: svgPreview(mark) };
+      const fields = { useAs: useAs.filter((f) => !markFields.includes(f)), markSvg: mark, markFields };
+      if (!picture) {
+        return { ...base, input: { svg, name, ...fields }, meta: { path: `${DRAWN_DIR}/${name}.svg`, preview: svgPreview(svg), ...markMeta, before } };
+      }
+      // Made last, once everything else is known to be fine: it's paid for even if it's skipped.
+      if (!context.beginSpend) throw new ToolInputError("Pictures can't be made here. Draw it as SVG instead.");
+      let image;
+      try {
+        image = await generateImage({ ...picture, model: context.imageModel, beginSpend: context.beginSpend, signal: context.signal });
+      } catch (err) {
+        if (err instanceof ImageError) throw new ToolInputError(err.message);
+        throw err;
+      }
+      const saved = await saveMadeImage(key, { name: `${name}.${image.extension}`, bytes: image.bytes });
       return {
         ...base,
-        input: { svg, name, useAs: useAs.filter((f) => !markFields.includes(f)), markSvg: mark, markFields },
+        input: { attachment: saved.id, name, ...fields },
         meta: {
-          path: `${DRAWN_DIR}/${name}.svg`,
-          preview: svgPreview(svg),
-          ...(mark && { markPath: `${DRAWN_DIR}/${name}-mark.svg`, markPreview: svgPreview(mark) }),
+          path: `${GENERATED_DIR}/${name}.${image.extension}`,
+          attachment: saved.id,
+          picture: { prompt: picture.prompt, quality: picture.quality, size: image.size, model: image.model },
+          ...markMeta,
           before,
         },
       };
@@ -798,8 +840,10 @@ function titleOf(markdown) {
 /**
  * Runs one tool call. Read tools return their result; change tools return the action to show the
  * user (nothing is changed yet). Errors come back as `{ error }` for Claude to see and fix.
+ * `context` is the turn's: `beginSpend` (credits.js) pays for a picture create_image makes with
+ * `imageModel` (the site's, image-model.js), and `signal` stops it.
  */
-export async function runTool(name, input, key) {
+export async function runTool(name, input, key, context = {}) {
   const info = toolInfo(name);
   if (!info) return { error: `There's no tool called ${name}.` };
   if (!isPlainObject(input)) return { error: "The tool input must be an object." };
@@ -808,7 +852,7 @@ export async function runTool(name, input, key) {
       const result = await runRead(name, input, key);
       return { result: typeof result === "string" ? result : JSON.stringify(result) };
     }
-    return { action: await prepareChange(name, input, key) };
+    return { action: await prepareChange(name, input, key, context) };
   } catch (err) {
     if (err instanceof ToolInputError || err instanceof WorkspaceError) return { error: err.message };
     throw err;
@@ -847,7 +891,7 @@ export async function applyServerAction(key, action, { accessToken, user } = {})
       await saveBrand(key, input.brand);
       return "Saved the logo settings.";
     case "create_image": {
-      const saved = await saveDrawnImage(key, input.name, input.svg);
+      const saved = input.attachment ? await addAttachmentToSite(key, input.attachment, input.name, GENERATED_DIR) : await saveDrawnImage(key, input.name, input.svg);
       const useAs = input.useAs ?? [];
       const markFields = input.markSvg ? (input.markFields ?? []) : [];
       const brand = Object.fromEntries(useAs.map((field) => [field, `/${saved}`]));

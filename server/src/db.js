@@ -318,6 +318,27 @@ export async function recordSiteCopy({ userId, repo, source }) {
   );
 }
 
+// A site's own choice of AI model, shared by everyone who manages it: `fastModel` (fast-model.js)
+// and `imageModel` (image-model.js), each `{ model, updatedAt, updatedBy }` on its siteCopies record.
+// `siteId` is the GitHub repo id (siteIdFor); sites recorded by name only have no choices.
+const SITE_MODEL_FIELDS = ["fastModel", "imageModel"];
+
+/** The site's model choices: `{ fastModel, imageModel }`, each a model id, "off" or null (follow the admin's). */
+export async function getSiteModels(siteId) {
+  const none = { fastModel: null, imageModel: null };
+  if (typeof siteId !== "number") return none;
+  const doc = await siteCopies().findOne({ _id: siteId }, { projection: { fastModel: 1, imageModel: 1 } });
+  return Object.fromEntries(SITE_MODEL_FIELDS.map((field) => [field, typeof doc?.[field]?.model === "string" ? doc[field].model : null]));
+}
+
+/** Saves one of the site's model choices (null goes back to the admin's). False when the site isn't a recorded copy. */
+export async function setSiteModel(siteId, field, model, userId) {
+  if (typeof siteId !== "number" || !SITE_MODEL_FIELDS.includes(field)) return false;
+  const update = model ? { $set: { [field]: { model, updatedAt: new Date(), updatedBy: userId } } } : { $unset: { [field]: "" } };
+  const result = await siteCopies().updateOne({ _id: siteId }, update);
+  return result.matchedCount > 0;
+}
+
 /** Which of these GitHub repo ids were created as copies of the template. */
 export async function findSiteCopyIds(repoIds) {
   const docs = await siteCopies()

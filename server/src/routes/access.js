@@ -3,13 +3,15 @@ import { config } from "../config.js";
 import { listAccessRequests, publicUser, requestAccess, setAccessStatus } from "../db.js";
 import { sendEmail } from "../email.js";
 import { FastModelError, fastModelView, setFastModel } from "../fast-model.js";
+import { ImageModelError, imageModelView, setImageModel } from "../image-model.js";
 import { requireAuth } from "../session.js";
 import { requireJson } from "./helpers.js";
 
 // Who may create sites. An account asks once (POST /api/access/request), which emails the admins
 // (ADMIN_EMAILS); an admin approves or denies it on /admin/access, which emails the account.
 // Approving is a POST from that page, never a link in an email: mail scanners open links.
-// Admins also pick the cheaper "fast" model (DeepSeek or OpenAI) on /admin/models (fast-model.js).
+// Admins also pick the cheaper "fast" model (DeepSeek or OpenAI) on /admin/models (fast-model.js),
+// and the image model pictures are made with (image-model.js). Both are defaults sites can override.
 
 const MAX_MESSAGE = 500;
 
@@ -106,4 +108,21 @@ adminRouter.put("/models", async (req, res) => {
     return res.status(400).json({ error: err.message });
   }
   res.json(fastModelView());
+});
+
+// The image model pictures are made with (image-model.js); IMAGE_MODEL until an admin picks one.
+adminRouter.get("/image-model", (req, res) => {
+  res.json(imageModelView());
+});
+
+adminRouter.put("/image-model", async (req, res) => {
+  const model = req.body?.model;
+  if (typeof model !== "string" || !model) return res.status(400).json({ error: "Choose a model." });
+  try {
+    await setImageModel(model, req.user.email);
+  } catch (err) {
+    if (!(err instanceof ImageModelError)) throw err;
+    return res.status(400).json({ error: err.message });
+  }
+  res.json(imageModelView());
 });

@@ -14,7 +14,7 @@ export const SUGGESTIONS: Record<SiteSection | "page", { placeholder: string; it
   },
   page: {
     placeholder: "Ask Claude to change this page…",
-    items: ["Make this page shorter and easier to read", "Add a short FAQ section at the end", "Improve how this page shows up in Google"],
+    items: ["Make this page shorter and easier to read", "Add a fitting photo at the top of this page", "Add a short FAQ section at the end"],
   },
   design: {
     placeholder: "Change the menu, footer or logo by describing it…",
@@ -47,6 +47,10 @@ export const SUGGESTIONS: Record<SiteSection | "page", { placeholder: string; it
   styles: {
     placeholder: "Describe a style change…",
     items: ["Make the buttons rounder", "Use a slightly larger font for paragraphs"],
+  },
+  models: {
+    placeholder: "Ask Claude about your site…",
+    items: ["What does the cheaper model do on my site?", "Make a photo of our shop front for the homepage"],
   },
   tools: {
     placeholder: "Ask Claude about your site…",

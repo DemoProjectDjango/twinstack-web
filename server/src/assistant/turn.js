@@ -76,8 +76,9 @@ function addUsage(total, usage) {
  * how much of the history is still in Claude's cache (the conversation's last request, if it was
  * within the hour), so the first request's cost is estimated right; later ones use the step before.
  * The result's `lastPrompt` is the last request's size, for the next turn's `cachedTokens`.
+ * `imageModel` is the site's image model (image-model.js) for pictures create_image makes.
  */
-export async function runTurn({ client, key, model: requested, history, live, onUpdate = () => {}, beginSpend, cachedTokens = 0, signal }) {
+export async function runTurn({ client, key, model: requested, history, live, onUpdate = () => {}, beginSpend, cachedTokens = 0, signal, imageModel = null }) {
   const messages = [...history];
   const start = history.length;
   const usage = emptyUsage();
@@ -230,7 +231,16 @@ export async function runTurn({ client, key, model: requested, history, live, on
           results.push({ type: "tool_result", tool_use_id: block.id, is_error: true, content: "Your input was cut off at the output limit. Send a shorter one." });
           continue;
         }
-        const outcome = await runTool(block.name, block.input, key);
+        // A change that takes a while to prepare (making a picture) says so while it runs.
+        const working = toolInfo(block.name)?.working?.(block.input ?? {});
+        const workingPart = working && { type: "activity", label: working, pending: true };
+        if (workingPart) {
+          live.parts.push(workingPart);
+          onUpdate();
+        }
+        const outcome = await runTool(block.name, block.input, key, { beginSpend, signal, imageModel }).finally(() => {
+          if (workingPart) live.parts = live.parts.filter((p) => p !== workingPart);
+        });
         if (outcome.error) {
           results.push({ type: "tool_result", tool_use_id: block.id, is_error: true, content: outcome.error });
           continue;

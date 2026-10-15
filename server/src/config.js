@@ -24,6 +24,13 @@ function fastPageModel() {
   return chosen;
 }
 
+function imageModel() {
+  const chosen = process.env.IMAGE_MODEL?.trim();
+  if (!chosen) return "gpt-image-2";
+  if (!/^gpt-image-[\w.-]+$/.test(chosen)) throw new Error(`IMAGE_MODEL must be an OpenAI gpt-image-* model, not "${chosen}".`);
+  return chosen;
+}
+
 function dataKey() {
   // Trimmed: a stray space pasted after the value shouldn't stop the server.
   const hex = required("DATA_ENCRYPTION_KEY").trim();
@@ -76,6 +83,9 @@ export const config = {
   deepseekKey: process.env.DEEPSEEK_API_KEY?.trim() || null,
   openaiKey: process.env.OPENAI_API_KEY?.trim() || null,
   fastPageModel: fastPageModel(),
+  // The OpenAI image model "Ask Claude" makes pictures with (images.js, create_image's prompt), on
+  // OPENAI_API_KEY and paid for in credits. Unset: gpt-image-2.
+  imageModel: imageModel(),
   // Buying credits adds them at once without taking a payment, until a payment provider is set
   // up. On by default; set CREDITS_DEMO_PURCHASES=false to turn buying off.
   demoPurchases: process.env.CREDITS_DEMO_PURCHASES !== "false",

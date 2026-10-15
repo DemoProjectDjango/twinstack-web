@@ -44,6 +44,14 @@ const PRICES = {
   // OpenAI lists no long-context prices for these.
   "gpt-5.4-mini": { input: 0.75, output: 4.5, cacheRead: 0.075 },
   "gpt-5.4-nano": { input: 0.2, output: 1.25, cacheRead: 0.02 },
+  // OpenAI's image models (images.js), as listed on 2026-10-15: `input` is the prompt's text tokens,
+  // `output` the image's tokens. Image input (not sent: only prompts are) costs more, $8 for the
+  // gpt-image-2 family; images.js counts any as text at this ratio.
+  "gpt-image-2": { input: 5, output: 30, cacheRead: 1.25 },
+  "gpt-image-2.5-flare": { input: 5, output: 30, cacheRead: 1.25 },
+  "gpt-image-2.5-sunburst": { input: 5, output: 30, cacheRead: 1.25 },
+  "gpt-image-1.5": { input: 5, output: 32, cacheRead: 1.25 },
+  "gpt-image-1-mini": { input: 2, output: 8, cacheRead: 0.2 },
 };
 const UNKNOWN_PRICE = { input: 15, output: 75, cacheRead: 1.5 };
 const WEB_SEARCH_USD = 0.01;
@@ -304,6 +312,21 @@ class Spend {
     // Refused with credits still left: what reading the request would cost, for telling the owner.
     if (allowed <= 0) this.shortfall = { needed: Math.ceil(inputCredits), balance: Math.floor(this.#account.balance) };
     return Math.max(0, allowed);
+  }
+
+  /**
+   * For a request that can't be capped or cut off part-way (an image, images.js): holds `credits`,
+   * its most it could cost, against the balance while it runs. False when that would take the
+   * balance past -OVERDRAFT; `shortfall` then says what it needs. Always true when not charged.
+   */
+  reserve(credits) {
+    if (!this.#account) return true;
+    if (left(this.#account) + OVERDRAFT < credits) {
+      this.shortfall = { needed: Math.ceil(credits), balance: Math.floor(this.#account.balance) };
+      return false;
+    }
+    this.credits = credits;
+    return true;
   }
 
   /** Folds one streamed event into the request's usage. True when the request must stop now. */

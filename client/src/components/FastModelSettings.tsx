@@ -68,11 +68,11 @@ export function FastModelSettings() {
         <p>
           {next ? (
             <>
-              <strong>{next.name}</strong> will do the routine work for <strong>every account</strong>, starting with the next request.
+              <strong>{next.name}</strong> will do the routine work for <strong>every site on the default</strong>, starting with the next request.
             </>
           ) : (
             <>
-              <strong>Claude</strong> will do all the work for <strong>every account</strong>, starting with the next request.
+              <strong>Claude</strong> will do all the work for <strong>every site on the default</strong>, starting with the next request.
             </>
           )}
         </p>
@@ -88,7 +88,9 @@ export function FastModelSettings() {
             {priced(next) && <span className="block text-xs text-zinc-500">{priced(next)}</span>}
           </dd>
         </dl>
-        <p className="text-sm text-zinc-500">Credits are charged at the new model&apos;s prices. You can switch back at any time.</p>
+        <p className="text-sm text-zinc-500">
+          Sites that chose their own model on their AI model screen keep it. Credits are charged at the new model&apos;s prices. You can switch back at any time.
+        </p>
       </div>,
       { title: next ? `Switch to ${next.name}?` : "Turn the fast model off?", confirmLabel: next ? `Use ${next.name}` : "Turn off" },
     );

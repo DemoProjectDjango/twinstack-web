@@ -16,6 +16,7 @@ import { HeaderFooterPanel } from "./HeaderFooterPanel";
 import { HomePanel } from "./HomePanel";
 import { MemoryPanel } from "./MemoryPanel";
 import { MissingPages } from "./MissingPages";
+import { ModelPanel } from "./ModelPanel";
 import { PagesPanel } from "./PagesPanel";
 import { SchedulePanel } from "./SchedulePanel";
 import { SeoPanel } from "./SeoPanel";
@@ -41,6 +42,7 @@ const ADVANCED: { id: SiteSection; label: string }[] = [
   { id: "schedule", label: "Scheduled pages" },
   { id: "memory", label: "What Claude remembers" },
   { id: "styles", label: "Styles (CSS)" },
+  { id: "models", label: "AI models" },
   { id: "tools", label: "Build tools and log" },
 ];
 
@@ -518,6 +520,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
             {section === "schedule" && <SchedulePanel />}
             {section === "memory" && <MemoryPanel />}
             {section === "styles" && <StylesPanel />}
+            {section === "models" && <ModelPanel />}
             {section === "tools" && <BuildPanel />}
           </div>
         </div>

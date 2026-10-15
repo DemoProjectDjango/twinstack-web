@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { AssistantAction } from "@/lib/assistant-api";
+import { attachmentUrl, type AssistantAction } from "@/lib/assistant-api";
 import { LiveDiff } from "../LiveDiff";
 import { useSite } from "../site-context";
 import { Badge, Button, Details, Spinner } from "../ui";
@@ -130,6 +130,24 @@ function DrawnImage({ preview, markPreview }: { preview: unknown; markPreview: u
   );
 }
 
+/**
+ * A picture the image model made (create_image with a prompt), shown from its copy kept with the
+ * conversation (…/assistant/attachments/:id), with the drawn square version when there is one.
+ */
+function MadeImage({ attachment, markPreview }: { attachment: string; markPreview: unknown }) {
+  const { owner, repo } = useSite();
+  const url = attachmentUrl(owner, repo, attachment);
+  return (
+    <div className="mt-2 space-y-2">
+      <a href={url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt="The picture" className="max-h-72 w-full bg-zinc-100 object-contain dark:bg-zinc-900" />
+      </a>
+      <DrawnImage preview={markPreview} markPreview={null} />
+    </div>
+  );
+}
+
 /** What exactly the change does, for anyone who wants to check. */
 function ChangeDetails({ action }: { action: AssistantAction }) {
   const input = action.input as Record<string, unknown>;
@@ -200,9 +218,16 @@ function ChangeDetails({ action }: { action: AssistantAction }) {
       const useAs = Array.isArray(input.useAs) ? (input.useAs as string[]) : [];
       const markFields = input.markSvg && Array.isArray(input.markFields) ? (input.markFields as string[]) : [];
       const uses = (fields: string[]) => fields.map((f) => LOGO_USES[f] ?? f).join(", ");
+      const picture = meta.picture as { prompt?: string; quality?: string; size?: string } | undefined;
       return (
         <Rows
           rows={[
+            ...(picture
+              ? ([
+                  ["Made from", show(picture.prompt)],
+                  ["Size", `${show(picture.size?.replace("x", " × "))}, ${show(picture.quality)} quality`],
+                ] as [string, ReactNode][])
+              : []),
             ["Saved as", `/${show(meta.path)}`],
             ["Used as", useAs.length ? uses(useAs) : "Not used anywhere yet"],
             ...(markFields.length ? ([["Square version", `/${show(meta.markPath)}, used as ${uses(markFields)}`]] as [string, ReactNode][]) : []),
@@ -278,9 +303,12 @@ export function ActionCard({ id }: { id: string }) {
         <StatusBadge action={action} busy={busy} />
       </div>
       <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">{action.summary}</p>
-      {action.tool === "create_image" && (
-        <DrawnImage preview={(action.meta as Record<string, unknown>).preview} markPreview={(action.meta as Record<string, unknown>).markPreview} />
-      )}
+      {action.tool === "create_image" &&
+        (typeof action.meta.attachment === "string" ? (
+          <MadeImage attachment={action.meta.attachment} markPreview={action.meta.markPreview} />
+        ) : (
+          <DrawnImage preview={(action.meta as Record<string, unknown>).preview} markPreview={(action.meta as Record<string, unknown>).markPreview} />
+        ))}
 
       <div className="mt-2">
         <Details summary="What exactly changes">

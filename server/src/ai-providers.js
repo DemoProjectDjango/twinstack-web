@@ -101,3 +101,33 @@ export const FAST_MODELS = [
 ];
 
 export const PROVIDER_NAMES = { claude: "Claude", deepseek: "DeepSeek", openai: "ChatGPT (OpenAI)" };
+
+// The OpenAI image models pictures can be made with ("Ask Claude"'s create_image, images.js), as an
+// admin (image-model.js) or a site picks them. Prices are in credits.js (PRICES).
+export const IMAGE_MODELS = [
+  {
+    id: "gpt-image-2",
+    name: "GPT Image 2",
+    description: "OpenAI's standard image model. Strong on photos and on text inside pictures.",
+  },
+  {
+    id: "gpt-image-2.5-flare",
+    name: "GPT Image 2.5 Flare",
+    description: "Newer and quick, for everyday pictures. Same prices as GPT Image 2.",
+  },
+  {
+    id: "gpt-image-2.5-sunburst",
+    name: "GPT Image 2.5 Sunburst",
+    description: "Newer, the most precise. Same prices as GPT Image 2.",
+  },
+  {
+    id: "gpt-image-1.5",
+    name: "GPT Image 1.5",
+    description: "The previous generation, at about the same price.",
+  },
+  {
+    id: "gpt-image-1-mini",
+    name: "GPT Image 1 mini",
+    description: "The cheapest, at about a quarter of the price, with simpler pictures. OpenAI is phasing it out.",
+  },
+];

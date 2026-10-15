@@ -151,10 +151,22 @@ export async function saveAttachment(key, { name, data }) {
   const buffer = Buffer.from(data.replace(/^data:[^,]*,/, ""), "base64");
   if (!buffer.length) throw new WorkspaceError("The file is empty.", 400);
   if (buffer.length > MAX_ATTACHMENT_BYTES) throw new WorkspaceError("Files can be up to 10 MB.", 400);
+  return store(key, name, buffer);
+}
+
+/**
+ * Keeps a picture made for the owner (create_image with a prompt, images.js) the way attachments
+ * are kept, so its card shows it from …/attachments/:id and applying copies it into the site.
+ */
+export async function saveMadeImage(key, { name, bytes }) {
+  return (await store(key, name, bytes, { made: true })).meta;
+}
+
+async function store(key, name, buffer, extra = {}) {
   const clean = cleanName(name);
   const { text, ...type } = classify(clean, buffer);
   const id = `att_${randomBytes(8).toString("hex")}`;
-  const meta = { id, name: clean, ...type, size: buffer.length, fileId: null, createdAt: new Date().toISOString() };
+  const meta = { id, name: clean, ...type, size: buffer.length, fileId: null, ...extra, createdAt: new Date().toISOString() };
 
   const dir = dirOf(key);
   await fs.mkdir(dir, { recursive: true });
@@ -254,10 +266,14 @@ export function sitePathFor(meta, wanted) {
   return { dir: isImage ? IMAGE_DIR : FILE_DIR, base, extension };
 }
 
-/** Copies an attachment into the site (a change like any other); returns its path in the repo. */
-export async function addAttachmentToSite(key, id, wanted) {
+/**
+ * Copies an attachment into the site (a change like any other); returns its path in the repo.
+ * `folder` puts an image somewhere other than the uploads (made pictures go to assets/img/generated).
+ */
+export async function addAttachmentToSite(key, id, wanted, folder = null) {
   const { meta, bytes } = await readAttachment(key, id);
-  const { dir, base, extension } = sitePathFor(meta, wanted);
+  const { dir: usual, base, extension } = sitePathFor(meta, wanted);
+  const dir = folder ?? usual;
   const release = acquire(key, "adding a file to the site");
   try {
     const target = path.join(workspaceDir(key), dir);

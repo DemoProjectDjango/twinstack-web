@@ -8,7 +8,8 @@ import { config } from "../config.js";
 import { getClaudeModel } from "../db.js";
 import { issueProxyToken } from "../claude-proxy.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeKeyFor } from "../credits.js";
-import { currentFastModel } from "../fast-model.js";
+import { FastModelError, chooseSiteFastModel, fastModelForSite, siteFastModelView } from "../fast-model.js";
+import { ImageModelError, chooseSiteImageModel, siteImageModelView } from "../image-model.js";
 import { getAccessToken } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
 import {
@@ -191,7 +192,8 @@ workspacesRouter.post(
         if (claude.charged) {
           const siteId = await siteIdFor(key).catch(() => null);
           proxy = issueProxyToken({ userId: req.user.id, siteId, command: name });
-          let fastModel = currentFastModel();
+          // The site's own choice of the cheaper model, else the admin's.
+          let fastModel = await fastModelForSite(siteId);
           if (fastModel && command.sized) {
             sized = taskSize(command.sized(input));
             // Copies made before sizing ignore TWINSTACK_TASK_SIZE: keep complex work off the
@@ -246,6 +248,44 @@ workspacesRouter.get(
 workspacesRouter.put(
   "/:owner/:repo/files/:name",
   handle(async (req, res) => res.json(await writeDataFile(keyFor(req), req.params.name, req.body?.content))),
+);
+
+/*
+ * The site's own AI models: the fast model for routine work (fast-model.js) and the image model for
+ * pictures (image-model.js). "default" follows the admin's choice on /admin/models.
+ */
+
+async function openSiteId(req) {
+  try {
+    return await siteIdFor(keyFor(req));
+  } catch {
+    throw new WorkspaceError("Open the site first.", 409);
+  }
+}
+
+const aiModels = async (siteId) => ({ fast: await siteFastModelView(siteId), image: await siteImageModelView(siteId) });
+
+workspacesRouter.get(
+  "/:owner/:repo/ai-models",
+  handle(async (req, res) => res.json(await aiModels(await openSiteId(req)))),
+);
+
+workspacesRouter.put(
+  "/:owner/:repo/ai-models",
+  handle(async (req, res) => {
+    const siteId = await openSiteId(req);
+    const { kind, model } = req.body ?? {};
+    if (kind !== "fast" && kind !== "image") throw new WorkspaceError("Choose which model to change.", 400);
+    if (typeof model !== "string" || !model) throw new WorkspaceError("Choose a model.", 400);
+    try {
+      if (kind === "fast") await chooseSiteFastModel(siteId, model, req.user.id);
+      else await chooseSiteImageModel(siteId, model, req.user.id);
+    } catch (err) {
+      if (err instanceof FastModelError || err instanceof ImageModelError) throw new WorkspaceError(err.message, 400);
+      throw err;
+    }
+    res.json(await aiModels(siteId));
+  }),
 );
 
 /* A page's markdown, written by hand as the draft Claude turns into the finished page. */

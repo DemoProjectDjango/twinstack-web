@@ -19,7 +19,8 @@ import { DETAILS_FAILED, runDetailsTurn } from "../assistant/details-turn.js";
 import { runQuickTurn } from "../assistant/quick-turn.js";
 import { archiveConversations, createConversation, findConversation, getAssistantModel, updateConversation } from "../db.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeFilesKeyFor, claudeKeyFor } from "../credits.js";
-import { currentFastModel, fastModelKey } from "../fast-model.js";
+import { fastModelForSite, fastModelKey } from "../fast-model.js";
+import { imageModelForSite } from "../image-model.js";
 import { getAccessToken } from "../github.js";
 import { logWork, readDataFile, recentWorkLog } from "../site-files.js";
 import { WorkspaceError, getStatus, siteIdFor } from "../workspace.js";
@@ -294,8 +295,9 @@ assistantRouter.post(
         }
         // Site details asked for on their own screen are data to fill in: the app's cheaper model
         // (fast-model.js) does them (assistant/details-turn.js) when Claude runs on credits. null
-        // hands the turn to Claude (not site details); DETAILS_FAILED hands it to Sonnet.
-        const fastModel = currentFastModel();
+        // hands the turn to Claude (not site details); DETAILS_FAILED hands it to Sonnet. The site may
+        // choose its own fast model (fast-model.js).
+        const fastModel = await fastModelForSite(siteId);
         if (!result && (screen === "details" || SITE_DETAILS_WORDS.test(text)) && !continuing && text && !attachments.length && claude.charged && fastModel) {
           result = await runDetailsTurn({
             key,
@@ -331,14 +333,18 @@ assistantRouter.post(
           // done, so the balance moves while Claude works and stops at the overdraft limit.
           beginSpend: spending,
           cachedTokens: cacheWarm ? (last?.tokens ?? 0) : 0,
+          // Pictures are made with the site's image model, else the admin's.
+          imageModel: await imageModelForSite(siteId),
         });
         turn.status = "done";
       } catch (err) {
-        if (!(err instanceof Anthropic.APIError) && !(err instanceof Anthropic.APIUserAbortError)) {
+        const stopped = turn.controller.signal.aborted;
+        if (!stopped && !(err instanceof Anthropic.APIError) && !(err instanceof Anthropic.APIUserAbortError)) {
           console.error("Assistant turn failed:", err);
         }
-        turn.status = turn.controller.signal.aborted ? "stopped" : "failed";
-        turn.error = friendlyError(err);
+        turn.status = stopped ? "stopped" : "failed";
+        // Stopping while a picture is being made aborts a plain fetch, not a Claude request.
+        turn.error = stopped ? "Stopped." : friendlyError(err);
         result = err.partial ?? null;
       }
       try {

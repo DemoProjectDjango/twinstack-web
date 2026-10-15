@@ -39,9 +39,9 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 
 export function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
   return (
-    <section className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
+    <section className="rounded-lg border flex flex-col border-zinc-200 p-5 dark:border-zinc-800">
       <h3 className="font-semibold">{title}</h3>
-      {description && <p className="mt-1 text-sm text-zinc-500">{description}</p>}
+      {description && <p className="flex-1 mt-1 text-sm text-zinc-500">{description}</p>}
       <div className="mt-4">{children}</div>
     </section>
   );
@@ -97,7 +97,7 @@ export function ScreenHeader({ title, description, children }: { title: string; 
     <header className="flex flex-wrap items-start gap-3">
       <div className="min-w-0 flex-1">
         <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
-        {description && <p className="mt-1 max-w-2xl text-sm text-zinc-500">{description}</p>}
+        {description && <p className="mt-1 text-sm text-zinc-500">{description}</p>}
       </div>
       {children}
     </header>
