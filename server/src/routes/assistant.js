@@ -335,6 +335,8 @@ assistantRouter.post(
           cachedTokens: cacheWarm ? (last?.tokens ?? 0) : 0,
           // Pictures are made with the site's image model, else the admin's.
           imageModel: await imageModelForSite(siteId),
+          // read_analytics answers only the site's creator.
+          userId,
         });
         turn.status = "done";
       } catch (err) {

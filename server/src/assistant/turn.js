@@ -78,7 +78,7 @@ function addUsage(total, usage) {
  * The result's `lastPrompt` is the last request's size, for the next turn's `cachedTokens`.
  * `imageModel` is the site's image model (image-model.js) for pictures create_image makes.
  */
-export async function runTurn({ client, key, model: requested, history, live, onUpdate = () => {}, beginSpend, cachedTokens = 0, signal, imageModel = null }) {
+export async function runTurn({ client, key, model: requested, history, live, onUpdate = () => {}, beginSpend, cachedTokens = 0, signal, imageModel = null, userId = null }) {
   const messages = [...history];
   const start = history.length;
   const usage = emptyUsage();
@@ -238,7 +238,7 @@ export async function runTurn({ client, key, model: requested, history, live, on
           live.parts.push(workingPart);
           onUpdate();
         }
-        const outcome = await runTool(block.name, block.input, key, { beginSpend, signal, imageModel }).finally(() => {
+        const outcome = await runTool(block.name, block.input, key, { beginSpend, signal, imageModel, userId }).finally(() => {
           if (workingPart) live.parts = live.parts.filter((p) => p !== workingPart);
         });
         if (outcome.error) {

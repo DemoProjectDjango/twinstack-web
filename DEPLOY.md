@@ -297,6 +297,8 @@ NODE_ENV=production
 HOST=127.0.0.1
 PORT=4000
 CLIENT_URL=https://builder.mydomain.com
+# Where published sites send their visits (each site's Analytics screen): the API subdomain.
+PUBLIC_API_URL=https://api.mydomain.com
 
 # From step 8
 GITHUB_CLIENT_ID=paste-client-id

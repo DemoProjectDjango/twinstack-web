@@ -28,6 +28,10 @@ export const SUGGESTIONS: Record<SiteSection | "page", { placeholder: string; it
     placeholder: "Ask about your changes, or to publish them…",
     items: ["What have I changed since I last published?", "Publish my changes"],
   },
+  analytics: {
+    placeholder: "Ask Claude about your visitors…",
+    items: ["What should I improve first, based on my visits?", "Which pages do visitors look for but can't find?", "Why do visitors leave my most viewed page?"],
+  },
   seo: {
     placeholder: "Tell Claude what to improve in search results…",
     items: ["Write search titles and descriptions for every page", "Which pages need the most work for Google?", "Improve how the homepage shows up in Google"],

@@ -11,6 +11,7 @@ export type SiteSection =
   | "design"
   | "details"
   | "publish"
+  | "analytics"
   | "seo"
   | "tree"
   | "schedule"

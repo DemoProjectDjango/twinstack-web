@@ -5,6 +5,7 @@ import { connectDb, recordSiteCopy } from "./db.js";
 import { hasTemplateAccess, isTemplate, templateToken, withSiteRoles } from "./sites.js";
 import { accessRouter, adminRouter } from "./routes/access.js";
 import { authRouter } from "./routes/auth.js";
+import { collectRouter } from "./routes/analytics.js";
 import { creditsRouter } from "./routes/credits.js";
 import { startClaudeProxy } from "./claude-proxy.js";
 import { loadFastModelChoice } from "./fast-model.js";
@@ -115,6 +116,8 @@ app.post("/api/repos/:owner/:repo/duplicate", requireAuth, requireGithub, async 
   }
 });
 
+// Public: published sites' visit counter posts here (analytics.js). It never answers with data.
+app.use("/api/collect", collectRouter);
 app.use("/api/access", accessRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/settings", settingsRouter);

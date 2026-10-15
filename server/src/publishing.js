@@ -161,3 +161,30 @@ export async function startDeploy(accessToken, fullName, branch) {
     throw new WorkspaceError(githubMessage(result.body, `GitHub refused to start the deploy (${result.res.status}).`), 422);
   }
 }
+
+/**
+ * Where the site is published: `url` (its Pages address, null while Pages is off) and `hosts`, the
+ * host names its pages are served from: the github.io address and the custom domain, with or
+ * without "www." (GitHub redirects between them).
+ */
+export async function getPublishedHosts(accessToken, fullName) {
+  const pages = await json(`/repos/${fullName}/pages`, accessToken);
+  if (!pages.res.ok) return { url: null, hosts: [] };
+  const hosts = new Set();
+  let url = null;
+  try {
+    if (pages.body?.html_url) {
+      url = new URL(pages.body.html_url).href;
+      hosts.add(new URL(url).hostname.toLowerCase());
+    }
+  } catch {
+    // No usable address yet.
+  }
+  hosts.add(`${fullName.split("/")[0].toLowerCase()}.github.io`);
+  const domain = pages.body?.cname?.toLowerCase();
+  if (domain) {
+    hosts.add(domain);
+    hosts.add(domain.startsWith("www.") ? domain.slice(4) : `www.${domain}`);
+  }
+  return { url, hosts: [...hosts] };
+}

@@ -21,6 +21,10 @@ import { config } from "./config.js";
 //   creditPurchases  one document per purchase of Claude credits
 //   appSettings one document per app-wide setting an admin changes (_id = the
 //               setting's name), e.g. "fastModel": which cheaper model runs
+//   analyticsEvents  one document per page view or outside-link click on a
+//               published site (siteId = GitHub repo id), kept for a year
+//   analyticsSalts   the day's random salt for counting visitors (_id = the
+//               UTC date), deleted after two days so visitors can't be traced
 //
 // An account's Claude credits are users.credits ({ balance, granted, purchased,
 // used }), changed only with $inc so concurrent requests can't lose an update.
@@ -44,6 +48,10 @@ export async function connectDb() {
     conversations().createIndex({ userId: 1, siteId: 1, archived: 1, updatedAt: -1 }),
     claudeUsage().createIndex({ userId: 1, createdAt: -1 }),
     creditPurchases().createIndex({ userId: 1, createdAt: -1 }),
+    siteCopies().createIndex({ "analytics.key": 1 }, { unique: true, partialFilterExpression: { "analytics.key": { $type: "string" } } }),
+    analyticsEvents().createIndex({ siteId: 1, at: -1 }),
+    analyticsEvents().createIndex({ at: 1 }, { expireAfterSeconds: ANALYTICS_RETENTION_DAYS * 24 * 60 * 60 }),
+    analyticsSalts().createIndex({ createdAt: 1 }, { expireAfterSeconds: 2 * 24 * 60 * 60 }),
   ]);
   // Accounts from before credits get the free allowance once.
   await users().updateMany({ credits: { $exists: false } }, { $set: { credits: startingCredits() } });
@@ -69,6 +77,11 @@ const conversations = () => db.collection("assistantConversations");
 const claudeUsage = () => db.collection("claudeUsage");
 const creditPurchases = () => db.collection("creditPurchases");
 const appSettings = () => db.collection("appSettings");
+const analyticsEvents = () => db.collection("analyticsEvents");
+const analyticsSalts = () => db.collection("analyticsSalts");
+
+/** How long a site's visits are kept (the TTL index on analyticsEvents.at). */
+export const ANALYTICS_RETENTION_DAYS = 365;
 
 function objectId(id) {
   return ObjectId.isValid(id) ? new ObjectId(id) : null;
@@ -637,4 +650,63 @@ export function getAppSetting(name) {
 /** Saves an app-wide setting, recording which admin changed it. */
 export async function setAppSetting(name, value, updatedBy) {
   await appSettings().updateOne({ _id: name }, { $set: { value, updatedAt: new Date(), updatedBy } }, { upsert: true });
+}
+
+/* -------------------------------------------------------------- analytics */
+
+// A site's visit counting (analytics.js). Its settings are siteCopies.analytics:
+// { key, enabled, hosts, updatedAt }. `key` is the random id the site's pages send
+// their visits with; `hosts` are the addresses it's published at, the only ones
+// whose visits count. Only the copy's creator (siteCopies.userId) sees any of it.
+
+/** The site's creator and analytics settings, or null when it isn't a recorded copy. */
+export async function findSiteAnalytics(siteId) {
+  if (typeof siteId !== "number") return null;
+  const doc = await siteCopies().findOne({ _id: siteId }, { projection: { userId: 1, fullName: 1, analytics: 1 } });
+  return doc ? { userId: doc.userId ?? null, fullName: doc.fullName, analytics: doc.analytics ?? null } : null;
+}
+
+/** Changes the site's analytics settings (fields of siteCopies.analytics). */
+export async function updateSiteAnalytics(siteId, fields) {
+  const set = Object.fromEntries(Object.entries(fields).map(([k, v]) => [`analytics.${k}`, v]));
+  await siteCopies().updateOne({ _id: siteId }, { $set: { ...set, "analytics.updatedAt": new Date() } });
+}
+
+/** The site a visit's key belongs to: `{ siteId, enabled, hosts }`, or null. */
+export async function findSiteByAnalyticsKey(key) {
+  const doc = await siteCopies().findOne({ "analytics.key": key }, { projection: { analytics: 1 } });
+  return doc ? { siteId: doc._id, enabled: doc.analytics.enabled === true, hosts: doc.analytics.hosts ?? [] } : null;
+}
+
+export async function insertAnalyticsEvents(events) {
+  if (events.length) await analyticsEvents().insertMany(events, { ordered: false });
+}
+
+/** Runs an aggregation over one site's events from `from` (inclusive) to `to` (exclusive). */
+export function aggregateAnalytics(siteId, from, to, pipeline) {
+  return analyticsEvents()
+    .aggregate([{ $match: { siteId, at: { $gte: from, $lt: to } } }, ...pipeline], { allowDiskUse: true })
+    .toArray();
+}
+
+export async function hasAnalyticsEvents(siteId) {
+  return Boolean(await analyticsEvents().findOne({ siteId }, { projection: { _id: 1 } }));
+}
+
+export async function deleteAnalyticsEvents(siteId) {
+  const result = await analyticsEvents().deleteMany({ siteId });
+  return result.deletedCount;
+}
+
+/** Today's salt (UTC), made by whichever request needs it first. */
+export async function analyticsSaltFor(day) {
+  await analyticsSalts().updateOne(
+    { _id: day },
+    { $setOnInsert: { salt: randomBytes(32).toString("hex"), createdAt: new Date() } },
+    { upsert: true },
+  ).catch((err) => {
+    // Two first requests at once: the other one made it.
+    if (err?.code !== 11000) throw err;
+  });
+  return (await analyticsSalts().findOne({ _id: day })).salt;
 }

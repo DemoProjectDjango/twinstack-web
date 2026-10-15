@@ -6,6 +6,7 @@ import { claudeAccess } from "@/lib/claude";
 import { useCredits } from "@/lib/credits";
 import { confirmModal } from "@/lib/confirm";
 import { ApiError, api, setBeforeChange, workspacePath, type Job, type Overview, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
+import { AnalyticsPanel } from "./AnalyticsPanel";
 import { AskClaude } from "./assistant/AskClaude";
 import { AssistantPanel } from "./assistant/AssistantPanel";
 import { AssistantProvider, useAssistant, useOptionalAssistant } from "./assistant/AssistantProvider";
@@ -35,6 +36,9 @@ const MAIN: { id: SiteSection; label: string; hint: string }[] = [
   { id: "details", label: "Site details", hint: "Name, contact details and more" },
   { id: "publish", label: "Publish", hint: "Put your changes live" },
 ];
+
+// Only for the site's creator (GET …/analytics/access): nobody else sees its visits.
+const ANALYTICS = { id: "analytics" as const, label: "Analytics", hint: "Who visits your site" };
 
 const ADVANCED: { id: SiteSection; label: string }[] = [
   { id: "seo", label: "Search overview" },
@@ -71,6 +75,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   const [pagesOpened, setPagesOpened] = useState(false);
   const [designOpened, setDesignOpened] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [isCreator, setIsCreator] = useState(false);
   const unsavedDraft = useRef(false);
   const [resetting, setResetting] = useState(false);
   // Something changed the site's files since the preview was last built.
@@ -199,6 +204,9 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
         setRawStatus(opened);
         api<Overview>(workspacePath(owner, repo, "/overview"))
           .then((o) => !cancelled && setOverview(o))
+          .catch(() => {});
+        api<{ creator: boolean }>(workspacePath(owner, repo, "/analytics/access"))
+          .then((a) => !cancelled && setIsCreator(a.creator))
           .catch(() => {});
         if (opened.activeJob) setJob(runningJob(opened.activeJob));
         else if (opened.needsInstall) void run("install");
@@ -425,7 +433,8 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
 
   const liveUrl = publishing.publishing?.enabled ? publishing.publishing.url : null;
   const changes = status.changes.length;
-  const current = [...MAIN, ...ADVANCED].find((s) => s.id === section);
+  const main = isCreator ? [...MAIN.slice(0, 4), ANALYTICS, ...MAIN.slice(4)] : MAIN;
+  const current = [...main, ...ADVANCED].find((s) => s.id === section);
 
   return (
     <SiteContext.Provider value={context}>
@@ -462,7 +471,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
             </button>
             <div className={`${menuOpen ? "mt-2 block" : "hidden"} rounded-lg border border-zinc-200 p-2 lg:mt-0 lg:block lg:border-0 lg:p-0 dark:border-zinc-800`}>
               <ul className="space-y-0.5">
-                {MAIN.map((item) => (
+                {main.map((item) => (
                   <li key={item.id}>
                     <NavButton
                       active={section === item.id}
@@ -515,6 +524,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
             )}
             {section === "details" && <StaticInfoPanel />}
             {section === "publish" && <ChangesPanel />}
+            {section === "analytics" && isCreator && <AnalyticsPanel />}
             {section === "seo" && <SeoPanel />}
             {section === "tree" && <TreePanel />}
             {section === "schedule" && <SchedulePanel />}

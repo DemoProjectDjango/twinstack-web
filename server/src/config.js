@@ -101,6 +101,11 @@ export const config = {
     .split(",")
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean),
+  // Where published sites reach this API from the internet (the api subdomain in DEPLOY.md), for
+  // the visit counter's address in a site's site.config.json → analytics. Unset: this server's
+  // own port on localhost, which only works for a site viewed on this machine.
+  publicApiUrlSet: Boolean(process.env.PUBLIC_API_URL?.trim()),
+  publicApiUrl: (process.env.PUBLIC_API_URL?.trim() || `http://localhost:${process.env.PORT ?? 4000}`).replace(/\/+$/, ""),
   // Email through Resend (resend.com). Unset, emails are written to the server log instead.
   email: {
     resendKey: process.env.RESEND_API_KEY?.trim() || null,

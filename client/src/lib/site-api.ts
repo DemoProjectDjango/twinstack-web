@@ -163,6 +163,8 @@ export type Overview = {
     pageConvertChrome?: boolean;
     /** A page can add itself to the menu or footer (frontmatter `menu`, set with /navigation/page-menu). */
     pageMenus?: boolean;
+    /** Its base.html loads the visit counter (assets/js/analytics.js) when site.config.json → analytics has a key. */
+    analytics?: boolean;
   };
   /** Markdown files outside content/ that the "md-edit" command may change. Empty without mdEdit. */
   markdownFiles: string[];
@@ -520,3 +522,52 @@ export async function api<T>(path: string, { method = "GET", body }: { method?: 
 export function workspacePath(owner: string, repo: string, rest = "") {
   return `/api/workspaces/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}${rest}`;
 }
+
+/* ---------------------------------------------------------------- analytics */
+
+// The site's visits (GET/POST …/analytics, server/src/analytics.js). Only the site's creator gets
+// any of it: everyone else gets 404, and GET …/analytics/access says whether to show the screen.
+
+export type AnalyticsSettings = {
+  /** The copy's base.html loads the visit counter (else it needs the site update). */
+  supported: boolean;
+  enabled: boolean;
+  /** The working copy's site.config.json has the counter: published, the live pages count visits. */
+  configured: boolean;
+  /** The site's counter sends to an older address of this server (PUBLIC_API_URL changed). */
+  endpointChanged?: boolean;
+  endpoint: string;
+  /** The server has no PUBLIC_API_URL, so published pages can't reach it. */
+  localEndpoint: boolean;
+  hosts: string[];
+  hasData: boolean;
+  retentionDays: number;
+  /** Add to the site's address once to stop counting that browser's visits. */
+  ignoreParam: string;
+  siteUrl: string | null;
+};
+
+export type AnalyticsRow = { name: string; count: number };
+export type AnalyticsTotals = { visitors: number; pageviews: number; singlePage: number };
+
+export type AnalyticsReport = {
+  range: number;
+  from: string;
+  to: string;
+  totals: AnalyticsTotals;
+  previous: AnalyticsTotals;
+  series: { date: string; visitors: number; pageviews: number }[];
+  pages: { path: string; pageviews: number; visitors: number; clicks: number }[];
+  entries: { path: string; count: number }[];
+  sources: { name: string; channel: "direct" | "search" | "social" | "ai" | "campaign" | "other"; count: number }[];
+  campaigns: { source: string | null; medium: string | null; campaign: string | null; count: number }[];
+  devices: AnalyticsRow[];
+  browsers: AnalyticsRow[];
+  systems: AnalyticsRow[];
+  /** Visitors' time zones ("Europe/London"), the only location the counter has. */
+  zones: AnalyticsRow[];
+  notFound: { path: string; hits: number; last: string; referrers: string[] }[];
+  clicks: { kind: "phone" | "email" | "whatsapp" | "link"; target: string | null; count: number }[];
+};
+
+export type AnalyticsView = { settings: AnalyticsSettings; report: AnalyticsReport | null };

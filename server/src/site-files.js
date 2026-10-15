@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { ANALYTICS_MARKER } from "./analytics.js";
 import {
   addWorkLogLines,
   clearWorkLog,
@@ -156,7 +157,8 @@ export async function getOverview(key) {
   const globalCss = editScript.includes("globalStylesheets");
   // Copies made before SEO have no scripts/seo.js, and older page shells don't render its tags.
   const seo = existsSync(path.join(dir, "scripts/seo.js"));
-  const seoTemplate = ((await readText(path.join(dir, "templates/partials/base.html"))) ?? "").includes("page.seo.");
+  const baseTemplate = (await readText(path.join(dir, "templates/partials/base.html"))) ?? "";
+  const seoTemplate = baseTemplate.includes("page.seo.");
 
   return {
     site: { name: site.name, url: site.url, model: site.automation?.model ?? null },
@@ -175,6 +177,8 @@ export async function getOverview(key) {
       mdEdit,
       seo,
       seoTemplate,
+      // Copies whose page shell loads the visit counter (assets/js/analytics.js) when the site has a key.
+      analytics: baseTemplate.includes(ANALYTICS_MARKER),
       proposalPreview: buildScript.includes("--proposal="),
       // Copies made before Claude could design the header and footer (edit-page.js --chrome).
       chromeDesign: editScript.includes("--chrome"),

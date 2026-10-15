@@ -17,6 +17,8 @@ export const MISSING_REPORT = ".git/twinstack-missing.json";
 const MAX_MISSING = 50;
 const MAX_FROM = 8;
 const MAX_HTML_FILES = 2000;
+// Pages nothing needs to link to: the homepage, and the page GitHub Pages shows for missing addresses.
+const NOT_LINKED = new Set(["/", "/404.html"]);
 
 const normalized = (url) => (url.endsWith("/") || path.posix.extname(url) ? url : `${url}/`);
 
@@ -115,9 +117,9 @@ export async function scanMissingPages(key) {
     // Hidden pages exist: they only need showing, so they aren't offered for creating.
     missing: [...missing.values()].filter((m) => !m.hidden),
     // Visible pages no other page links to: reachable only by their address or from search.
-    // The homepage is the way in, so it never counts.
+    // The homepage is the way in, so it never counts, and nothing links to a "page not found" page.
     unlinked: known
-      .filter((p) => !p.draft && normalized(p.url) !== "/" && !linked.has(normalized(p.url)))
+      .filter((p) => !p.draft && !NOT_LINKED.has(normalized(p.url)) && !linked.has(normalized(p.url)))
       .map(({ file, title, url }) => ({ file, title, url })),
     // Pages at one address (/pricing and /pricing/ build the same file): only one of them shows.
     duplicates: [...known.reduce((groups, p) => groups.set(normalized(p.url), [...(groups.get(normalized(p.url)) ?? []), p]), new Map()).values()]

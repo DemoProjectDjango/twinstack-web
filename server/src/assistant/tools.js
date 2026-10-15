@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { addAttachmentToSite, readAttachmentMeta, saveMadeImage, sitePathFor } from "./attachments.js";
+import { analyticsSummary } from "../analytics.js";
 import { getBrand, saveBrand } from "../brand.js";
 import { getNavigation, saveNavigation } from "../navigation.js";
 import { readSeo } from "../seo.js";
@@ -24,7 +25,7 @@ import {
 } from "../site-files.js";
 import { readCheckReport } from "../site-check.js";
 import { checkStaticInfo, getStaticInfo, saveStaticInfo } from "../static-info.js";
-import { WorkspaceError, commitAndPush, getStatus } from "../workspace.js";
+import { WorkspaceError, commitAndPush, getStatus, siteIdFor } from "../workspace.js";
 import { SYSTEM_PROMPT } from "./prompt.js";
 
 // The assistant's tools. Read tools run on the server as soon as Claude calls them. Change tools
@@ -130,6 +131,13 @@ const TOOLS = [
     { file: { type: "string", description: "Optional: one page's file for its full details." } },
     [],
     { kind: "read", activity: (input) => (input.file ? `Checking how ${input.file} shows up in search` : "Checking how your pages show up in search") },
+  ),
+  tool(
+    "read_analytics",
+    "How many people visit the published site and what they do, from the site's own visit counter (no cookies; a visitor is one person on one day): visitors and page views against the period before, the most viewed pages and the pages people arrive on, where visitors come from (search engines, social sites, campaigns), devices, missing pages visitors tried to open (404s) and clicks on phone, email, WhatsApp and outside links. Only the site's creator can see it. Use it to suggest what to improve first, for example making a missing page people look for, or improving a busy page few people stay on.",
+    { days: { type: "integer", enum: [7, 30, 90, 365], description: "Optional: how many days back (default 30)." } },
+    [],
+    { kind: "read", activity: () => "Checking your site's visits" },
   ),
   tool(
     "read_site_problems",
@@ -459,8 +467,18 @@ function capped(text) {
 
 /* ----------------------------------------------------------- read tools */
 
-async function runRead(name, input, key) {
+async function runRead(name, input, key, context) {
   switch (name) {
+    case "read_analytics": {
+      const siteId = await siteIdFor(key).catch(() => null);
+      if (typeof siteId !== "number" || !context.userId) return "Visit numbers aren't available for this site.";
+      try {
+        return await analyticsSummary({ siteId, userId: context.userId, days: Number(input.days) || 30 });
+      } catch (err) {
+        if (err instanceof WorkspaceError && err.status === 404) return "Only the person who created this site can see its visit numbers.";
+        throw err;
+      }
+    }
     case "get_site_overview": {
       const [overview, status, css] = await Promise.all([getOverview(key), getStatus(key), listCss(key).catch(() => [])]);
       return {
@@ -841,7 +859,8 @@ function titleOf(markdown) {
  * Runs one tool call. Read tools return their result; change tools return the action to show the
  * user (nothing is changed yet). Errors come back as `{ error }` for Claude to see and fix.
  * `context` is the turn's: `beginSpend` (credits.js) pays for a picture create_image makes with
- * `imageModel` (the site's, image-model.js), and `signal` stops it.
+ * `imageModel` (the site's, image-model.js), and `signal` stops it. `userId` is who's asking:
+ * read_analytics answers only the site's creator.
  */
 export async function runTool(name, input, key, context = {}) {
   const info = toolInfo(name);
@@ -849,7 +868,7 @@ export async function runTool(name, input, key, context = {}) {
   if (!isPlainObject(input)) return { error: "The tool input must be an object." };
   try {
     if (info.kind === "read") {
-      const result = await runRead(name, input, key);
+      const result = await runRead(name, input, key, context);
       return { result: typeof result === "string" ? result : JSON.stringify(result) };
     }
     return { action: await prepareChange(name, input, key, context) };

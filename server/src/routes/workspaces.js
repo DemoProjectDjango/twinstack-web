@@ -24,6 +24,7 @@ import {
 } from "../publishing.js";
 import { requireAuth, requireGithub } from "../session.js";
 import { getNextSteps } from "../next-steps.js";
+import { analyticsRouter } from "./analytics.js";
 import { assistantRouter } from "./assistant.js";
 import { handle, keyFor, requireJson } from "./helpers.js";
 import {
@@ -88,6 +89,8 @@ export const workspacesRouter = Router();
 workspacesRouter.use(requireAuth, requireGithub, requireJson);
 // "Ask Claude": the site's conversation and the changes it proposes (routes/assistant.js).
 workspacesRouter.use("/:owner/:repo/assistant", assistantRouter);
+// The site's visits, for its creator only (routes/analytics.js).
+workspacesRouter.use("/:owner/:repo/analytics", analyticsRouter);
 
 workspacesRouter.post(
   "/:owner/:repo/open",
