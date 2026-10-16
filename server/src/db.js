@@ -18,16 +18,26 @@ import { config } from "./config.js";
 //               message history, what the chat shows and the proposed changes
 //   claudeUsage one document per Claude request made for a user (tokens in and
 //               out, and the credits it cost), the account's usage history
-//   creditPurchases  one document per purchase of Claude credits
+//   creditPurchases  one document per purchase of Claude credits: the buyer as they
+//               were then, the amounts, and what Stripe said about the payment
+//               (card, fee, refunds); admins list them all on /admin/purchases
 //   appSettings one document per app-wide setting an admin changes (_id = the
 //               setting's name), e.g. "fastModel": which cheaper model runs
 //   analyticsEvents  one document per page view or outside-link click on a
 //               published site (siteId = GitHub repo id), kept for a year
 //   analyticsSalts   the day's random salt for counting visitors (_id = the
 //               UTC date), deleted after two days so visitors can't be traced
+//   providerErrors   one document per refusal from Anthropic, OpenAI or
+//               DeepSeek on the app's keys (out of balance, rate limited, key
+//               refused…), kept 30 days (provider-health.js)
+//   providerCosts    one document per provider and UTC day: the provider's own
+//               cost report next to what the app recorded (_id = provider:day)
 //
 // An account's Claude credits are users.credits ({ balance, granted, purchased,
-// used }), changed only with $inc so concurrent requests can't lose an update.
+// used }), changed only in single atomic updates ($inc, or a pipeline that stops a
+// refund at zero) so concurrent requests can't lose an update. purchaseIds there
+// lists the recent paid purchases already credited. users.stripeCustomers holds
+// the account's Stripe customer ids ({ live, test }).
 //
 // Account ids leave this module as 24-character hex strings.
 
@@ -48,10 +58,15 @@ export async function connectDb() {
     conversations().createIndex({ userId: 1, siteId: 1, archived: 1, updatedAt: -1 }),
     claudeUsage().createIndex({ userId: 1, createdAt: -1 }),
     creditPurchases().createIndex({ userId: 1, createdAt: -1 }),
+    creditPurchases().createIndex({ createdAt: -1 }),
+    creditPurchases().createIndex({ stripeSessionId: 1 }, { unique: true, partialFilterExpression: { stripeSessionId: { $type: "string" } } }),
+    creditPurchases().createIndex({ paymentIntentId: 1 }, { partialFilterExpression: { paymentIntentId: { $type: "string" } } }),
     siteCopies().createIndex({ "analytics.key": 1 }, { unique: true, partialFilterExpression: { "analytics.key": { $type: "string" } } }),
     analyticsEvents().createIndex({ siteId: 1, at: -1 }),
     analyticsEvents().createIndex({ at: 1 }, { expireAfterSeconds: ANALYTICS_RETENTION_DAYS * 24 * 60 * 60 }),
     analyticsSalts().createIndex({ createdAt: 1 }, { expireAfterSeconds: 2 * 24 * 60 * 60 }),
+    providerErrors().createIndex({ at: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 }),
+    claudeUsage().createIndex({ charged: 1, createdAt: -1 }),
   ]);
   // Accounts from before credits get the free allowance once.
   await users().updateMany({ credits: { $exists: false } }, { $set: { credits: startingCredits() } });
@@ -484,7 +499,8 @@ function startingCredits() {
 /** `{ balance, granted, purchased, used }` for the account. */
 export async function getCredits(id) {
   const doc = await users().findOne({ _id: objectId(id) }, { projection: { credits: 1 } });
-  return { ...startingCredits(), ...doc?.credits };
+  const { purchaseIds: _ids, ...credits } = doc?.credits ?? {};
+  return { ...startingCredits(), ...credits };
 }
 
 /**
@@ -514,14 +530,121 @@ export async function recordClaudeUsage({ userId, siteId = null, runId = null, k
   });
 }
 
-/** A completed purchase: the credits are added at once. `provider` is "demo" until payments exist. */
-export async function addPurchasedCredits({ userId, credits, priceCents, currency, provider }) {
+// A purchase's status: "pending" (sent to Stripe Checkout), then "paid", "failed" or "expired";
+// once paid, Stripe may refund it ("refunded", "part-refunded") or the bank may reverse it
+// ("disputed"). Demo purchases (development only) are "paid" at once and nothing is charged.
+
+// How many recent purchase ids an account keeps (users.credits.purchaseIds), so a purchase whose
+// crediting was interrupted is never credited twice when it's tried again.
+const RECENT_PURCHASES = 100;
+
+/** What the browser sees of a purchase. */
+function purchaseView({ _id, credits, priceCents, currency, provider, status, createdAt, paidAt, receiptUrl, refundedCredits }) {
+  return { id: _id.toHexString(), credits, priceCents, currency, provider, status, createdAt, paidAt, receiptUrl, refundedCredits };
+}
+
+/**
+ * A new purchase: a demo one is paid and credited at once, a Stripe one waits for its payment.
+ * `buyer` ({ email, name }) is kept as it was then, for the admin's list, should the account change.
+ * `livemode` is false for demo purchases and Stripe test keys.
+ */
+export async function createPurchase({ userId, buyer, credits, priceCents, currency, provider, livemode = false }) {
   const now = new Date();
-  const purchase = { credits, priceCents, currency, provider, status: "paid", createdAt: now, paidAt: now };
-  // A copy: insertOne adds _id to the document it's given.
-  const { insertedId } = await creditPurchases().insertOne({ userId, ...purchase });
-  await users().updateOne({ _id: objectId(userId) }, { $inc: { "credits.balance": credits, "credits.purchased": credits } });
-  return { id: insertedId.toHexString(), ...purchase };
+  const demo = provider === "demo";
+  const doc = {
+    userId,
+    buyer: { email: buyer.email ?? null, name: buyer.name ?? null },
+    credits,
+    priceCents,
+    currency,
+    provider,
+    livemode,
+    status: demo ? "paid" : "pending",
+    createdAt: now,
+    ...(demo && { paidAt: now }),
+  };
+  // insertOne adds _id to the document it's given.
+  await creditPurchases().insertOne(doc);
+  if (demo) await users().updateOne({ _id: objectId(userId) }, { $inc: { "credits.balance": credits, "credits.purchased": credits } });
+  return purchaseView(doc);
+}
+
+export async function setPurchaseCheckout(id, stripeSessionId) {
+  await creditPurchases().updateOne({ _id: objectId(id) }, { $set: { stripeSessionId } });
+}
+
+/** The purchase made with that Checkout Session: `userId`'s only, when given. */
+export async function findPurchaseBySession(stripeSessionId, userId = null) {
+  const doc = await creditPurchases().findOne({ stripeSessionId, ...(userId && { userId }) });
+  return doc && { ...purchaseView(doc), userId: doc.userId };
+}
+
+/**
+ * Stripe says the purchase is paid: marks it so (once) and adds its credits to the account (once,
+ * however often this runs, so a repeated webhook or a retry after a crash is harmless). `payment` is
+ * what Stripe says about it: paymentIntentId, customerId, amountPaidCents, feeCents, receiptUrl and
+ * card ({ brand, last4, country }).
+ */
+export async function payPurchase(id, payment) {
+  const _id = objectId(id);
+  await creditPurchases().updateOne(
+    { _id, status: "pending" },
+    { $set: { status: "paid", paidAt: new Date(), credited: false, refundedCredits: 0, ...payment } },
+  );
+  const purchase = await creditPurchases().findOne({ _id, credited: false });
+  if (!purchase) return;
+  await users().updateOne(
+    { _id: objectId(purchase.userId), "credits.purchaseIds": { $ne: _id } },
+    {
+      $inc: { "credits.balance": purchase.credits, "credits.purchased": purchase.credits },
+      $push: { "credits.purchaseIds": { $each: [_id], $slice: -RECENT_PURCHASES } },
+    },
+  );
+  await creditPurchases().updateOne({ _id }, { $set: { credited: true } });
+}
+
+/** A pending purchase that will never be paid: "failed" or "expired". */
+export async function endPurchase(id, status) {
+  await creditPurchases().updateOne({ _id: objectId(id), status: "pending" }, { $set: { status, endedAt: new Date() } });
+}
+
+/**
+ * Takes back the credits of a refunded or disputed payment: `share` of them (0-1, what's been
+ * refunded so far), less what was already taken back. The balance stops at zero: credits already
+ * used aren't owed. `amounts` records the money involved (`refundedCents` so far, or `disputedCents`).
+ */
+export async function takeBackPurchase(paymentIntentId, { share, status, amounts = {} }) {
+  const purchase = await creditPurchases().findOne({ paymentIntentId, credited: true });
+  if (!purchase) return;
+  const before = purchase.refundedCredits ?? 0;
+  const target = Math.min(purchase.credits, Math.round(purchase.credits * share));
+  const take = target - before;
+  // Nothing more to take (a repeated event, or a dispute after a full refund): left as it is.
+  if (take <= 0) return;
+  // Matched on the amount read above, so two events at once can't both take the same credits.
+  const { modifiedCount } = await creditPurchases().updateOne(
+    { _id: purchase._id, refundedCredits: before },
+    { $set: { status, refundedCredits: target, ...amounts, updatedAt: new Date() } },
+  );
+  if (!modifiedCount) return;
+  await users().updateOne({ _id: objectId(purchase.userId) }, [
+    {
+      $set: {
+        "credits.balance": { $max: [0, { $subtract: ["$credits.balance", take] }] },
+        "credits.purchased": { $subtract: ["$credits.purchased", take] },
+      },
+    },
+  ]);
+}
+
+/** The account's Stripe customer in that mode ("live" or "test", whose customers are separate). */
+export async function getStripeCustomerId(userId, mode) {
+  const doc = await users().findOne({ _id: objectId(userId) }, { projection: { stripeCustomers: 1 } });
+  return doc?.stripeCustomers?.[mode] ?? null;
+}
+
+export async function setStripeCustomerId(userId, mode, customerId) {
+  await users().updateOne({ _id: objectId(userId) }, { $set: { [`stripeCustomers.${mode}`]: customerId } });
 }
 
 const historyPage = (collection, userId, { before, limit }) =>
@@ -636,8 +759,317 @@ export function usageTotals(rows) {
 
 /** The account's credit purchases, newest first. */
 export async function listCreditPurchases(userId, page) {
-  const docs = await historyPage(creditPurchases(), userId, page);
-  return docs.map(({ _id, userId: _u, ...rest }) => ({ id: _id.toHexString(), ...rest }));
+  return (await historyPage(creditPurchases(), userId, page)).map(purchaseView);
+}
+
+export const PURCHASE_STATUSES = ["pending", "paid", "failed", "expired", "refunded", "part-refunded", "disputed"];
+
+/** A purchase as the admin sees it: everything stored, with the account as it is now. */
+function adminPurchaseView(doc) {
+  const { _id, userId, account, credited: _c, ...rest } = doc;
+  return {
+    id: _id.toHexString(),
+    ...rest,
+    account: account ? { id: userId, email: account.email ?? null, name: account.name ?? null } : { id: userId, deleted: true },
+  };
+}
+
+/**
+ * Every account's purchases for the admin, newest first, a page at a time (`before`, `limit`).
+ * `status`, `provider` ("stripe", "demo") and `mode` ("live", "test") narrow it; `q` finds a buyer
+ * by email or name (then or now) or a payment by its Stripe id.
+ */
+export async function listAllPurchases({ before = null, since = null, limit = 50, status = null, provider = null, mode = null, q = "" }) {
+  const match = {
+    ...((before || since) && { createdAt: { ...(before && { $lt: before }), ...(since && { $gte: since }) } }),
+    ...(status && { status }),
+    ...(provider && { provider }),
+    ...(mode && { livemode: mode === "live" }),
+  };
+  const text = q.trim();
+  const pattern = text && { $regex: text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
+  const docs = await creditPurchases()
+    .aggregate([
+      { $match: match },
+      { $sort: { createdAt: -1 } },
+      {
+        $lookup: {
+          from: "users",
+          let: { id: { $convert: { input: "$userId", to: "objectId", onError: null, onNull: null } } },
+          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$id"] } } }, { $project: { email: 1, name: 1 } }],
+          as: "account",
+        },
+      },
+      { $set: { account: { $first: "$account" } } },
+      ...(text
+        ? [
+            {
+              $match: {
+                $or: [
+                  { "buyer.email": pattern },
+                  { "buyer.name": pattern },
+                  { "account.email": pattern },
+                  { "account.name": pattern },
+                  { stripeSessionId: text },
+                  { paymentIntentId: text },
+                ],
+              },
+            },
+          ]
+        : []),
+      { $limit: limit },
+    ])
+    .toArray();
+  return docs.map(adminPurchaseView);
+}
+
+const PAID_STATUSES = ["paid", "refunded", "part-refunded", "disputed"];
+
+/**
+ * Money taken through Stripe, all time and in the last 30 days, live and test apart: purchases,
+ * amount paid, Stripe's fees, refunded and disputed amounts, and credits sold and taken back.
+ */
+export async function purchaseTotals() {
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const sums = {
+    purchases: { $sum: 1 },
+    paidCents: { $sum: { $ifNull: ["$amountPaidCents", 0] } },
+    feeCents: { $sum: { $ifNull: ["$feeCents", 0] } },
+    refundedCents: { $sum: { $ifNull: ["$refundedCents", 0] } },
+    disputedCents: { $sum: { $ifNull: ["$disputedCents", 0] } },
+    credits: { $sum: "$credits" },
+    creditsTakenBack: { $sum: { $ifNull: ["$refundedCredits", 0] } },
+  };
+  const [row] = await creditPurchases()
+    .aggregate([
+      { $match: { provider: "stripe", status: { $in: PAID_STATUSES } } },
+      {
+        $facet: {
+          allTime: [{ $group: { _id: { $eq: ["$livemode", true] }, ...sums } }],
+          last30Days: [{ $match: { paidAt: { $gte: since } } }, { $group: { _id: { $eq: ["$livemode", true] }, ...sums } }],
+        },
+      },
+    ])
+    .toArray();
+  const empty = Object.fromEntries(Object.keys(sums).map((k) => [k, 0]));
+  const byMode = (groups) => {
+    const live = groups.find((g) => g._id === true);
+    const test = groups.find((g) => g._id === false);
+    const strip = (g) => (g ? (({ _id, ...t }) => t)(g) : { ...empty });
+    return { live: strip(live), test: strip(test) };
+  };
+  const pending = await creditPurchases().countDocuments({ provider: "stripe", status: "pending" });
+  return { currency: "usd", allTime: byMode(row.allTime), last30Days: byMode(row.last30Days), pending };
+}
+
+/* ------------------------------------------------------ provider health */
+
+// What the app's own keys cost and how they're holding up (provider-health.js). Spend comes from
+// claudeUsage (charged requests ran on the app's keys); providerErrors keeps the providers' refusals
+// for 30 days; providerCosts keeps each day's check against a provider's own cost report.
+
+const providerErrors = () => db.collection("providerErrors");
+const providerCosts = () => db.collection("providerCosts");
+
+/** Credits charged per provider since `since` (claudeUsage at the app's prices). */
+export async function chargedByProvider(since) {
+  const rows = await claudeUsage()
+    .aggregate([
+      { $match: { charged: true, createdAt: { $gte: since } } },
+      { $group: { _id: "$model", credits: { $sum: { $ifNull: ["$credits", 0] } } } },
+    ])
+    .toArray();
+  const totals = Object.fromEntries(PROVIDERS.map((p) => [p, 0]));
+  for (const row of rows) totals[providerOf(row._id)] += row.credits;
+  return totals;
+}
+
+/** Credits charged per provider per UTC day (`YYYY-MM-DD`) since `since`. */
+export async function chargedByProviderPerDay(since) {
+  const rows = await claudeUsage()
+    .aggregate([
+      { $match: { charged: true, createdAt: { $gte: since } } },
+      {
+        $group: {
+          _id: { day: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: "UTC" } }, model: "$model" },
+          credits: { $sum: { $ifNull: ["$credits", 0] } },
+        },
+      },
+    ])
+    .toArray();
+  const days = {};
+  for (const { _id, credits } of rows) {
+    days[_id.day] ??= Object.fromEntries(PROVIDERS.map((p) => [p, 0]));
+    days[_id.day][providerOf(_id.model)] += credits;
+  }
+  return days;
+}
+
+/** The credits every account still has to spend: what they could still use on the app's keys. */
+export async function outstandingCredits() {
+  const [row] = await users()
+    .aggregate([
+      { $match: { "credits.balance": { $gt: 0 } } },
+      { $group: { _id: null, credits: { $sum: "$credits.balance" }, accounts: { $sum: 1 } } },
+    ])
+    .toArray();
+  return { credits: row?.credits ?? 0, accounts: row?.accounts ?? 0 };
+}
+
+/**
+ * The admin's activity report for `start`-`end` (instants, end excluded), days counted in `zone`:
+ * credits bought (by when they were paid), free credits given to new accounts, and credits used
+ * per provider. `days` has one row per local day with any of it; `users` the `userLimit` accounts
+ * that used or bought the most, each with its balance now.
+ */
+export async function creditActivity({ start, end, zone, userLimit = 100 }) {
+  const range = { $gte: start, $lt: end };
+  const day = (field) => ({ $dateToString: { format: "%Y-%m-%d", date: field, timezone: zone } });
+  const [usageRows, purchaseRows, signupRows] = await Promise.all([
+    claudeUsage()
+      .aggregate([
+        { $match: { charged: true, createdAt: range } },
+        {
+          $group: {
+            _id: { userId: "$userId", model: "$model", day: day("$createdAt") },
+            credits: { $sum: { $ifNull: ["$credits", 0] } },
+            requests: { $sum: 1 },
+          },
+        },
+      ])
+      .toArray(),
+    creditPurchases()
+      .aggregate([
+        { $match: { status: { $in: PAID_STATUSES }, paidAt: range } },
+        {
+          $group: {
+            _id: { userId: "$userId", provider: "$provider", day: day("$paidAt") },
+            purchases: { $sum: 1 },
+            credits: { $sum: "$credits" },
+            paidCents: { $sum: { $ifNull: ["$amountPaidCents", 0] } },
+            refundedCents: { $sum: { $add: [{ $ifNull: ["$refundedCents", 0] }, { $ifNull: ["$disputedCents", 0] }] } },
+            creditsTakenBack: { $sum: { $ifNull: ["$refundedCredits", 0] } },
+          },
+        },
+      ])
+      .toArray(),
+    users()
+      .aggregate([
+        { $match: { createdAt: range } },
+        { $group: { _id: day("$createdAt"), accounts: { $sum: 1 }, credits: { $sum: { $ifNull: ["$credits.granted", 0] } } } },
+      ])
+      .toArray(),
+  ]);
+
+  const usageZero = () => Object.fromEntries(PROVIDERS.map((p) => [p, { credits: 0, requests: 0 }]));
+  const totals = {
+    purchases: { count: 0, credits: 0, paidCents: 0, refundedCents: 0, creditsTakenBack: 0, demoCount: 0, demoCredits: 0 },
+    free: { accounts: 0, credits: 0 },
+    usage: usageZero(),
+  };
+  const days = new Map();
+  const dayRow = (d) => {
+    if (!days.has(d)) days.set(d, { day: d, boughtCredits: 0, paidCents: 0, purchases: 0, freeCredits: 0, newAccounts: 0, used: usageZero() });
+    return days.get(d);
+  };
+  const people = new Map();
+  const person = (id) => {
+    if (!people.has(id)) people.set(id, { userId: id, boughtCredits: 0, paidCents: 0, purchases: 0, used: usageZero() });
+    return people.get(id);
+  };
+
+  for (const { _id, credits, requests } of usageRows) {
+    const provider = providerOf(_id.model);
+    for (const usage of [totals.usage, dayRow(_id.day).used, person(_id.userId).used]) {
+      usage[provider].credits += credits;
+      usage[provider].requests += requests;
+    }
+  }
+  for (const { _id, purchases, credits, paidCents, refundedCents, creditsTakenBack } of purchaseRows) {
+    const p = totals.purchases;
+    if (_id.provider === "demo") {
+      p.demoCount += purchases;
+      p.demoCredits += credits;
+    } else {
+      p.count += purchases;
+      p.credits += credits;
+      p.paidCents += paidCents;
+      p.refundedCents += refundedCents;
+      p.creditsTakenBack += creditsTakenBack;
+    }
+    const d = dayRow(_id.day);
+    const who = person(_id.userId);
+    for (const row of [d, who]) {
+      row.boughtCredits += credits;
+      row.paidCents += paidCents;
+      row.purchases += purchases;
+    }
+  }
+  for (const { _id, accounts, credits } of signupRows) {
+    totals.free.accounts += accounts;
+    totals.free.credits += credits;
+    const d = dayRow(_id);
+    d.newAccounts += accounts;
+    d.freeCredits += credits;
+  }
+
+  const usedOf = (row) => PROVIDERS.reduce((sum, p) => sum + row.used[p].credits, 0);
+  const ranked = [...people.values()].sort((a, b) => usedOf(b) - usedOf(a) || b.boughtCredits - a.boughtCredits);
+  const shown = ranked.slice(0, userLimit);
+  const accounts = await users()
+    .find({ _id: { $in: shown.map((r) => objectId(r.userId)).filter(Boolean) } }, { projection: { email: 1, name: 1, "credits.balance": 1 } })
+    .toArray();
+  const byId = new Map(accounts.map((a) => [a._id.toHexString(), a]));
+
+  return {
+    totals: { ...totals, usedCredits: usedOf({ used: totals.usage }) },
+    days: [...days.values()].sort((a, b) => (a.day < b.day ? 1 : -1)),
+    users: shown.map((r) => {
+      const account = byId.get(r.userId);
+      return {
+        ...r,
+        usedCredits: usedOf(r),
+        email: account?.email ?? null,
+        name: account?.name ?? null,
+        deleted: !account,
+        balance: account ? (account.credits?.balance ?? 0) : null,
+      };
+    }),
+    userCount: ranked.length,
+  };
+}
+
+export async function recordProviderError({ provider, kind, status, message }) {
+  await providerErrors().insertOne({ provider, kind, status, message: String(message ?? "").slice(0, 500), at: new Date() });
+}
+
+/** Per provider: how many errors of each kind since `since`, and the latest one. */
+export async function providerErrorSummary(since) {
+  const rows = await providerErrors()
+    .aggregate([
+      { $match: { at: { $gte: since } } },
+      { $sort: { at: -1 } },
+      { $group: { _id: { provider: "$provider", kind: "$kind" }, count: { $sum: 1 }, latest: { $first: "$$ROOT" } } },
+    ])
+    .toArray();
+  const summary = {};
+  for (const { _id, count, latest } of rows) {
+    const entry = (summary[_id.provider] ??= { counts: {}, latest: null });
+    entry.counts[_id.kind] = count;
+    if (!entry.latest || latest.at > entry.latest.at) entry.latest = { kind: latest.kind, status: latest.status, message: latest.message, at: latest.at };
+  }
+  return summary;
+}
+
+/** One day's check of a provider's cost report against what the app recorded. */
+export async function saveProviderCost(provider, day, check) {
+  await providerCosts().updateOne({ _id: `${provider}:${day}` }, { $set: { provider, day, ...check, checkedAt: new Date() } }, { upsert: true });
+}
+
+/** The cost checks since `sinceDay` (`YYYY-MM-DD`), newest first. */
+export async function listProviderCosts(sinceDay) {
+  const docs = await providerCosts().find({ day: { $gte: sinceDay } }).sort({ day: -1 }).toArray();
+  return docs.map(({ _id, ...rest }) => rest);
 }
 
 /* ------------------------------------------------------------ app settings */

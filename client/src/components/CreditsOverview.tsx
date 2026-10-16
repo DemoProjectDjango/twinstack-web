@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { CLAUDE_SETUP_HREF } from "@/lib/claude";
-import { type Credits, creditsValue, formatCredits, useCredits, useCreditsFailed } from "@/lib/credits";
+import { type Credits, creditsValue, formatCredits, formatDollars, useCredits, useCreditsFailed } from "@/lib/credits";
 import { api } from "@/lib/site-api";
 import { BuyCredits } from "./BuyCredits";
 import { Button, ErrorText, Notice, Segmented, Spinner } from "./site/ui";
@@ -32,7 +32,30 @@ type UsageSummary = { credits: number; providers: Record<Provider, Tokens & { re
 
 const PROVIDER_NAMES: Record<Provider, string> = { claude: "Claude", deepseek: "DeepSeek", openai: "ChatGPT" };
 
-type Purchase = { id: string; credits: number; priceCents: number; currency: string; provider: string; status: string; createdAt: string };
+type Purchase = {
+  id: string;
+  credits: number;
+  priceCents: number;
+  currency: string;
+  provider: string;
+  status: string;
+  createdAt: string;
+  receiptUrl?: string | null;
+  refundedCredits?: number;
+};
+
+const PURCHASE_STATUS: Record<string, string> = {
+  pending: "Waiting for payment",
+  paid: "Paid",
+  failed: "Didn't go through",
+  expired: "Not completed",
+  refunded: "Refunded",
+  "part-refunded": "Partly refunded",
+  disputed: "Disputed",
+};
+
+const money = (cents: number, currency: string) =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(cents / 100);
 
 const PAGE = 25;
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -102,7 +125,8 @@ export function CreditsOverview() {
         <section className="rounded-lg border border-zinc-200 p-6 dark:border-zinc-800">
           <h2 className="text-lg font-semibold">Buy credits</h2>
           <p className="mb-4 mt-1 text-sm text-zinc-500">
-            {formatCredits(credits.purchase.step)} credits are worth {creditsValue(credits.purchase.step, credits.creditsPerDollar)} of Claude use.
+            Each {formatDollars(1)} buys {formatCredits(credits.purchase.creditsPerUsd)} credits, about{" "}
+            {creditsValue(credits.purchase.creditsPerUsd, credits.creditsPerDollar)} of Claude use.
           </p>
           <BuyCredits credits={credits} />
         </section>
@@ -370,11 +394,12 @@ function UsageRows({ items }: { items: Usage[] }) {
 
 function PurchaseRows({ items }: { items: Purchase[] }) {
   return (
-    <table className="w-full min-w-[28rem] text-sm">
+    <table className="w-full min-w-lg text-sm">
       <thead className="border-b border-zinc-200 dark:border-zinc-800">
         <tr>
           <th className={TH}>When</th>
           <th className={`${TH} text-right`}>Credits</th>
+          <th className={`${TH} text-right`}>Price</th>
           <th className={TH}>Payment</th>
         </tr>
       </thead>
@@ -382,8 +407,19 @@ function PurchaseRows({ items }: { items: Purchase[] }) {
         {items.map((p) => (
           <tr key={p.id}>
             <td className={`${TD} whitespace-nowrap text-zinc-500`}>{dateFormat.format(new Date(p.createdAt))}</td>
-            <td className={`${TD} text-right tabular-nums`}>+{formatCredits(p.credits)}</td>
-            <td className={TD}>{p.provider === "demo" ? "Demo (nothing paid)" : p.status}</td>
+            <td className={`${TD} text-right tabular-nums`}>
+              +{formatCredits(p.credits)}
+              {p.refundedCredits ? <span className="block text-xs text-zinc-500">−{formatCredits(p.refundedCredits)} taken back</span> : null}
+            </td>
+            <td className={`${TD} text-right tabular-nums`}>{p.provider === "demo" ? "—" : money(p.priceCents, p.currency)}</td>
+            <td className={TD}>
+              {p.provider === "demo" ? "Demo (nothing paid)" : (PURCHASE_STATUS[p.status] ?? p.status)}
+              {p.receiptUrl && (
+                <a href={p.receiptUrl} target="_blank" rel="noreferrer" className="ml-2 text-xs underline-offset-2 hover:underline">
+                  Receipt
+                </a>
+              )}
+            </td>
           </tr>
         ))}
       </tbody>

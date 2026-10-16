@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { config } from "../config.js";
-import { listAccessRequests, publicUser, requestAccess, setAccessStatus } from "../db.js";
+import { PURCHASE_STATUSES, listAccessRequests, listAllPurchases, publicUser, purchaseTotals, requestAccess, setAccessStatus } from "../db.js";
 import { sendEmail } from "../email.js";
 import { FastModelError, fastModelView, setFastModel } from "../fast-model.js";
 import { ImageModelError, imageModelView, setImageModel } from "../image-model.js";
+import { ProviderHealthError, checkProviderCosts, creditActivityReport, providerHealth, setProviderBalance } from "../provider-health.js";
 import { requireAuth } from "../session.js";
 import { requireJson } from "./helpers.js";
 
@@ -12,6 +13,8 @@ import { requireJson } from "./helpers.js";
 // Approving is a POST from that page, never a link in an email: mail scanners open links.
 // Admins also pick the cheaper "fast" model (DeepSeek or OpenAI) on /admin/models (fast-model.js),
 // and the image model pictures are made with (image-model.js). Both are defaults sites can override.
+// And they see every account's credit purchases on /admin/purchases, and whether the app's own
+// provider keys have the balance to keep going on /admin/providers (provider-health.js).
 
 const MAX_MESSAGE = 500;
 
@@ -108,6 +111,106 @@ adminRouter.put("/models", async (req, res) => {
     return res.status(400).json({ error: err.message });
   }
   res.json(fastModelView());
+});
+
+// Every account's credit purchases (stripe.js): `?status=&provider=stripe|demo&mode=live|test&q=`
+// narrow the list, `before` (an ISO date) and `limit` page it, newest first. The first page also has
+// the totals. /purchases.csv is the whole filtered list as a spreadsheet, for accounting.
+function purchaseFilters(query) {
+  const pick = (value, allowed) => (typeof value === "string" && allowed.includes(value) ? value : null);
+  const before = typeof query.before === "string" ? new Date(query.before) : null;
+  return {
+    status: pick(query.status, PURCHASE_STATUSES),
+    provider: pick(query.provider, ["stripe", "demo"]),
+    mode: pick(query.mode, ["live", "test"]),
+    q: typeof query.q === "string" ? query.q.slice(0, 200) : "",
+    before: before && !Number.isNaN(before.getTime()) ? before : null,
+  };
+}
+
+adminRouter.get("/purchases", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const filters = purchaseFilters(req.query);
+  const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 200);
+  const [items, totals] = await Promise.all([listAllPurchases({ ...filters, limit }), filters.before ? null : purchaseTotals()]);
+  res.json({ items, more: items.length === limit, ...(totals && { totals, purchases: config.purchases }) });
+});
+
+const CSV_COLUMNS = [
+  ["Created", (p) => p.createdAt?.toISOString()],
+  ["Paid", (p) => p.paidAt?.toISOString()],
+  ["Status", (p) => p.status],
+  ["Provider", (p) => p.provider],
+  ["Mode", (p) => (p.provider === "demo" ? "" : p.livemode ? "live" : "test")],
+  ["Buyer email", (p) => p.buyer?.email ?? p.account.email],
+  ["Buyer name", (p) => p.buyer?.name ?? p.account.name],
+  ["Account id", (p) => p.account.id],
+  ["Account email now", (p) => (p.account.deleted ? "(deleted)" : p.account.email)],
+  ["Credits", (p) => p.credits],
+  ["Credits taken back", (p) => p.refundedCredits ?? 0],
+  ["Currency", (p) => p.currency],
+  ["Price", (p) => cents(p.priceCents)],
+  ["Paid amount", (p) => cents(p.amountPaidCents)],
+  ["Stripe fee", (p) => cents(p.feeCents)],
+  ["Refunded", (p) => cents(p.refundedCents)],
+  ["Disputed", (p) => cents(p.disputedCents)],
+  ["Card", (p) => (p.card ? `${p.card.brand} ${p.card.last4}` : (p.method ?? ""))],
+  ["Card country", (p) => p.card?.country],
+  ["Stripe payment", (p) => p.paymentIntentId],
+  ["Stripe checkout", (p) => p.stripeSessionId],
+  ["Stripe customer", (p) => p.customerId],
+  ["Receipt", (p) => p.receiptUrl],
+];
+
+const cents = (n) => (typeof n === "number" ? (n / 100).toFixed(2) : "");
+// Quoted, and a leading = + - @ neutralised so a spreadsheet never runs a buyer's name as a formula.
+const csvCell = (value) => {
+  const text = value == null ? "" : String(value);
+  return `"${(/^[=+\-@]/.test(text) ? `'${text}` : text).replace(/"/g, '""')}"`;
+};
+
+adminRouter.get("/purchases.csv", async (req, res) => {
+  const items = await listAllPurchases({ ...purchaseFilters(req.query), limit: 10_000 });
+  const lines = [CSV_COLUMNS.map(([name]) => csvCell(name)), ...items.map((p) => CSV_COLUMNS.map(([, get]) => csvCell(get(p))))];
+  res.set("Cache-Control", "no-store");
+  res.attachment(`twinstack-purchases-${new Date().toISOString().slice(0, 10)}.csv`);
+  res.type("text/csv").send(`﻿${lines.map((cells) => cells.join(",")).join("\r\n")}\r\n`);
+});
+
+// The app's provider balances, spend, runway, refusals and daily cost checks. `?fresh=1` asks
+// DeepSeek for its balance again; POST /providers/check also runs the cost check now.
+adminRouter.get("/providers", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json(await providerHealth({ fresh: req.query.fresh === "1" }));
+});
+
+// `?from=YYYY-MM-DD&to=YYYY-MM-DD&tz=<IANA zone>`: credits bought and used in that range, per day,
+// per provider and per account (the AI providers page's "Credits by date").
+adminRouter.get("/providers/activity", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    res.json(await creditActivityReport({ from: req.query.from, to: req.query.to, tz: req.query.tz }));
+  } catch (err) {
+    if (!(err instanceof ProviderHealthError)) throw err;
+    res.status(400).json({ error: err.message });
+  }
+});
+
+adminRouter.post("/providers/check", async (req, res) => {
+  await checkProviderCosts();
+  res.json(await providerHealth({ fresh: true }));
+});
+
+// `{ amountUsd?, autoReload? }`: the balance read off Anthropic's or OpenAI's billing page, counted
+// down from now by what the app records.
+adminRouter.put("/providers/:provider/balance", async (req, res) => {
+  try {
+    await setProviderBalance(req.params.provider, { amountUsd: req.body?.amountUsd, autoReload: req.body?.autoReload }, req.user.email);
+  } catch (err) {
+    if (!(err instanceof ProviderHealthError)) throw err;
+    return res.status(400).json({ error: err.message });
+  }
+  res.json(await providerHealth());
 });
 
 // The image model pictures are made with (image-model.js); IMAGE_MODEL until an admin picks one.

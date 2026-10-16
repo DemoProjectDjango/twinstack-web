@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { providerOf } from "../ai-providers.js";
 import { DEEPSEEK_UPSTREAM } from "../claude-proxy.js";
 import { createMessage } from "../openai-bridge.js";
+import { noteProviderError } from "../provider-health.js";
 import { getStaticInfo } from "../static-info.js";
 import { runTool, toolInfo } from "./tools.js";
 
@@ -67,7 +68,11 @@ export async function runDetailsTurn({ key, text, model, apiKey, live, onUpdate 
             throw err;
           }
         }
-      : (params) => new Anthropic({ apiKey, baseURL: DEEPSEEK_UPSTREAM, maxRetries: 1 }).messages.create(params, { signal });
+      : (params) =>
+          new Anthropic({ apiKey, baseURL: DEEPSEEK_UPSTREAM, maxRetries: 1 }).messages.create(params, { signal }).catch((err) => {
+            if (err instanceof Anthropic.APIError && err.status) noteProviderError("deepseek", err.status, err.message);
+            throw err;
+          });
   // The layout too: an empty list shows no example of its items' fields.
   const described = sections
     .map((s) => `SECTION ${s.id} (${s.label}): ${s.description}\nFIELDS: ${JSON.stringify(s.shape)}\nDATA: ${JSON.stringify(s.data)}`)

@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { config } from "../config.js";
 import { countInputTokens } from "../credits.js";
+import { noteProviderError } from "../provider-health.js";
 import { SYSTEM_PROMPT } from "./prompt.js";
 import { TOOL_DEFINITIONS, runTool, toolInfo } from "./tools.js";
 
@@ -91,6 +93,7 @@ export async function runTurn({ client, key, model: requested, history, live, on
   try {
     await loop();
   } catch (err) {
+    if (err instanceof Anthropic.APIError && err.status && client.apiKey === config.platformAnthropicKey) noteProviderError("claude", err.status, err.message);
     // Whatever finished before the error (complete steps only) is still part of the conversation.
     err.partial = { appended: messages.slice(start), actions, usage, model, lastPrompt };
     throw err;

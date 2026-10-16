@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { config } from "../config.js";
-import { CREDITS_PER_USD, MAX_PURCHASE, PURCHASE_STEP, creditsView } from "../credits.js";
-import { addPurchasedCredits, listClaudeUsage, listCreditPurchases, usageByProvider } from "../db.js";
+import { creditsForDollars, creditsView } from "../credits.js";
+import { createPurchase, listClaudeUsage, listCreditPurchases, usageByProvider } from "../db.js";
 import { requireAuth } from "../session.js";
+import { CheckoutError, checkoutStatus, startCheckout } from "../stripe.js";
 import { handle, requireJson } from "./helpers.js";
 
 // The account's Claude credits: the balance (polled by the navbar while Claude works), buying
@@ -42,29 +43,46 @@ creditsRouter.get(
   }),
 );
 
-/**
- * `{ credits }`: a whole number of PURCHASE_STEPs. For now a demo: the credits are added straight
- * away and no payment is taken. A payment provider will create the purchase as pending here and
- * add the credits from its webhook.
- */
+/** `{ dollars }`: a demo purchase (development only). The credits are added at once and nothing is paid. */
 creditsRouter.post(
   "/purchases",
   handle(async (req, res) => {
-    if (!config.demoPurchases) return res.status(403).json({ error: "Buying credits isn't available yet." });
-    const credits = req.body?.credits;
-    if (!Number.isInteger(credits) || credits < PURCHASE_STEP || credits > MAX_PURCHASE || credits % PURCHASE_STEP !== 0) {
-      return res.status(400).json({
-        error: `Choose a multiple of ${PURCHASE_STEP.toLocaleString("en")} credits, up to ${MAX_PURCHASE.toLocaleString("en")}.`,
-      });
-    }
-    const purchase = await addPurchasedCredits({
-      userId: req.user.id,
-      credits,
-      // What the credits are worth in Claude use; nothing is charged in the demo.
-      priceCents: Math.round((credits / CREDITS_PER_USD) * 100),
-      currency: "usd",
-      provider: "demo",
-    });
+    if (config.purchases !== "demo") return res.status(403).json({ error: "Demo purchases are off." });
+    const dollars = req.body?.dollars;
+    const credits = creditsForDollars(dollars);
+    if (!credits) return res.status(400).json({ error: "Choose an amount the page offers." });
+    const purchase = await createPurchase({ userId: req.user.id, buyer: req.user, credits, priceCents: dollars * 100, currency: "usd", provider: "demo" });
     res.status(201).json({ purchase, credits: await creditsView(req.user.id) });
   }),
 );
+
+/**
+ * `{ dollars, returnTo }`: pays for credits with Stripe (stripe.js). Answers `{ url }`, the payment
+ * page to send the browser to; Stripe sends it back to `returnTo` (a path here) with
+ * `?checkout=<session id>`, or `?checkout=cancelled`.
+ */
+creditsRouter.post(
+  "/checkout",
+  handle(async (req, res) => {
+    if (config.purchases !== "stripe") return res.status(403).json({ error: "Buying credits isn't available yet." });
+    try {
+      res.status(201).json({ url: await startCheckout({ user: req.user, dollars: req.body?.dollars, returnTo: req.body?.returnTo }) });
+    } catch (err) {
+      if (err instanceof CheckoutError) return res.status(err.status).json({ error: err.message });
+      throw err;
+    }
+  }),
+);
+
+/** The purchase a Checkout Session paid for (checked with Stripe while it's pending) and the balance. */
+creditsRouter.get(
+  "/checkout/:sessionId",
+  handle(async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    const purchase = config.purchases === "stripe" ? await checkoutStatus(req.user.id, req.params.sessionId) : null;
+    if (!purchase) return res.status(404).json({ error: "That payment wasn't found." });
+    const { userId: _u, ...view } = purchase;
+    res.json({ purchase: view, credits: await creditsView(req.user.id) });
+  }),
+);
+

@@ -16,7 +16,11 @@ export type Credits = {
   /** Claude is working for this account right now. */
   active: boolean;
   creditsPerDollar: number;
-  purchase: { step: number; max: number; demo: boolean };
+  /**
+   * Buying: paid through Stripe, a demo (development only: nothing is paid) or off. Amounts are
+   * whole dollars, `stepUsd` at a time up to `maxUsd`, each buying `creditsPerUsd`.
+   */
+  purchase: { mode: "stripe" | "demo" | "off"; stepUsd: number; maxUsd: number; creditsPerUsd: number };
 };
 
 const ACTIVE_POLL_MS = 5_000;
@@ -81,6 +85,23 @@ export function formatCredits(n: number) {
 export function creditsValue(n: number, perDollar: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n / perDollar);
 }
+
+/** "$5" */
+export function formatDollars(n: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: n % 1 ? 2 : 0 }).format(n);
+}
+
+// A Stripe payment the browser just came back from (CheckoutReturn.tsx), so what's waiting on it
+// (the assistant's "Add credits to keep going") knows the credits arrived.
+export type CheckoutResult = "waiting" | "paid" | null;
+let checkout: CheckoutResult = null;
+
+export function setCheckoutResult(next: CheckoutResult) {
+  checkout = next;
+  emit();
+}
+
+export const checkoutSnapshot = () => checkout;
 
 /* What the hooks in credits.ts build on. */
 

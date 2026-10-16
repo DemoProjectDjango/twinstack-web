@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { BUY_CREDITS_HREF } from "@/lib/claude";
-import { formatCredits, useCredits } from "@/lib/credits";
+import { formatCredits, useCheckoutResult, useCredits } from "@/lib/credits";
 import { BuyCredits } from "../../BuyCredits";
 import { Button } from "../ui";
 import { useAssistant } from "./AssistantProvider";
@@ -13,12 +13,15 @@ const CARRY_ON = "I've added credits. Please carry on where you stopped.";
 /**
  * Under the note Claude stopped with for want of credits: buy more right here, then carry on with one
  * click. `short` (credits left, but not enough to pick the conversation up again) also offers a new
- * conversation, which costs much less.
+ * conversation, which costs much less. A Stripe payment leaves the page and comes back to it
+ * (CheckoutReturn.tsx), which counts as bought once it's paid.
  */
 export function OutOfCredits({ reason }: { reason: "out" | "short" }) {
   const credits = useCredits();
   const { send, startOver } = useAssistant();
-  const [bought, setBought] = useState(false);
+  const [boughtHere, setBought] = useState(false);
+  const checkout = useCheckoutResult();
+  const bought = boughtHere || checkout === "paid";
   const [busy, setBusy] = useState(false);
 
   if (!credits) return null;
@@ -43,6 +46,8 @@ export function OutOfCredits({ reason }: { reason: "out" | "short" }) {
         <Button variant="primary" disabled={busy} onClick={() => void carryOn()}>
           {busy ? "Sending…" : "Carry on"}
         </Button>
+      ) : checkout === "waiting" ? (
+        <p className="text-sm text-zinc-500">Adding the credits you paid for…</p>
       ) : (
         <BuyCredits credits={credits} compact onBought={() => setBought(true)} />
       )}

@@ -86,9 +86,33 @@ export const config = {
   // The OpenAI image model "Ask Claude" makes pictures with (images.js, create_image's prompt), on
   // OPENAI_API_KEY and paid for in credits. Unset: gpt-image-2.
   imageModel: imageModel(),
-  // Buying credits adds them at once without taking a payment, until a payment provider is set
-  // up. On by default; set CREDITS_DEMO_PURCHASES=false to turn buying off.
-  demoPurchases: process.env.CREDITS_DEMO_PURCHASES !== "false",
+  // Buying credits (stripe.js). With STRIPE_SECRET_KEY, purchases are paid through Stripe Checkout
+  // and STRIPE_WEBHOOK_SECRET verifies the payment events Stripe sends (refunds come only that way).
+  // Without a key, development keeps the demo (credits added at once, nothing paid; set
+  // CREDITS_DEMO_PURCHASES=false to turn it off) and production can't buy credits at all.
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY?.trim() || null,
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET?.trim() || null,
+  },
+  purchases: process.env.STRIPE_SECRET_KEY?.trim()
+    ? "stripe"
+    : process.env.NODE_ENV !== "production" && process.env.CREDITS_DEMO_PURCHASES !== "false"
+      ? "demo"
+      : "off",
+  // Watching the app's provider balances (provider-health.js, /admin/providers). The admin keys
+  // (Anthropic's sk-ant-admin..., OpenAI's admin key) only read each day's cost report, to check the
+  // app's recorded spend against the providers' bills. The workspace and project narrow those reports
+  // to the app's own key when the organization has other usage. Admins are emailed when a provider
+  // has fewer than PROVIDER_ALERT_DAYS days of balance left, or refuses a request for want of one.
+  providerHealth: {
+    anthropicAdminKey: process.env.ANTHROPIC_ADMIN_KEY?.trim() || null,
+    anthropicWorkspaceId: process.env.ANTHROPIC_COST_WORKSPACE_ID?.trim() || null,
+    openaiAdminKey: process.env.OPENAI_ADMIN_KEY?.trim() || null,
+    openaiProjectId: process.env.OPENAI_COST_PROJECT_ID?.trim() || null,
+    alertDays: Math.max(1, Number(process.env.PROVIDER_ALERT_DAYS) || 7),
+    // DeepSeek may report its balance in yuan only; spend is recorded in dollars.
+    cnyPerUsd: Math.max(0.01, Number(process.env.CNY_PER_USD) || 7.1),
+  },
   // The site repo users copy. Only it can be duplicated, it is never managed
   // directly, and only copies of it can be managed.
   siteTemplate: (process.env.SITE_TEMPLATE_REPO || "DemoProjectDjango/twinstack-site").toLowerCase(),

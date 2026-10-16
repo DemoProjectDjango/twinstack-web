@@ -328,8 +328,13 @@ WORKSPACES_DIR=/var/lib/twinstack/workspaces
 # The app's Anthropic key: Claude runs on it for every account without its own key, paid for
 # with the account's credits. Leave it out and only accounts with their own key can use Claude.
 PLATFORM_ANTHROPIC_KEY=sk-ant-...
-# Buying credits is a demo (credits added, nothing paid) until payments exist; false turns it off.
-CREDITS_DEMO_PURCHASES=true
+# Buying credits through Stripe Checkout. Without STRIPE_SECRET_KEY nobody can buy credits in
+# production. Create the webhook endpoint first (see "Stripe payments" below) to get its secret.
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+# Optional: check each day's spend against Anthropic's and OpenAI's own cost reports (/admin/providers).
+ANTHROPIC_ADMIN_KEY=sk-ant-admin01-...
+OPENAI_ADMIN_KEY=sk-admin-...
 ```
 
 Lock it down and create the web app's settings file:
@@ -490,6 +495,42 @@ If **Manage site** says "Only sites duplicated from … in this app can be manag
 **Duplicate** button. Duplicate the template instead, or record an existing copy on the server with
 `cd /opt/twinstack/web && npm --prefix server run record-copies -- <owner/repo>` (its owner must have connected
 GitHub in the app).
+
+---
+
+## Stripe payments
+
+Credits are bought through Stripe Checkout. In the [Stripe dashboard](https://dashboard.stripe.com):
+
+1. **Developers → API keys:** copy the secret key into `STRIPE_SECRET_KEY`. Use the test key (`sk_test_...`) until a
+   test purchase works end to end, then the live one.
+2. **Developers → Webhooks → Add endpoint:** `https://api.mydomain.com/api/stripe/webhook`, with these events:
+   `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`,
+   `checkout.session.expired`, `charge.refunded` and `charge.dispute.created`. Copy its signing secret into
+   `STRIPE_WEBHOOK_SECRET`. Test and live mode each have their own endpoint and secret.
+3. **Settings → Customer emails:** turn on emails for successful payments and refunds, so buyers get receipts.
+
+Restart the API (`pm2 restart twinstack-api`) after changing the keys. Test with card `4242 4242 4242 4242` (any future
+date and CVC), and `4000 0027 6000 3184` for a card that asks for 3-D Secure. A refund in the dashboard takes the
+credits back, stopping at a balance of zero.
+
+---
+
+## AI provider balances
+
+Everyone's Claude, DeepSeek and OpenAI requests run on the app's keys, paid from your prepaid balances. On
+**Admin → AI providers** (`/admin/providers`):
+
+1. Turn on **auto-reload** in [Anthropic's](https://platform.claude.com/settings/billing) and OpenAI's billing settings,
+   so a balance tops itself up before it runs out, then tick "Auto-reload is on" for each.
+2. Enter each one's balance (Anthropic and OpenAI don't report it) after every top-up. DeepSeek's is read automatically.
+3. Optional: create an Anthropic Admin key (Console → Settings → Admin keys) and an OpenAI admin key, and set
+   `ANTHROPIC_ADMIN_KEY` and `OPENAI_ADMIN_KEY`. Each day after 02:00 UTC the app compares its recorded spend with
+   their cost reports and emails the admins when a day differs by more than 5%. If the organization has other usage,
+   give the app's key its own workspace or project and set `ANTHROPIC_COST_WORKSPACE_ID` / `OPENAI_COST_PROJECT_ID`.
+
+Admins are emailed when a provider has under `PROVIDER_ALERT_DAYS` (7) days of balance left at the current spend, and
+at once when a provider refuses a request for want of balance or refuses the key.
 
 ---
 

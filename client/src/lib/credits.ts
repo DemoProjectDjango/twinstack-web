@@ -1,5 +1,14 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { creditsFailedSnapshot, creditsSnapshot, startFollowing, stopFollowing, subscribeCredits, type Credits } from "./credits-store";
+import {
+  checkoutSnapshot,
+  creditsFailedSnapshot,
+  creditsSnapshot,
+  startFollowing,
+  stopFollowing,
+  subscribeCredits,
+  type CheckoutResult,
+  type Credits,
+} from "./credits-store";
 
 // React hooks over the credits store (credits-store.ts). Import this only from client components;
 // code that server components may load (lib/site-api.ts) imports credits-store.ts instead.
@@ -16,6 +25,11 @@ export function useCredits(): Credits | null {
     return stopFollowing;
   }, []);
   return useSyncExternalStore(subscribeCredits, creditsSnapshot, () => null);
+}
+
+/** Where a Stripe payment the browser just came back from has got to (CheckoutReturn.tsx). */
+export function useCheckoutResult(): CheckoutResult {
+  return useSyncExternalStore(subscribeCredits, checkoutSnapshot, () => null);
 }
 
 /** True when the credits couldn't be loaded at all (e.g. a server from before credits). */

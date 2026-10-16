@@ -6,6 +6,8 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { href: "/admin/access", label: "Access requests" },
   { href: "/admin/models", label: "AI models" },
+  { href: "/admin/purchases", label: "Purchases" },
+  { href: "/admin/providers", label: "AI providers" },
 ];
 
 /** Moves between the admin pages. */

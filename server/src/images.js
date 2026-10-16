@@ -1,5 +1,6 @@
 import { config } from "./config.js";
 import { CREDITS_PER_USD, listedPrices } from "./credits.js";
+import { noteProviderError } from "./provider-health.js";
 import { sniffImage } from "./site-files.js";
 
 // Pictures "Ask Claude" makes (create_image with a prompt): photos and illustrations for pages, from
@@ -68,6 +69,7 @@ function usageOf(reply) {
 async function errorOf(res) {
   const body = await res.json().catch(() => null);
   const message = typeof body?.error?.message === "string" ? body.error.message.slice(0, 300) : null;
+  noteProviderError("openai", res.status, `${body?.error?.code ?? ""} ${message ?? ""}`);
   if (body?.error?.code === "moderation_blocked" || /safety|moderation/i.test(message ?? "")) {
     return new ImageError("OpenAI's safety checks refused this picture. Describe it differently, or tell the owner it can't be made.");
   }

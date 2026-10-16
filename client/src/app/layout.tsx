@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { CheckoutReturn } from "@/components/CheckoutReturn";
 import { Navbar } from "@/components/Navbar";
 import { Toaster } from "@/components/Toaster";
 import "./globals.css";
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <Navbar />
         {children}
         <Toaster />
+        <CheckoutReturn />
       </body>
     </html>
   );

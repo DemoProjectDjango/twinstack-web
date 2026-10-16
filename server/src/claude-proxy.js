@@ -5,6 +5,7 @@ import { config } from "./config.js";
 import { OUT_OF_CREDITS, beginSpend, countableRequest } from "./credits.js";
 import { fastModelKey } from "./fast-model.js";
 import { sendToOpenAI } from "./openai-bridge.js";
+import { noteProviderError } from "./provider-health.js";
 
 // The site's Claude scripts never see the app's Anthropic key: a copy is a repo its owner can
 // change, so its scripts could print any key they're given. Instead a Claude command run on
@@ -175,6 +176,8 @@ async function forward(req, res, body, deepseek, spend) {
   let openBlock = null;
   const json = [];
   let jsonSize = 0;
+  // A refusal's body, for provider-health.js (out of balance, rate limited, key refused…).
+  const failure = [];
   try {
     for await (const chunk of upstream.body ?? []) {
       if (!streamed) {
@@ -182,7 +185,7 @@ async function forward(req, res, body, deepseek, spend) {
         if (upstream.ok && jsonSize < MAX_JSON_REPLY_BYTES) {
           json.push(chunk);
           jsonSize += chunk.length;
-        }
+        } else if (!upstream.ok && failure.length < 8) failure.push(chunk);
         continue;
       }
       // Whole events only, so the reply can end cleanly between any two of them.
@@ -208,6 +211,7 @@ async function forward(req, res, body, deepseek, spend) {
     if (!controller.signal.aborted) console.error("Claude proxy stream failed:", err.message);
     res.destroy();
   } finally {
+    if (!upstream.ok) noteProviderError(deepseek ? "deepseek" : "claude", upstream.status, Buffer.concat(failure).toString("utf8").slice(0, 2000));
     if (json.length) {
       try {
         const message = JSON.parse(Buffer.concat(json).toString("utf8"));

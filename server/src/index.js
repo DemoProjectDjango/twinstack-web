@@ -8,6 +8,8 @@ import { authRouter } from "./routes/auth.js";
 import { collectRouter } from "./routes/analytics.js";
 import { creditsRouter } from "./routes/credits.js";
 import { startClaudeProxy } from "./claude-proxy.js";
+import { startProviderMonitor } from "./provider-health.js";
+import { stripeWebhook } from "./stripe.js";
 import { loadFastModelChoice } from "./fast-model.js";
 import { loadImageModelChoice } from "./image-model.js";
 import { previewRouter } from "./routes/preview.js";
@@ -24,6 +26,8 @@ app.disable("x-powered-by");
 app.set("trust proxy", 1);
 // Default 100kb JSON bodies everywhere except image uploads, HTML pages to
 // convert (with their CSS) and saved stylesheets, which parse their own.
+// Stripe signs the exact bytes it sends, so its webhook takes the raw body, before JSON parsing.
+app.post("/api/stripe/webhook", express.raw({ type: "application/json", limit: "1mb" }), stripeWebhook);
 const json = express.json();
 const UPLOAD_PATH = /^\/api\/workspaces\/[^/]+\/[^/]+\/(uploads|html-source|css\/source|brand\/image|assistant\/attachments)$/;
 app.use((req, res, next) => (UPLOAD_PATH.test(req.path) ? next() : json(req, res, next)));
@@ -139,6 +143,8 @@ await loadImageModelChoice();
 console.log(`Connected to MongoDB (${config.mongo.dbName})`);
 // Claude commands run on credits reach Claude only through it.
 await startClaudeProxy();
+// Watches the app's provider balances and emails the admins before one runs out.
+startProviderMonitor();
 if (!config.platformAnthropicKey) console.log("PLATFORM_ANTHROPIC_KEY isn't set: only accounts with their own Anthropic key can use Claude.");
 
 app.listen(config.port, config.host, () => {

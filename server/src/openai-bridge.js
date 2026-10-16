@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { config } from "./config.js";
+import { noteProviderError } from "./provider-health.js";
 
 // OpenAI (ChatGPT) models behind Claude's Messages API. The site's scripts and the assistant's site
 // details shortcut send every request in Claude's format; DeepSeek takes that format as it is, but
@@ -225,6 +227,7 @@ export async function sendToOpenAI(request, { apiKey, signal }) {
   const headers = retryAfter ? { "retry-after": retryAfter } : {};
   if (!upstream.ok) {
     const payload = await upstream.json().catch(() => null);
+    if (apiKey === config.openaiKey) noteProviderError("openai", upstream.status, `${payload?.error?.code ?? ""} ${payload?.error?.message ?? ""}`);
     return { ...toError(upstream.status, payload), headers };
   }
   if (body.stream) return { status: 200, events: toClaudeEvents(upstream.body, request.model), headers };

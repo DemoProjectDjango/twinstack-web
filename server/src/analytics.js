@@ -14,6 +14,7 @@ import {
   updateSiteAnalytics,
 } from "./db.js";
 import { getPublishedHosts } from "./publishing.js";
+import { DAY, HOUR, addDays, dayStartOf, localDate, offsetAt, startOfDay, zoneOf } from "./zoned-days.js";
 import { WorkspaceError, acquire, workspaceDir } from "./workspace.js";
 
 // Visit counting for published sites, seen only by the site's creator.
@@ -342,56 +343,8 @@ export async function deleteAnalyticsData({ siteId, userId }) {
 
 // Days and weeks are the owner's own (their browser's time zone, `tz`), so "today" starts at their
 // midnight (see periodOf for the ranges).
-const HOUR = 60 * 60 * 1000;
-const DAY = 24 * HOUR;
 const TOP = 20;
 const MAX_FILTERED_VISITORS = 200_000;
-
-/** The owner's time zone when it's a real IANA name, else UTC. */
-function zoneOf(tz) {
-  if (typeof tz !== "string" || !tz || tz.length > 64) return "UTC";
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz });
-    return tz;
-  } catch {
-    return "UTC";
-  }
-}
-
-/** How far `zone` is ahead of UTC at `instant`, in milliseconds. */
-function offsetAt(zone, instant) {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" })
-      .formatToParts(new Date(instant))
-      .map((p) => [p.type, Number(p.value)]),
-  );
-  const asUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
-  return asUtc - Math.floor(instant / 1000) * 1000;
-}
-
-/** Midnight in `zone` of the day `instant` falls on, as a UTC instant. */
-function startOfDay(zone, instant) {
-  const local = new Date(instant + offsetAt(zone, instant));
-  const midnight = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate());
-  // The offset at midnight itself, which differs on the night the clocks change.
-  return midnight - offsetAt(zone, midnight - offsetAt(zone, instant));
-}
-
-/** Midnight `days` days after the midnight `dayStart` (going via noon keeps clock changes out). */
-const addDays = (zone, dayStart, days) => startOfDay(zone, dayStart + days * DAY + 12 * HOUR);
-
-/** The local date ("2026-10-16") a UTC instant falls on in `zone`. */
-const localDate = (zone, instant) => new Date(instant + offsetAt(zone, instant)).toISOString().slice(0, 10);
-
-/** Midnight in `zone` at the start of a local date ("2026-10-16"), or null if it isn't one. */
-function dayStartOf(zone, date) {
-  const match = typeof date === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-  if (!match) return null;
-  const noonUtc = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
-  if (Number.isNaN(noonUtc) || new Date(noonUtc).toISOString().slice(0, 10) !== date) return null;
-  // Noon on that date in `zone`, then back to its midnight.
-  return startOfDay(zone, noonUtc - offsetAt(zone, noonUtc));
-}
 
 // The ranges the dashboard offers. "custom" takes `from` and `to` (local dates, both included).
 export const PRESETS = ["today", "yesterday", "7", "30", "90", "365", "month", "lastmonth", "custom"];

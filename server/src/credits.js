@@ -4,7 +4,8 @@ import { getAnthropicKey, getCredits, recordClaudeUsage } from "./db.js";
 // Claude credits. Claude runs on the app's key (PLATFORM_ANTHROPIC_KEY) for every account without
 // a key of its own, and each request costs credits worked out from what Anthropic charges for it:
 // 1 credit = $0.0001, so the 10,000 every account starts with (FREE_CREDITS in db.js) are $1 of
-// Claude use. Credits are bought 1,000 at a time.
+// Claude use. Credits are bought in whole PAID_STEP_USD amounts (stripe.js), at
+// CREDITS_PER_PAID_USD: less than CREDITS_PER_USD, so the payment fee is covered.
 
 // Accounts' own Anthropic keys, turned off: everyone uses the app's key through credits. Keys saved
 // before stay stored but unused. Set to true to let an account use its own key again (never charged,
@@ -12,8 +13,17 @@ import { getAnthropicKey, getCredits, recordClaudeUsage } from "./db.js";
 export const OWN_KEYS = false;
 
 export const CREDITS_PER_USD = 10_000;
-export const PURCHASE_STEP = 1_000;
-export const MAX_PURCHASE = 100_000;
+// Stripe takes about 2.9% + 30¢ a payment; 10% off the credits covers that from $5 up. Stripe's own
+// minimum charge is 50¢.
+export const CREDITS_PER_PAID_USD = 9_000;
+export const PAID_STEP_USD = 5;
+export const MAX_PAID_USD = 500;
+
+/** The credits `dollars` buys, or null when it isn't a whole number of steps within the limits. */
+export function creditsForDollars(dollars) {
+  if (!Number.isInteger(dollars) || dollars < PAID_STEP_USD || dollars > MAX_PAID_USD || dollars % PAID_STEP_USD !== 0) return null;
+  return dollars * CREDITS_PER_PAID_USD;
+}
 
 // Dollars per million tokens. A cache write costs 1.25x input (2x for the 1-hour cache), and a web
 // search $0.01. A model not listed here (an older copy's own choice) is charged at UNKNOWN_PRICE,
@@ -438,6 +448,7 @@ export async function creditsView(userId) {
     source,
     active: isClaudeActive(userId),
     creditsPerDollar: CREDITS_PER_USD,
-    purchase: { step: PURCHASE_STEP, max: MAX_PURCHASE, demo: config.demoPurchases },
+    // Amounts are whole dollars: `stepUsd` at a time, up to `maxUsd`, each buying `creditsPerUsd`.
+    purchase: { mode: config.purchases, stepUsd: PAID_STEP_USD, maxUsd: MAX_PAID_USD, creditsPerUsd: CREDITS_PER_PAID_USD },
   };
 }

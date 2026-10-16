@@ -8,6 +8,7 @@ import { anthropicClient } from "./assistant/turn.js";
 import { jobEnv, npmCli } from "./commands.js";
 import { config } from "./config.js";
 import { countInputTokens } from "./credits.js";
+import { noteProviderError } from "./provider-health.js";
 import { GIT_TIMEOUT_MS } from "./duplicate.js";
 import { githubFetch } from "./github.js";
 import { appTokenError } from "./sites.js";
@@ -279,6 +280,7 @@ async function mergeWithClaude(client, model, conflict, beginSpend) {
     try {
       message = await stream.finalMessage();
     } catch (err) {
+      if (err?.status && client.apiKey === config.platformAnthropicKey) noteProviderError("claude", err.status, err.message);
       throw spend.stopped ? new Error(outOfCredits) : err;
     }
   } finally {
