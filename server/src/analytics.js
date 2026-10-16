@@ -340,9 +340,125 @@ export async function deleteAnalyticsData({ siteId, userId }) {
 
 /* ---------------------------------------------------------------- reports */
 
-export const RANGES = [7, 30, 90, 365];
-const DAY = 24 * 60 * 60 * 1000;
+// Days and weeks are the owner's own (their browser's time zone, `tz`), so "today" starts at their
+// midnight (see periodOf for the ranges).
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 const TOP = 20;
+const MAX_FILTERED_VISITORS = 200_000;
+
+/** The owner's time zone when it's a real IANA name, else UTC. */
+function zoneOf(tz) {
+  if (typeof tz !== "string" || !tz || tz.length > 64) return "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return tz;
+  } catch {
+    return "UTC";
+  }
+}
+
+/** How far `zone` is ahead of UTC at `instant`, in milliseconds. */
+function offsetAt(zone, instant) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" })
+      .formatToParts(new Date(instant))
+      .map((p) => [p.type, Number(p.value)]),
+  );
+  const asUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  return asUtc - Math.floor(instant / 1000) * 1000;
+}
+
+/** Midnight in `zone` of the day `instant` falls on, as a UTC instant. */
+function startOfDay(zone, instant) {
+  const local = new Date(instant + offsetAt(zone, instant));
+  const midnight = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate());
+  // The offset at midnight itself, which differs on the night the clocks change.
+  return midnight - offsetAt(zone, midnight - offsetAt(zone, instant));
+}
+
+/** Midnight `days` days after the midnight `dayStart` (going via noon keeps clock changes out). */
+const addDays = (zone, dayStart, days) => startOfDay(zone, dayStart + days * DAY + 12 * HOUR);
+
+/** The local date ("2026-10-16") a UTC instant falls on in `zone`. */
+const localDate = (zone, instant) => new Date(instant + offsetAt(zone, instant)).toISOString().slice(0, 10);
+
+/** Midnight in `zone` at the start of a local date ("2026-10-16"), or null if it isn't one. */
+function dayStartOf(zone, date) {
+  const match = typeof date === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) return null;
+  const noonUtc = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+  if (Number.isNaN(noonUtc) || new Date(noonUtc).toISOString().slice(0, 10) !== date) return null;
+  // Noon on that date in `zone`, then back to its midnight.
+  return startOfDay(zone, noonUtc - offsetAt(zone, noonUtc));
+}
+
+// The ranges the dashboard offers. "custom" takes `from` and `to` (local dates, both included).
+export const PRESETS = ["today", "yesterday", "7", "30", "90", "365", "month", "lastmonth", "custom"];
+const MAX_DAYS = 366;
+
+/**
+ * The period a report covers, in the owner's zone: `from` (inclusive) to `to` (exclusive, never
+ * after now), the buckets it's shown in, and the period before it of the same length. One day is
+ * shown by hour, up to 62 days by day, anything longer by week (Monday first).
+ */
+function periodOf({ range, from: fromDate, to: toDate } = {}, zone, now = Date.now()) {
+  const today = startOfDay(zone, now);
+  const tomorrow = addDays(zone, today, 1);
+  // "1" was today before presets had names.
+  const preset = range === "1" ? "today" : PRESETS.includes(range) ? range : "30";
+  let start;
+  let end;
+  if (preset === "today") [start, end] = [today, tomorrow];
+  else if (preset === "yesterday") [start, end] = [addDays(zone, today, -1), today];
+  else if (preset === "month" || preset === "lastmonth") {
+    const thisMonth = dayStartOf(zone, `${localDate(zone, today).slice(0, 7)}-01`);
+    start = preset === "month" ? thisMonth : dayStartOf(zone, `${localDate(zone, thisMonth - DAY).slice(0, 7)}-01`);
+    end = preset === "month" ? tomorrow : thisMonth;
+  } else if (preset === "custom") {
+    start = dayStartOf(zone, fromDate);
+    const last = dayStartOf(zone, toDate);
+    if (start === null || last === null) throw new WorkspaceError("Choose a start and an end date.", 400);
+    if (start > last) throw new WorkspaceError("The start date must be on or before the end date.", 400);
+    if (last > today) throw new WorkspaceError("The end date can't be after today.", 400);
+    end = addDays(zone, last, 1);
+  } else {
+    start = addDays(zone, today, -(Number(preset) - 1));
+    end = tomorrow;
+  }
+
+  const days = Math.round((end - start) / DAY);
+  if (days > MAX_DAYS) throw new WorkspaceError(`Choose at most ${MAX_DAYS} days.`, 400);
+  const to = Math.min(end, now);
+  // Today is compared with yesterday up to the same time; anything else with the same number of days before it.
+  const previous = days === 1 && end > now ? { previousFrom: start - DAY, previousTo: now - DAY } : { previousFrom: addDays(zone, start, -days), previousTo: start };
+  const info = { preset, days, first: localDate(zone, start), last: localDate(zone, end - 1), current: end > now };
+
+  if (days === 1) {
+    const buckets = Array.from({ length: 24 }, (_, h) => start + h * HOUR);
+    return { unit: "hour", from: start, to, ...previous, buckets, info };
+  }
+  if (days <= 62) {
+    return { unit: "day", from: start, to, ...previous, buckets: Array.from({ length: days }, (_, i) => addDays(zone, start, i)), info };
+  }
+  // Weeks start on Monday: the first one may begin before the period does.
+  const weekday = (new Date(start + offsetAt(zone, start)).getUTCDay() + 6) % 7;
+  const buckets = [];
+  for (let week = addDays(zone, start, -weekday); week < to; week = addDays(zone, week, 7)) buckets.push(week);
+  return { unit: "week", from: start, to, ...previous, buckets, info };
+}
+
+const FILTER_FIELDS = ["page", "source", "device", "browser", "os", "zone"];
+
+/** The dashboard's filters from a query: { page: "/about.html", source: "Google", … }. */
+export function filtersOf(query = {}) {
+  const filters = {};
+  for (const field of FILTER_FIELDS) {
+    const value = typeof query[field] === "string" ? query[field].trim().slice(0, 300) : "";
+    if (value) filters[field] = value;
+  }
+  return filters;
+}
 
 const top = (by, value, limit = TOP) => [
   { $group: { _id: by, value } },
@@ -350,7 +466,8 @@ const top = (by, value, limit = TOP) => [
   { $limit: limit },
 ];
 
-// One row per visitor (a visitor is one person on one day): where they came in, and how.
+// One row per visitor (a visitor is one person on one day): where they came in, and how. Page
+// views after the first have no outside referrer, so where a visitor came from is their first one's.
 const ENTRIES = [
   { $sort: { at: 1 } },
   {
@@ -364,16 +481,37 @@ const ENTRIES = [
       browser: { $first: "$browser" },
       os: { $first: "$os" },
       zone: { $first: "$zone" },
+      paths: { $addToSet: "$path" },
       pageviews: { $sum: 1 },
     },
   },
 ];
 
+const VIEWS = { $match: { type: "pageview", notFound: { $ne: true } } };
 const rows = (list, name = "name") => list.map((row) => ({ [name]: row._id ?? "Unknown", count: row.value }));
 
-async function totals(siteId, from, to) {
+/**
+ * The visitors the filters pick (null: no filters, so everyone): those who opened `page`, and
+ * whose visit came from `source`, on that `device`, `browser`, `os` and `zone`. Every part of the
+ * report is then about those visitors only.
+ */
+async function filteredVisitors(siteId, from, to, filters) {
+  if (!Object.keys(filters).length) return null;
+  const match = {};
+  if (filters.page) match.paths = filters.page;
+  for (const field of ["source", "device", "browser", "os", "zone"]) {
+    if (filters[field]) match[field] = filters[field] === "Unknown" ? null : filters[field];
+  }
+  const list = await aggregateAnalytics(siteId, from, to, [VIEWS, ...ENTRIES, { $match: match }, { $limit: MAX_FILTERED_VISITORS }, { $project: { _id: 1 } }]);
+  return list.map((row) => row._id);
+}
+
+const onlyVisitors = (visitors) => (visitors ? [{ $match: { visitor: { $in: visitors } } }] : []);
+
+async function totals(siteId, from, to, visitors) {
   const [row] = await aggregateAnalytics(siteId, from, to, [
-    { $match: { type: "pageview", notFound: { $ne: true } } },
+    ...onlyVisitors(visitors),
+    VIEWS,
     { $group: { _id: "$visitor", pageviews: { $sum: 1 } } },
     { $group: { _id: null, visitors: { $sum: 1 }, pageviews: { $sum: "$pageviews" }, single: { $sum: { $cond: [{ $eq: ["$pageviews", 1] }, 1, 0] } } } },
   ]);
@@ -385,26 +523,39 @@ async function totals(siteId, from, to) {
   };
 }
 
-/** The dashboard for the last `days` days (ending now), with the period before it for comparison. */
-export async function analyticsReport({ siteId, userId, days }) {
+/**
+ * The dashboard for `span` ({ range: a PRESETS id, from, to } for "custom") in the owner's time zone
+ * `tz`, with the period before it for comparison, narrowed to the visitors `filters` pick.
+ */
+export async function analyticsReport({ siteId, userId, span = {}, tz, filters = {} }) {
   await ownedSite(siteId, userId);
-  const range = RANGES.includes(Number(days)) ? Number(days) : 30;
-  const now = new Date();
-  const todayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const from = new Date(todayStart - (range - 1) * DAY);
-  const to = now;
-  const previousFrom = new Date(from.getTime() - range * DAY);
+  const zone = zoneOf(tz);
+  const period = periodOf(span, zone);
+  const from = new Date(period.from);
+  const to = new Date(period.to);
+  const previousFrom = new Date(period.previousFrom);
+  const previousTo = new Date(period.previousTo);
+  const [visitors, previousVisitors] = await Promise.all([
+    filteredVisitors(siteId, from, to, filters),
+    filteredVisitors(siteId, previousFrom, previousTo, filters),
+  ]);
 
-  const views = { $match: { type: "pageview", notFound: { $ne: true } } };
+  const views = VIEWS;
   const [[facets], current, previous] = await Promise.all([
     aggregateAnalytics(siteId, from, to, [
+      ...onlyVisitors(visitors),
       {
         $facet: {
           series: [
             views,
-            { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$at" } }, pageviews: { $sum: 1 }, visitors: { $addToSet: "$visitor" } } },
+            {
+              $group: {
+                _id: { $dateTrunc: { date: "$at", unit: period.unit, timezone: zone, ...(period.unit === "week" && { startOfWeek: "monday" }) } },
+                pageviews: { $sum: 1 },
+                visitors: { $addToSet: "$visitor" },
+              },
+            },
             { $project: { pageviews: 1, visitors: { $size: "$visitors" } } },
-            { $sort: { _id: 1 } },
           ],
           pages: [
             views,
@@ -436,21 +587,30 @@ export async function analyticsReport({ siteId, userId, days }) {
         },
       },
     ]),
-    totals(siteId, from, to),
-    totals(siteId, previousFrom, from),
+    totals(siteId, from, to, visitors),
+    totals(siteId, previousFrom, previousTo, previousVisitors),
   ]);
 
-  // Every day in the range, with the empty ones.
-  const byDay = new Map(facets.series.map((d) => [d._id, d]));
-  const series = Array.from({ length: range }, (_, i) => {
-    const date = utcDay(new Date(from.getTime() + i * DAY));
-    const day = byDay.get(date);
-    return { date, visitors: day?.visitors ?? 0, pageviews: day?.pageviews ?? 0 };
+  // Every bucket in the range (hour, day or week), with the empty ones.
+  const byStart = new Map(facets.series.map((bucket) => [new Date(bucket._id).getTime(), bucket]));
+  const series = period.buckets.map((start, i) => {
+    const bucket = byStart.get(start);
+    return {
+      start: new Date(start).toISOString(),
+      date: localDate(zone, start),
+      ...(period.unit === "hour" && { hour: i }),
+      visitors: bucket?.visitors ?? 0,
+      pageviews: bucket?.pageviews ?? 0,
+    };
   });
 
   const clicksByPage = new Map(facets.clicksByPage.map((row) => [row._id, row.value]));
   return {
-    range,
+    // The preset, how many days, the first and last day (local dates), and whether it runs to now.
+    period: period.info,
+    unit: period.unit,
+    zone,
+    filters,
     from: from.toISOString(),
     to: to.toISOString(),
     totals: current,
@@ -474,14 +634,81 @@ export async function analyticsReport({ siteId, userId, days }) {
   };
 }
 
+const LIVE_WINDOW = 30 * 60 * 1000;
+
+/** Who's on the site now: visitors and page views in the last 30 minutes, and the latest visit. */
+export async function analyticsLive({ siteId, userId }) {
+  await ownedSite(siteId, userId);
+  const now = new Date();
+  const [[recent], [last]] = await Promise.all([
+    aggregateAnalytics(siteId, new Date(now.getTime() - LIVE_WINDOW), now, [
+      VIEWS,
+      { $group: { _id: null, pageviews: { $sum: 1 }, visitors: { $addToSet: "$visitor" } } },
+      { $project: { pageviews: 1, visitors: { $size: "$visitors" } } },
+    ]),
+    aggregateAnalytics(siteId, new Date(now.getTime() - ANALYTICS_RETENTION_DAYS * DAY), now, [
+      { $match: { type: "pageview" } },
+      { $sort: { at: -1 } },
+      { $limit: 1 },
+      { $project: { _id: 0, at: 1, path: 1, notFound: 1 } },
+    ]),
+  ]);
+  return {
+    minutes: LIVE_WINDOW / 60_000,
+    visitors: recent?.visitors ?? 0,
+    pageviews: recent?.pageviews ?? 0,
+    last: last ? { at: last.at, path: last.path, notFound: last.notFound === true } : null,
+  };
+}
+
+const MAX_EXPORT_ROWS = 200_000;
+
+/**
+ * Every page view and click of the period (with the filters), oldest first, one plain row each
+ * with nothing that tells visitors apart: for the full-report downloads (analytics-export.js).
+ * `truncated` says the period had more than MAX_EXPORT_ROWS.
+ */
+export async function analyticsVisits({ siteId, userId, span = {}, tz, filters = {} }) {
+  await ownedSite(siteId, userId);
+  const period = periodOf(span, zoneOf(tz));
+  const from = new Date(period.from);
+  const to = new Date(period.to);
+  const visitors = await filteredVisitors(siteId, from, to, filters);
+  const events = await aggregateAnalytics(siteId, from, to, [
+    ...onlyVisitors(visitors),
+    { $sort: { at: 1 } },
+    { $limit: MAX_EXPORT_ROWS + 1 },
+    { $project: { _id: 0, siteId: 0, visitor: 0 } },
+  ]);
+  const rows = events.slice(0, MAX_EXPORT_ROWS).map((e) => ({
+    time: e.at.toISOString(),
+    type: e.type,
+    page: e.path,
+    missingPage: e.notFound === true,
+    source: e.source ?? null,
+    channel: e.channel ?? null,
+    referrer: e.referrer ?? null,
+    utmSource: e.utm?.source ?? null,
+    utmMedium: e.utm?.medium ?? null,
+    utmCampaign: e.utm?.campaign ?? null,
+    device: e.device ?? null,
+    browser: e.browser ?? null,
+    system: e.os ?? null,
+    timeZone: e.zone ?? null,
+    click: e.kind ?? null,
+    clickTarget: e.target ?? null,
+  }));
+  return { rows, truncated: events.length > MAX_EXPORT_ROWS };
+}
+
 /** A short plain-text summary of the last 30 days, for "Ask Claude" (read_analytics). */
 export async function analyticsSummary({ siteId, userId, days = 30 }) {
   const site = await ownedSite(siteId, userId);
   if (!site.analytics?.key) return "Visit counting isn't turned on for this site (the owner can turn it on on the Analytics screen).";
-  const report = await analyticsReport({ siteId, userId, days });
+  const report = await analyticsReport({ siteId, userId, span: { range: Number(days) === 1 ? "today" : String(days) } });
   const list = (items, show) => (items.length ? items.slice(0, 10).map(show).join("\n") : "  (none)");
   return [
-    `Visits in the last ${report.range} days (a visitor is one person on one day; the period before in brackets):`,
+    `Visits ${report.period.days === 1 ? "today (UTC)" : `in the last ${report.period.days} days`} (a visitor is one person on one day; the period before in brackets):`,
     `  visitors ${report.totals.visitors} (${report.previous.visitors}), page views ${report.totals.pageviews} (${report.previous.pageviews}), saw only one page ${report.totals.singlePage}`,
     "Most viewed pages (views, visitors, outside-link clicks):",
     list(report.pages, (p) => `  ${p.path}: ${p.pageviews}, ${p.visitors}, ${p.clicks}`),

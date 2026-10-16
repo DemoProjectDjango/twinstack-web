@@ -550,13 +550,30 @@ export type AnalyticsSettings = {
 export type AnalyticsRow = { name: string; count: number };
 export type AnalyticsTotals = { visitors: number; pageviews: number; singlePage: number };
 
+/** Narrows the whole report to the visitors who opened `page` and came from `source`, on that device, browser, system and time zone. */
+export type AnalyticsFilterField = "page" | "source" | "device" | "browser" | "os" | "zone";
+export type AnalyticsFilters = Partial<Record<AnalyticsFilterField, string>>;
+
+/** Visitors and page views in the last `minutes`, and the latest visit (GET …/analytics/live). */
+export type AnalyticsLive = { minutes: number; visitors: number; pageviews: number; last: { at: string; path: string; notFound: boolean } | null };
+
 export type AnalyticsReport = {
-  range: number;
+  /**
+   * The period: its preset ("today", "yesterday", "7", "30", "90", "365", "month", "lastmonth" or
+   * "custom"), how many days, its first and last day (local dates) and whether it runs to now.
+   */
+  period: { preset: string; days: number; first: string; last: string; current: boolean };
+  /** How `series` is grouped: by hour today, by day for 7 and 30 days, by week (from Monday) after that. */
+  unit: "hour" | "day" | "week";
+  /** The time zone days and hours are in (the owner's). */
+  zone: string;
+  filters: AnalyticsFilters;
   from: string;
   to: string;
   totals: AnalyticsTotals;
   previous: AnalyticsTotals;
-  series: { date: string; visitors: number; pageviews: number }[];
+  /** Every bucket of the period: `start` (an instant), its local `date`, and `hour` (0–23) today. */
+  series: { start: string; date: string; hour?: number; visitors: number; pageviews: number }[];
   pages: { path: string; pageviews: number; visitors: number; clicks: number }[];
   entries: { path: string; count: number }[];
   sources: { name: string; channel: "direct" | "search" | "social" | "ai" | "campaign" | "other"; count: number }[];

@@ -1,15 +1,22 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import express, { Router } from "express";
 import {
+  analyticsLive,
   analyticsReport,
   analyticsSettings,
+  analyticsVisits,
   collect,
   deleteAnalyticsData,
   disableAnalytics,
   enableAnalytics,
+  filtersOf,
   isSiteCreator,
 } from "../analytics.js";
+import { EXPORT_FORMATS, exportFileName, exportReport } from "../analytics-export.js";
+import { sitePages } from "../navigation.js";
 import { getAccessToken } from "../github.js";
-import { WorkspaceError, siteIdFor } from "../workspace.js";
+import { WorkspaceError, siteIdFor, workspaceDir } from "../workspace.js";
 import { handle, keyFor } from "./helpers.js";
 
 // Visit counting (analytics.js). Two routers:
@@ -46,15 +53,65 @@ analyticsRouter.get(
   }),
 );
 
+/** The period and filters a request asks for: ?range=<preset>&from=&to=&tz=, plus page, source, device… */
+const reportQuery = (req) => ({
+  span: { range: req.query.range, from: req.query.from, to: req.query.to },
+  tz: req.query.tz,
+  filters: filtersOf(req.query),
+});
+
 analyticsRouter.get(
   "/",
   handle(async (req, res) => {
     const ctx = await context(req, res);
     const settings = await analyticsSettings(ctx);
-    const report = settings.hasData ? await analyticsReport({ ...ctx, days: req.query.range }) : null;
+    const report = settings.hasData ? await analyticsReport({ ...ctx, ...reportQuery(req) }) : null;
     res.json({ settings, report });
   }),
 );
+
+// Visitors in the last 30 minutes and the latest visit, which the screen polls while it's open.
+analyticsRouter.get(
+  "/live",
+  handle(async (req, res) => res.json(await analyticsLive(await context(req, res)))),
+);
+
+// "Download full report": the period and filters on screen (same query as GET /) as
+// ?format=xlsx (a summary sheet and a sheet per table), pdf (a printable report), csv (one file,
+// the tables one after another) or json. All but the PDF include every visit (analytics-export.js).
+analyticsRouter.get(
+  "/export",
+  handle(async (req, res) => {
+    const ctx = await context(req, res);
+    const format = Object.hasOwn(EXPORT_FORMATS, req.query.format) ? req.query.format : "xlsx";
+    const query = reportQuery(req);
+    const [report, visits, site] = await Promise.all([analyticsReport({ ...ctx, ...query }), analyticsVisits({ ...ctx, ...query }), siteInfo(ctx.key, req.params.repo)]);
+    const file = await exportReport(format, { siteName: site.name, report, visits, titles: site.titles });
+    const { extension, type } = EXPORT_FORMATS[format];
+    const name = `${exportFileName(site.name, report.period)}.${extension}`;
+    res
+      .set({ "Content-Type": type, "Content-Disposition": `attachment; filename="${name}"`, "Content-Length": String(file.length), "Cache-Control": "no-store" })
+      .send(file);
+  }),
+);
+
+/** The site's own name (site.config.json → name, else the repo's) and its pages' titles by address. */
+async function siteInfo(key, repo) {
+  const dir = workspaceDir(key);
+  let config = {};
+  try {
+    config = JSON.parse(await readFile(path.join(dir, "site.config.json"), "utf8"));
+  } catch {
+    // Unreadable settings: the repo's name, and addresses without titles.
+  }
+  const titles = new Map();
+  for (const page of await sitePages(dir, config).catch(() => [])) {
+    // The way the counter records addresses: /x/index.html is /x/.
+    if (page.url && page.title) titles.set(page.url.replace(/\/index\.html$/, "/"), page.title);
+  }
+  const name = typeof config.name === "string" && config.name.trim() ? config.name.trim() : repo;
+  return { name, titles };
+}
 
 analyticsRouter.post(
   "/enable",

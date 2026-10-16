@@ -135,7 +135,7 @@ const TOOLS = [
   tool(
     "read_analytics",
     "How many people visit the published site and what they do, from the site's own visit counter (no cookies; a visitor is one person on one day): visitors and page views against the period before, the most viewed pages and the pages people arrive on, where visitors come from (search engines, social sites, campaigns), devices, missing pages visitors tried to open (404s) and clicks on phone, email, WhatsApp and outside links. Only the site's creator can see it. Use it to suggest what to improve first, for example making a missing page people look for, or improving a busy page few people stay on.",
-    { days: { type: "integer", enum: [7, 30, 90, 365], description: "Optional: how many days back (default 30)." } },
+    { days: { type: "integer", enum: [1, 7, 30, 90, 365], description: "Optional: how many days back, 1 for today (default 30)." } },
     [],
     { kind: "read", activity: () => "Checking your site's visits" },
   ),
