@@ -6,9 +6,13 @@ import { findUserById, githubTokenOf, publicUser } from "./db.js";
 // holding its id. Everything else, including the GitHub token, is loaded from
 // MongoDB on each request, so signing out or in again never loses a
 // connected GitHub account or a saved Anthropic key.
+//
+// It also holds the account's sessionVersion from when it was made (sv). Raising
+// users.sessionVersion (bumpSessionVersion) makes every older cookie stale, which is
+// how "sign out other devices" works. Cookies from before sv count as version 0.
 
-async function encryptSession(uid) {
-  return new EncryptJWT({ uid })
+async function encryptSession(uid, sv) {
+  return new EncryptJWT({ uid, sv })
     .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
     .setSubject(uid)
     .setIssuedAt()
@@ -23,7 +27,8 @@ async function decryptSession(token) {
       contentEncryptionAlgorithms: ["A256GCM"],
     });
     // Cookies from before accounts existed carry no uid: treated as signed out.
-    return typeof payload.uid === "string" ? { uid: payload.uid } : null;
+    if (typeof payload.uid !== "string") return null;
+    return { uid: payload.uid, sv: Number.isInteger(payload.sv) ? payload.sv : 0 };
   } catch {
     return null;
   }
@@ -46,8 +51,17 @@ export async function readSession(req) {
   return token ? decryptSession(token) : null;
 }
 
-export async function setSession(res, uid) {
-  res.cookie(config.sessionCookie, await encryptSession(uid), cookieOptions(config.sessionMaxAgeSeconds));
+/** Signs this browser in, at the account's current sessionVersion. */
+export async function setSession(res, uid, sessionVersion = 0) {
+  res.cookie(config.sessionCookie, await encryptSession(uid, sessionVersion), cookieOptions(config.sessionMaxAgeSeconds));
+}
+
+/** The signed-in account, or null: no cookie, a bad one, or one older than the account's last "sign out other devices". */
+export async function sessionAccount(req) {
+  const session = await readSession(req);
+  const account = session ? await findUserById(session.uid) : null;
+  if (!account || (account.sessionVersion ?? 0) !== session.sv) return null;
+  return account;
 }
 
 export function clearSession(res) {
@@ -60,10 +74,9 @@ export function clearSession(res) {
  *   req.githubAuth  the decrypted GitHub token, or null when not connected
  */
 export async function requireAuth(req, res, next) {
-  const session = await readSession(req);
-  const account = session ? await findUserById(session.uid) : null;
+  const account = await sessionAccount(req);
   if (!account) {
-    if (session) clearSession(res);
+    if (req.cookies?.[config.sessionCookie]) clearSession(res);
     return res.status(401).json({ error: "Not authenticated" });
   }
   req.user = publicUser(account);

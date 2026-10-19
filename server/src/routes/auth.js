@@ -1,25 +1,27 @@
-import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { Router } from "express";
 import { config } from "../config.js";
 import {
   DuplicateEmailError,
   GithubInUseError,
+  bumpSessionVersion,
   createUser,
-  deletePendingSignup,
-  findPendingSignup,
+  deleteCodeRecord,
+  findCodeRecord,
   findUserByEmail,
-  findUserById,
   linkGithub,
   publicUser,
   recordLogin,
-  recordSignupAttempt,
-  savePendingSignup,
+  recordWrongCode,
+  saveCodeRecord,
+  setPassword,
   unlinkGithub,
 } from "../db.js";
 import { sendEmail } from "../email.js";
+import { CODE_RESEND_MS, checkCode, newCode, readCodeAttempt, sendRefusal } from "../email-codes.js";
 import { exchangeCode, githubFetch } from "../github.js";
 import { PASSWORD_MAX, PASSWORD_MIN, hashPassword, verifyAgainstDummy, verifyPassword } from "../passwords.js";
-import { clearSession, cookieOptions, readSession, requireAuth, setSession } from "../session.js";
+import { clearSession, cookieOptions, requireAuth, sessionAccount, setSession } from "../session.js";
 
 // Accounts are email + password. GitHub is connected to an account afterwards
 // (it's needed only for the repository and site features).
@@ -76,34 +78,9 @@ function readCredentials(body) {
 
 // Registering is two steps, so only people who receive email at the address get an
 // account: /register emails a 6-digit code and returns a token for this browser, and
-// /register/verify creates the account once both match. Nothing exists before that,
-// so an address can't be claimed (free credits, an ADMIN_EMAILS address) by someone
-// who doesn't own it. The token stops a second sign-up for the same address from
-// setting the password the owner's code then confirms: a newer attempt replaces it.
-const CODE_TTL_MS = 15 * 60 * 1000;
-const CODE_MAX_ATTEMPTS = 5;
-const CODE_RESEND_MS = 60 * 1000;
-const CODE_MAX_SENDS = 5; // per address, within PENDING_SIGNUP_MS
-// Codes emailed per IP, to stop the form being used to email strangers. In memory, like failures.
-const SIGNUP_IP_WINDOW_MS = 60 * 60 * 1000;
-const SIGNUP_IP_MAX = 10;
-const signupsByIp = new Map();
-
-function signupIpLimited(ip) {
-  const entry = signupsByIp.get(ip);
-  if (!entry || entry.resetAt < Date.now()) {
-    signupsByIp.set(ip, { count: 1, resetAt: Date.now() + SIGNUP_IP_WINDOW_MS });
-    return false;
-  }
-  entry.count += 1;
-  return entry.count > SIGNUP_IP_MAX;
-}
-
-const sha256 = (value) => createHash("sha256").update(value).digest("hex");
-
-function sameHash(a, b) {
-  return typeof a === "string" && typeof b === "string" && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
-}
+// /register/verify creates the account once both match (email-codes.js). Nothing exists
+// before that, so an address can't be claimed (free credits, an ADMIN_EMAILS address)
+// by someone who doesn't own it.
 
 authRouter.post(
   "/register",
@@ -126,31 +103,11 @@ authRouter.post(
     if (await findUserByEmail(email)) {
       return res.status(409).json({ error: "An account with that email already exists." });
     }
-    const pending = await findPendingSignup(email);
-    const waitMs = pending ? pending.sentAt.getTime() + CODE_RESEND_MS - Date.now() : 0;
-    if (waitMs > 0) {
-      // retryAfter (seconds) drives the form's "Send a new code" countdown.
-      return res.status(429).json({
-        error: "We just sent a code. Wait a minute before asking for another.",
-        retryAfter: Math.ceil(waitMs / 1000),
-      });
-    }
-    if (pending && pending.sends >= CODE_MAX_SENDS) {
-      return res.status(429).json({ error: "Too many codes sent to this address. Try again in an hour." });
-    }
-    if (signupIpLimited(req.ip)) {
-      return res.status(429).json({ error: "Too many sign-ups from here. Try again in an hour." });
-    }
+    const refusal = sendRefusal(await findCodeRecord("signup", email), req.ip, "sign-ups");
+    if (refusal) return res.status(refusal.status).json(refusal.body);
 
-    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-    const token = randomBytes(32).toString("hex");
-    await savePendingSignup(email, {
-      name,
-      passwordHash: await hashPassword(password),
-      codeHash: sha256(`${email}:${code}`),
-      tokenHash: sha256(token),
-      codeExpiresAt: new Date(Date.now() + CODE_TTL_MS),
-    });
+    const { code, token, fields } = newCode(email);
+    await saveCodeRecord("signup", email, { ...fields, name, passwordHash: await hashPassword(password) });
 
     const sent = await sendEmail({
       to: email,
@@ -162,7 +119,7 @@ authRouter.post(
     });
     // Without RESEND_API_KEY (development only, see above) the email is in the server log.
     if (!sent && config.email.resendKey) {
-      await deletePendingSignup(email);
+      await deleteCodeRecord("signup", email);
       return res.status(502).json({ error: "We couldn't send the code to that address. Check it and try again." });
     }
     res.status(202).json({ verify: true, email, token, retryAfter: CODE_RESEND_MS / 1000 });
@@ -173,28 +130,18 @@ authRouter.post(
   "/register/verify",
   requireJson,
   handle(async (req, res) => {
-    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
-    const token = typeof req.body?.token === "string" ? req.body.token : "";
-    const code = typeof req.body?.code === "string" ? req.body.code.replace(/\s+/g, "") : "";
-    if (!email || !token || !/^\d{6}$/.test(code)) {
+    const attempt = readCodeAttempt(req.body);
+    const { email } = attempt;
+    if (!email || !attempt.token || !attempt.code) {
       return res.status(400).json({ error: "Enter the 6-digit code from the email." });
     }
 
-    const pending = await findPendingSignup(email);
-    const tokenHash = sha256(token);
-    if (!pending || !sameHash(pending.tokenHash, tokenHash)) {
-      return res.status(410).json({ error: "This sign-up has expired or was replaced. Start again.", restart: true });
-    }
-    if (pending.attempts >= CODE_MAX_ATTEMPTS) {
-      await deletePendingSignup(email);
-      return res.status(429).json({ error: "Too many wrong codes. Start again to get a new one.", restart: true });
-    }
-    if (pending.codeExpiresAt.getTime() < Date.now()) {
-      return res.status(410).json({ error: "That code has expired. Send a new one.", expired: true });
-    }
-    if (!sameHash(pending.codeHash, sha256(`${email}:${code}`))) {
-      await recordSignupAttempt(email, tokenHash);
-      return res.status(400).json({ error: "That code isn't right. Check the email and try again." });
+    const pending = await findCodeRecord("signup", email);
+    const check = checkCode(pending, attempt, "Start again.");
+    if (!check.ok) {
+      if (check.wrongCode) await recordWrongCode("signup", email, check.tokenHash);
+      if (check.discard) await deleteCodeRecord("signup", email);
+      return res.status(check.status).json(check.body);
     }
 
     let account;
@@ -204,7 +151,7 @@ authRouter.post(
       if (err instanceof DuplicateEmailError) return res.status(409).json({ error: err.message });
       throw err;
     } finally {
-      await deletePendingSignup(email);
+      await deleteCodeRecord("signup", email);
     }
     await setSession(res, account._id.toHexString());
     res.status(201).json({ user: publicUser(account) });
@@ -234,8 +181,102 @@ authRouter.post(
     failures.delete(email);
     const id = account._id.toHexString();
     await recordLogin(id);
-    await setSession(res, id);
+    await setSession(res, id, account.sessionVersion ?? 0);
     res.json({ user: publicUser(account) });
+  }),
+);
+
+/* --------------------------------------------------------- reset password */
+
+// The same two steps as registering: /password/forgot emails a code and returns a token,
+// /password/reset takes both with the new password. /password/forgot answers the same
+// whether or not an account uses the address, so it can't be used to find out: for an
+// unknown address it saves a record too (so the resend wait and limits behave the same),
+// but sends nothing, and nobody knows that record's code.
+
+authRouter.post(
+  "/password/forgot",
+  requireJson,
+  handle(async (req, res) => {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    if (!EMAIL_PATTERN.test(email) || email.length > 254) {
+      return res.status(400).json({ error: "Enter a valid email address." });
+    }
+    if (config.isProduction && !config.email.resendKey) {
+      console.error("Password reset refused: RESEND_API_KEY isn't set, so the code can't be emailed.");
+      return res.status(503).json({ error: "Password reset is unavailable right now. Try again later." });
+    }
+    const refusal = sendRefusal(await findCodeRecord("reset", email), req.ip, "password resets");
+    if (refusal) return res.status(refusal.status).json(refusal.body);
+
+    const account = await findUserByEmail(email);
+    const { code, token, fields } = newCode(email);
+    await saveCodeRecord("reset", email, fields);
+    if (account) {
+      const sent = await sendEmail({
+        to: email,
+        subject: `${code} is your Twinstack password reset code`,
+        text:
+          `Hi ${account.name},\n\nYour Twinstack password reset code is ${code}\n\n` +
+          `Enter it on the reset page to choose a new password. It expires in 15 minutes.\n\n` +
+          `If you didn't ask to reset your password, ignore this email: your password stays as it is.\n`,
+      });
+      // Answered as if sent either way, so a failure doesn't reveal that the account exists.
+      if (!sent && config.email.resendKey) console.error(`Password reset code for account ${account._id} wasn't sent.`);
+    }
+    res.status(202).json({ email, token, retryAfter: CODE_RESEND_MS / 1000 });
+  }),
+);
+
+authRouter.post(
+  "/password/reset",
+  requireJson,
+  handle(async (req, res) => {
+    const attempt = readCodeAttempt(req.body);
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    if (!attempt.email || !attempt.token || !attempt.code) {
+      return res.status(400).json({ error: "Enter the 6-digit code from the email." });
+    }
+    if (password.length < PASSWORD_MIN || password.length > PASSWORD_MAX) {
+      return res.status(400).json({ error: `Use a password of ${PASSWORD_MIN} to ${PASSWORD_MAX} characters.` });
+    }
+
+    const check = checkCode(await findCodeRecord("reset", attempt.email), attempt, "Ask for a new code.");
+    if (!check.ok) {
+      if (check.wrongCode) await recordWrongCode("reset", attempt.email, check.tokenHash);
+      if (check.discard) await deleteCodeRecord("reset", attempt.email);
+      return res.status(check.status).json(check.body);
+    }
+    await deleteCodeRecord("reset", attempt.email);
+    const account = await findUserByEmail(attempt.email);
+    if (!account) return res.status(410).json({ error: "This account no longer exists.", restart: true });
+
+    const id = account._id.toHexString();
+    await setPassword(id, await hashPassword(password));
+    failures.delete(attempt.email);
+    await recordLogin(id);
+    // Other browsers stay signed in until the person chooses to sign them out (/sessions/end-others).
+    await setSession(res, id, account.sessionVersion ?? 0);
+    sendEmail({
+      to: attempt.email,
+      subject: "Your Twinstack password was changed",
+      text:
+        `Hi ${account.name},\n\nThe password for your Twinstack account was just changed with a reset code.\n\n` +
+        `If that wasn't you, reset it again now from the log-in page and sign out your other devices when asked.\n`,
+    });
+    res.json({ user: publicUser(account) });
+  }),
+);
+
+// Signs out every browser but this one (it gets a fresh cookie at the new version).
+authRouter.post(
+  "/sessions/end-others",
+  requireJson,
+  requireAuth,
+  handle(async (req, res) => {
+    const version = await bumpSessionVersion(req.user.id);
+    await setSession(res, req.user.id, version);
+    res.json({ ok: true });
   }),
 );
 
@@ -262,8 +303,7 @@ function statesMatch(a, b) {
 
 /** For the two browser-navigation GitHub routes: no JSON 401, send guests to log in. */
 async function accountOrLogin(req, res) {
-  const session = await readSession(req);
-  const account = session ? await findUserById(session.uid) : null;
+  const account = await sessionAccount(req);
   if (!account) res.redirect(`${config.clientUrl}/login?next=${encodeURIComponent("/dashboard")}`);
   return account;
 }

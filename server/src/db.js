@@ -34,6 +34,10 @@ import { config } from "./config.js";
 //               cost report next to what the app recorded (_id = provider:day)
 //   pendingSignups   one document per sign-up waiting for its emailed code
 //               (_id = the email), deleted an hour after it was first made
+//   passwordResets   the same for password resets
+//
+// users.sessionVersion (0 when missing) is in every session cookie; raising it signs
+// out every other browser (bumpSessionVersion).
 //
 // An account's Claude credits are users.credits ({ balance, granted, purchased,
 // used }), changed only in single atomic updates ($inc, or a pipeline that stops a
@@ -70,6 +74,7 @@ export async function connectDb() {
     providerErrors().createIndex({ at: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 }),
     claudeUsage().createIndex({ charged: 1, createdAt: -1 }),
     pendingSignups().createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
+    passwordResets().createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
   ]);
   // Accounts from before credits get the free allowance once.
   await users().updateMany({ credits: { $exists: false } }, { $set: { credits: startingCredits() } });
@@ -98,6 +103,7 @@ const appSettings = () => db.collection("appSettings");
 const analyticsEvents = () => db.collection("analyticsEvents");
 const analyticsSalts = () => db.collection("analyticsSalts");
 const pendingSignups = () => db.collection("pendingSignups");
+const passwordResets = () => db.collection("passwordResets");
 
 /** How long a site's visits are kept (the TTL index on analyticsEvents.at). */
 export const ANALYTICS_RETENTION_DAYS = 365;
@@ -198,39 +204,67 @@ export function findUserByEmail(email) {
   return users().findOne({ email });
 }
 
-/* --------------------------------------------------------- pending sign-ups */
-
-// A sign-up waits here (_id = the email) until its emailed code is entered, and only
-// then becomes an account. Each new attempt replaces the last one's code, token and
-// password; `sends` counts the codes emailed since the document was first made.
-
-/** How long a pending sign-up is kept (the TTL index on expireAt), which also bounds `sends`. */
-export const PENDING_SIGNUP_MS = 60 * 60 * 1000;
-
-export async function savePendingSignup(email, { name, passwordHash, codeHash, tokenHash, codeExpiresAt }) {
+/**
+ * Saves a new password. Signing in with a reset code proves the address, so an account
+ * from before sign-up codes gets emailVerifiedAt here too.
+ */
+export async function setPassword(id, passwordHash) {
   const now = new Date();
-  await pendingSignups().updateOne(
+  await users().updateOne({ _id: objectId(id) }, [
+    { $set: { passwordHash, passwordChangedAt: now, emailVerifiedAt: { $ifNull: ["$emailVerifiedAt", now] } } },
+  ]);
+}
+
+/**
+ * Ends every session but the caller's: session cookies carry the account's sessionVersion
+ * (session.js), so raising it makes all of them stale. Returns the new version, for the
+ * caller's own cookie.
+ */
+export async function bumpSessionVersion(id) {
+  const doc = await users().findOneAndUpdate(
+    { _id: objectId(id) },
+    { $inc: { sessionVersion: 1 } },
+    { returnDocument: "after", projection: { sessionVersion: 1 } },
+  );
+  return doc?.sessionVersion ?? 0;
+}
+
+/* ------------------------------------------------------ emailed-code records */
+
+// Requests waiting for their emailed code (email-codes.js), one per address (_id =
+// the email), in pendingSignups (a sign-up, which becomes an account only when its
+// code is entered) or passwordResets. Each new request replaces the record's code,
+// token and other fields; `sends` counts the codes emailed since it was first made.
+
+/** How long a record is kept (the TTL index on expireAt), which also bounds `sends`. */
+export const CODE_RECORD_MS = 60 * 60 * 1000;
+
+const codeRecords = (kind) => (kind === "reset" ? passwordResets() : pendingSignups());
+
+export async function saveCodeRecord(kind, email, fields) {
+  const now = new Date();
+  await codeRecords(kind).updateOne(
     { _id: email },
     {
-      $set: { name, passwordHash, codeHash, tokenHash, codeExpiresAt, attempts: 0, sentAt: now },
+      $set: { ...fields, attempts: 0, sentAt: now },
       $inc: { sends: 1 },
-      $setOnInsert: { createdAt: now, expireAt: new Date(now.getTime() + PENDING_SIGNUP_MS) },
+      $setOnInsert: { createdAt: now, expireAt: new Date(now.getTime() + CODE_RECORD_MS) },
     },
     { upsert: true },
   );
 }
 
-export function findPendingSignup(email) {
-  return pendingSignups().findOne({ _id: email });
+export function findCodeRecord(kind, email) {
+  return codeRecords(kind).findOne({ _id: email });
 }
 
-/** Counts a wrong code against this attempt (matched by its token, so a newer attempt isn't touched). */
-export async function recordSignupAttempt(email, tokenHash) {
-  await pendingSignups().updateOne({ _id: email, tokenHash }, { $inc: { attempts: 1 } });
+/** Counts a wrong code against this request (matched by its token, so a newer request isn't touched). */
+export async function recordWrongCode(kind, email, tokenHash) {
+  await codeRecords(kind).updateOne({ _id: email, tokenHash }, { $inc: { attempts: 1 } });
 }
 
-export async function deletePendingSignup(email) {
-  await pendingSignups().deleteOne({ _id: email });
+export async function deleteCodeRecord(kind, email) {
+  await codeRecords(kind).deleteOne({ _id: email });
 }
 
 /** The account whose connected GitHub login is this one (any case), or null. */
