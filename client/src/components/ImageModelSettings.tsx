@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { confirmModal } from "@/lib/confirm";
 import { api } from "@/lib/site-api";
 import { toast } from "@/lib/toast";
+import { AdminModelSection, ChoiceCard, KeyBadge } from "./AdminModelSection";
+import { useModelUsage } from "./ModelCostExplorer";
 import { Notice, Spinner } from "./site/ui";
 
 // The admin's choice of image model (GET/PUT /api/admin/image-model, server/src/image-model.js): the
@@ -25,11 +27,13 @@ type View = {
 
 type State = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; view: View };
 
-const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+const DESCRIPTION = "The OpenAI model that makes the photos and illustrations Claude adds to pages, paid for in credits. Without it, Claude still draws SVG images.";
 
 export function ImageModelSettings() {
   const [state, setState] = useState<State>({ status: "loading" });
   const [saving, setSaving] = useState(false);
+  // How many pictures each model made lately, and how many sites chose their own.
+  const usage = useModelUsage(30);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,43 +73,73 @@ export function ImageModelSettings() {
     }
   }
 
-  if (state.status === "loading") {
+  if (state.status !== "ready") {
     return (
-      <p className="flex items-center gap-2 text-sm text-zinc-500">
-        <Spinner /> Loading image models…
-      </p>
+      <AdminModelSection title="Image model" description={DESCRIPTION} inUse={null} chosen="">
+        {state.status === "loading" ? (
+          <p className="flex items-center gap-2 text-sm text-zinc-500">
+            <Spinner /> Loading image models…
+          </p>
+        ) : (
+          <Notice tone="warning">{state.message}</Notice>
+        )}
+      </AdminModelSection>
     );
   }
-  if (state.status === "error") return <Notice tone="warning">{state.message}</Notice>;
 
   const { view } = state;
+  const chosenModel = view.models.find((m) => m.id === view.choice);
+  const cheapest = Math.min(...view.models.map((m) => m.pictureCredits));
+
   return (
-    <div className="space-y-4">
-      {!view.available && <Notice tone="warning">Pictures can&apos;t be made until OPENAI_API_KEY is set on the server. Claude still draws SVG images.</Notice>}
-      <fieldset disabled={saving || !view.available} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+    <AdminModelSection
+      title="Image model"
+      description={DESCRIPTION}
+      inUse={view.available ? (chosenModel?.name ?? view.choice) : "SVG drawings only"}
+      inUseTone={view.available ? "good" : "warning"}
+      chosen={view.source === "admin" ? { by: view.updatedBy, at: view.updatedAt } : "From IMAGE_MODEL in the server's settings"}
+      note={usage && usage.overrides.image > 0 ? `${usage.overrides.image} ${usage.overrides.image === 1 ? "site has" : "sites have"} chosen their own` : undefined}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-semibold">OpenAI</h3>
+        <KeyBadge set={view.available} env="OPENAI_API_KEY" />
+      </div>
+      <fieldset disabled={saving || !view.available} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <legend className="sr-only">Image model</legend>
         {view.models.map((m) => (
-          <label
-            key={m.id}
-            className={`flex items-start gap-3 rounded-md border border-zinc-200 p-3 has-checked:border-zinc-900 dark:border-zinc-800 dark:has-checked:border-zinc-100 ${view.available ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}
-          >
-            <input type="radio" name="image-model" value={m.id} checked={m.id === view.choice} onChange={() => void choose(m.id)} className="mt-1" />
-            <span className="min-w-0">
-              <span className="block text-sm font-bold">{m.name}</span>
-              <span className="block text-sm text-zinc-500">{m.description}</span>
-              <span className="mt-2 block text-xs text-zinc-500 tabular-nums">
-                {m.price && `$${m.price.input} text in / $${m.price.output} image out per 1M tokens · `}
-                up to {m.pictureCredits.toLocaleString()} credits a medium landscape picture
-              </span>
+          <ChoiceCard key={m.id} name="image-model" value={m.id} checked={m.id === view.choice} disabled={!view.available} onChoose={() => void choose(m.id)}>
+            <span className="pr-7 text-base font-semibold">{m.name}</span>
+            <span className="mt-1 text-sm text-zinc-500">{m.description}</span>
+            <span className="mt-4 rounded-md bg-zinc-50 px-3 py-2 tabular-nums dark:bg-zinc-900">
+              <span className="block text-[11px] uppercase tracking-wide text-zinc-500">A medium landscape picture</span>
+              <span className="text-lg font-semibold">up to {m.pictureCredits.toLocaleString()}</span> <span className="text-sm text-zinc-500">credits</span>
             </span>
-          </label>
+            <span className="mt-auto pt-3">
+              <span className="flex flex-wrap gap-1.5">
+                {m.id === view.active && view.available && (
+                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">In use</span>
+                )}
+                {m.pictureCredits === cheapest && view.models.length > 1 && (
+                  <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800 dark:bg-sky-950/50 dark:text-sky-300">Cheapest</span>
+                )}
+              </span>
+              <span className="mt-2 block text-xs text-zinc-500 tabular-nums">
+                {(() => {
+                  const made = usage?.models.find((u) => u.model === m.id);
+                  return made
+                    ? `Made ${made.requests.toLocaleString()} ${made.requests === 1 ? "picture" : "pictures"} (${made.credits.toLocaleString()} credits) in the last 30 days`
+                    : "No pictures in the last 30 days";
+                })()}
+              </span>
+              {m.price && (
+                <span className="mt-1 block text-xs text-zinc-500 tabular-nums">
+                  Per 1M tokens · ${m.price.input} text in · ${m.price.output} image out
+                </span>
+              )}
+            </span>
+          </ChoiceCard>
         ))}
       </fieldset>
-      <p className="text-sm text-zinc-500">
-        {view.source === "admin" && view.updatedAt
-          ? `Chosen by ${view.updatedBy ?? "an admin"} on ${dateFormat.format(new Date(view.updatedAt))}.`
-          : "Nobody has chosen yet: this is IMAGE_MODEL from the server's settings."}
-      </p>
-    </div>
+    </AdminModelSection>
   );
 }

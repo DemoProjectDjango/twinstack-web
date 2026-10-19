@@ -7,6 +7,7 @@ import { FastModelError, fastModelView, setFastModel } from "../fast-model.js";
 import { ImageModelError, imageModelView, setImageModel } from "../image-model.js";
 import { ProviderHealthError, checkProviderCosts, creditActivityReport, providerHealth, setProviderBalance } from "../provider-health.js";
 import { INSIGHT_PERIODS, purchaseInsights } from "../purchase-insights.js";
+import { siteModelOverrides, usageByModel } from "../db.js";
 import { PURCHASE_EXPORT_FORMATS, exportPurchases, purchasesFileName } from "../purchases-export.js";
 import { requireAuth } from "../session.js";
 import { zoneOf } from "../zoned-days.js";
@@ -220,6 +221,16 @@ adminRouter.put("/providers/:provider/balance", async (req, res) => {
     return res.status(400).json({ error: err.message });
   }
   res.json(await providerHealth());
+});
+
+// `?days=7|30|90`: what each model did on the app's keys in that time (requests, credits, tokens),
+// and how many sites chose their own fast and image models: the AI models page's usage, cost
+// comparison and override counts.
+adminRouter.get("/models/usage", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const days = [7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 30;
+  const [models, overrides] = await Promise.all([usageByModel(new Date(Date.now() - days * 24 * 60 * 60 * 1000)), siteModelOverrides()]);
+  res.json({ days, models, overrides });
 });
 
 // The image model pictures are made with (image-model.js); IMAGE_MODEL until an admin picks one.

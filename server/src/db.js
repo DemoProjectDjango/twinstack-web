@@ -463,6 +463,35 @@ export async function getSiteModels(siteId) {
   return Object.fromEntries(SITE_MODEL_FIELDS.map((field) => [field, typeof doc?.[field]?.model === "string" ? doc[field].model : null]));
 }
 
+/**
+ * Requests, credits and tokens per model since `since`, on the app's keys (charged), for the admin's
+ * AI models page: what each model did, and what that work would cost on another.
+ */
+export async function usageByModel(since) {
+  const rows = await claudeUsage()
+    .aggregate([
+      { $match: { charged: true, createdAt: { $gte: since } } },
+      {
+        $group: {
+          _id: "$model",
+          requests: { $sum: 1 },
+          credits: { $sum: { $ifNull: ["$credits", 0] } },
+          ...Object.fromEntries(TOKEN_FIELDS.map((f) => [f, { $sum: { $ifNull: [`$${f}`, 0] } }])),
+        },
+      },
+    ])
+    .toArray();
+  return rows.map(({ _id, ...totals }) => ({ model: _id, ...totals }));
+}
+
+/** How many sites chose their own fast model and image model rather than the admin's. */
+export async function siteModelOverrides() {
+  const [fast, image] = await Promise.all(
+    SITE_MODEL_FIELDS.map((field) => siteCopies().countDocuments({ [`${field}.model`]: { $type: "string" } })),
+  );
+  return { fast, image };
+}
+
 /** Saves one of the site's model choices (null goes back to the admin's). False when the site isn't a recorded copy. */
 export async function setSiteModel(siteId, field, model, userId) {
   if (typeof siteId !== "number" || !SITE_MODEL_FIELDS.includes(field)) return false;
