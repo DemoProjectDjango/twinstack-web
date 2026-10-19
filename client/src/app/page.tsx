@@ -44,7 +44,7 @@ const HELP = [
   },
   {
     q: "What does it cost?",
-    a: "Building and publishing your site is free, and so is GitHub, which hosts it. Claude is optional and runs on credits: every account starts with 10,000 free credits, and the Credits page shows your balance and what each request used. Everything else works without Claude.",
+    a: "Building and publishing your site is free, and so is GitHub, which hosts it. Claude is optional and runs on credits: every account gets 10,000 free credits when it connects GitHub, and the Credits page shows your balance and what each request used. Everything else works without Claude.",
   },
   {
     q: "What will my web address be? Can I use my own domain?",

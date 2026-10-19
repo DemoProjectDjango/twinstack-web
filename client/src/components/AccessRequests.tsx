@@ -42,13 +42,23 @@ export function AccessRequests() {
   }, []);
 
   async function decide(request: Request, status: "approved" | "denied") {
-    if (request.status === "approved" && status === "denied") {
-      const ok = await confirmModal(
-        `${request.email} won't be able to create new sites or update the ones they have. Sites they already made stay in their GitHub account.`,
-        { title: "Remove access?", confirmLabel: "Remove access", danger: true },
-      );
-      if (!ok) return;
-    }
+    const ok =
+      status === "approved"
+        ? await confirmModal(`${request.email} will be able to create sites. They'll get an email saying so.`, {
+            title: "Approve this account?",
+            confirmLabel: "Approve",
+          })
+        : request.status === "approved"
+          ? await confirmModal(
+              `${request.email} won't be able to create new sites or update the ones they have. Sites they already made stay in their GitHub account.`,
+              { title: "Remove access?", confirmLabel: "Remove access", danger: true },
+            )
+          : await confirmModal(`${request.email} won't be able to create sites. They'll get an email saying so.`, {
+              title: "Deny this request?",
+              confirmLabel: "Deny",
+              danger: true,
+            });
+    if (!ok) return;
     setBusy(request.id);
     try {
       const res = await fetch(`/api/admin/access/${encodeURIComponent(request.id)}`, {
@@ -115,17 +125,17 @@ export function AccessRequests() {
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
             {request.status !== "approved" && (
-              <Button variant="primary" disabled={busy !== null} onClick={() => void decide(request, "approved")}>
+              <Button className="cursor-pointer" variant="primary" disabled={busy !== null} onClick={() => void decide(request, "approved")}>
                 Approve
               </Button>
             )}
             {request.status === "pending" && (
-              <Button disabled={busy !== null} onClick={() => void decide(request, "denied")}>
+              <Button className="cursor-pointer" disabled={busy !== null} onClick={() => void decide(request, "denied")}>
                 Deny
               </Button>
             )}
             {request.status === "approved" && (
-              <Button variant="danger" disabled={busy !== null} onClick={() => void decide(request, "denied")}>
+              <Button className="cursor-pointer" variant="danger" disabled={busy !== null} onClick={() => void decide(request, "denied")}>
                 Remove access
               </Button>
             )}

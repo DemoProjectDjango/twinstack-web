@@ -2,7 +2,7 @@
 // Every panel asks this one place. Claude runs on the account's credits ("own" keys are off on the
 // server for now, OWN_KEYS in server/src/credits.js).
 
-import type { Credits } from "./credits-store";
+import { type Credits, formatCredits } from "./credits-store";
 
 export type ClaudeAccess = {
   /** Claude commands can run. */
@@ -18,6 +18,8 @@ export type ClaudeAccess = {
 
 export const CLAUDE_SETUP_HREF = "/settings#claude";
 export const BUY_CREDITS_HREF = "/credits";
+/** Where the account connects GitHub, which also brings its free credits. */
+export const CONNECT_GITHUB_HREF = "/settings#github";
 
 /** `credits` is null while it loads (Claude counts as not ready until then). */
 export function claudeAccess(credits: Credits | null): ClaudeAccess {
@@ -43,8 +45,15 @@ export function claudeAccess(credits: Credits | null): ClaudeAccess {
     };
   }
   const costNote = "Each try uses Claude credits from your balance.";
-  return credits.balance > 0
-    ? { ready: true, reason: "", setupHref: BUY_CREDITS_HREF, setupLabel: "Claude credits", costNote }
+  if (credits.balance > 0) return { ready: true, reason: "", setupHref: BUY_CREDITS_HREF, setupLabel: "Claude credits", costNote };
+  return credits.freePending
+    ? {
+        ready: false,
+        reason: `Connect GitHub to get ${formatCredits(credits.freeCredits)} free Claude credits.`,
+        setupHref: CONNECT_GITHUB_HREF,
+        setupLabel: "Connect GitHub",
+        costNote,
+      }
     : {
         ready: false,
         reason: "You've used all your Claude credits. Buy more to let Claude write and change pages for you.",

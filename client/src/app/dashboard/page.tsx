@@ -26,7 +26,17 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
 
       <div className="mt-6 space-y-3">
         {githubError && <Notice tone="warning">{GITHUB_ERRORS[githubError] ?? "Connecting GitHub didn't work. Try again."}</Notice>}
-        {params.github === "connected" && user.github && <Notice tone="success">GitHub connected as @{user.github.login}.</Notice>}
+        {params.github === "connected" && user.github && (
+          <Notice tone="success">
+            GitHub connected as @{user.github.login}.
+            {params.credits === "granted" && " 10,000 free Claude credits were added to your account."}
+          </Notice>
+        )}
+        {params.github === "connected" && params.credits === "used" && (
+          <Notice tone="warning">
+            That GitHub account already brought free credits to another Twinstack account, so none were added this time.
+          </Notice>
+        )}
       </div>
 
       <div className="mt-6">

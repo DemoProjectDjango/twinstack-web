@@ -35,6 +35,8 @@ import { config } from "./config.js";
 //   pendingSignups   one document per sign-up waiting for its emailed code
 //               (_id = the email), deleted an hour after it was first made
 //   passwordResets   the same for password resets
+//   freeCreditGrants one document per GitHub account that brought an account its
+//               free credits (_id = GitHub user id)
 //
 // users.sessionVersion (0 when missing) is in every session cookie; raising it signs
 // out every other browser (bumpSessionVersion).
@@ -43,7 +45,10 @@ import { config } from "./config.js";
 // used }), changed only in single atomic updates ($inc, or a pipeline that stops a
 // refund at zero) so concurrent requests can't lose an update. purchaseIds there
 // lists the recent paid purchases already credited. users.stripeCustomers holds
-// the account's Stripe customer ids ({ live, test }).
+// the account's Stripe customer ids ({ live, test }). New accounts start with no
+// credits and credits.freePending: the FREE_CREDITS come when GitHub is connected
+// (grantGithubCredits), once per account and once per GitHub account, which
+// freeCreditGrants records (_id = GitHub user id) so unlinking can't reuse it.
 //
 // Account ids leave this module as 24-character hex strings.
 
@@ -78,6 +83,22 @@ export async function connectDb() {
   ]);
   // Accounts from before credits get the free allowance once.
   await users().updateMany({ credits: { $exists: false } }, { $set: { credits: startingCredits() } });
+  // GitHub accounts connected before free credits waited for GitHub already had theirs.
+  const linked = await users()
+    .find({ "github.id": { $type: "number" }, "credits.freePending": { $ne: true } }, { projection: { "github.id": 1 } })
+    .toArray();
+  if (linked.length) {
+    await freeCreditGrants().bulkWrite(
+      linked.map((u) => ({
+        updateOne: {
+          filter: { _id: u.github.id },
+          update: { $setOnInsert: { userId: u._id.toHexString(), grantedAt: null } },
+          upsert: true,
+        },
+      })),
+      { ordered: false },
+    );
+  }
   // Accounts that made a site before access requests existed keep their access.
   const owners = (await siteCopies().distinct("userId")).map(objectId).filter(Boolean);
   if (owners.length) {
@@ -104,6 +125,7 @@ const analyticsEvents = () => db.collection("analyticsEvents");
 const analyticsSalts = () => db.collection("analyticsSalts");
 const pendingSignups = () => db.collection("pendingSignups");
 const passwordResets = () => db.collection("passwordResets");
+const freeCreditGrants = () => db.collection("freeCreditGrants");
 
 /** How long a site's visits are kept (the TTL index on analyticsEvents.at). */
 export const ANALYTICS_RETENTION_DAYS = 365;
@@ -189,7 +211,7 @@ export async function createUser({ email, name, passwordHash }) {
     createdAt: now,
     lastLoginAt: now,
     loginCount: 1,
-    credits: startingCredits(),
+    credits: { balance: 0, granted: 0, purchased: 0, used: 0, freePending: true },
   };
   try {
     const { insertedId } = await users().insertOne(doc);
@@ -571,18 +593,48 @@ export async function archiveConversations(userId, siteId) {
 
 /* ---------------------------------------------------------------- credits */
 
-/** Every account starts with this many credits (credits.js prices them). */
+/** Every account gets this many credits free once it connects GitHub (credits.js prices them). */
 export const FREE_CREDITS = 10_000;
 
+// What accounts from before credits were given.
 function startingCredits() {
   return { balance: FREE_CREDITS, granted: FREE_CREDITS, purchased: 0, used: 0 };
 }
 
-/** `{ balance, granted, purchased, used }` for the account. */
+/**
+ * `{ balance, granted, purchased, used, freePending }` for the account: `freePending` while the
+ * free credits wait for GitHub to be connected.
+ */
 export async function getCredits(id) {
   const doc = await users().findOne({ _id: objectId(id) }, { projection: { credits: 1 } });
-  const { purchaseIds: _ids, ...credits } = doc?.credits ?? {};
-  return { ...startingCredits(), ...credits };
+  const { purchaseIds: _ids, freePending, ...credits } = doc?.credits ?? {};
+  return { ...startingCredits(), ...credits, freePending: freePending === true };
+}
+
+/**
+ * Gives the account its free credits for connecting this GitHub account. Returns "granted",
+ * "used" when the GitHub account already got them for another Twinstack account (the account
+ * keeps waiting, so a different GitHub account can still bring them), or null when the account
+ * isn't waiting for any.
+ */
+export async function grantGithubCredits(id, githubId) {
+  const _id = objectId(id);
+  const waiting = await users().findOne({ _id, "credits.freePending": true }, { projection: { _id: 1 } });
+  if (!waiting) return null;
+  try {
+    await freeCreditGrants().insertOne({ _id: githubId, userId: id, grantedAt: new Date() });
+  } catch (err) {
+    if (err?.code === 11000) return "used";
+    throw err;
+  }
+  const { modifiedCount } = await users().updateOne(
+    { _id, "credits.freePending": true },
+    { $inc: { "credits.balance": FREE_CREDITS, "credits.granted": FREE_CREDITS }, $unset: { "credits.freePending": "" } },
+  );
+  if (modifiedCount === 1) return "granted";
+  // Granted meanwhile by another request: give the GitHub account back.
+  await freeCreditGrants().deleteOne({ _id: githubId, userId: id });
+  return null;
 }
 
 /**

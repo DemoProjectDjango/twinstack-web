@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { CLAUDE_SETUP_HREF } from "@/lib/claude";
+import { GitHubIcon } from "./GitHubIcon";
 import { type Credits, creditsValue, formatCredits, formatDollars, useCredits, useCreditsFailed } from "@/lib/credits";
 import { api } from "@/lib/site-api";
 import { BuyCredits } from "./BuyCredits";
@@ -149,7 +150,9 @@ function Balance({ credits }: { credits: Credits }) {
       <p className="mt-1 text-sm text-zinc-500">
         {credits.balance > 0
           ? `About ${creditsValue(credits.balance, credits.creditsPerDollar)} of Claude use left.`
-          : "You've used all your credits. Buy more to keep using Claude."}
+          : credits.freePending
+            ? "Connect GitHub to get your free credits."
+            : "You've used all your credits. Buy more to keep using Claude."}
         {credits.active && " Claude is working now, so this updates every few seconds."}
       </p>
       <dl className="mt-6 grid grid-cols-3 gap-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
@@ -160,6 +163,22 @@ function Balance({ credits }: { credits: Credits }) {
           </div>
         ))}
       </dl>
+      {credits.freePending && credits.source === "credits" && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md bg-sky-500/10 px-4 py-3">
+          <p className="min-w-0 flex-1 text-sm text-sky-900 dark:text-sky-200">
+            Connect your GitHub account to get {formatCredits(credits.freeCredits)} free credits, about{" "}
+            {creditsValue(credits.freeCredits, credits.creditsPerDollar)} of Claude use.
+          </p>
+          {/* Plain <a>: a full-page navigation to the Express OAuth route. */}
+          <a
+            href="/auth/github"
+            className="inline-flex items-center gap-2 rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background hover:opacity-90"
+          >
+            <GitHubIcon className="size-4" />
+            Connect GitHub
+          </a>
+        </div>
+      )}
       {credits.source === "own" && (
         <div className="mt-4">
           <Notice>

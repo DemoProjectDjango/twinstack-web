@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { confirmModal } from "@/lib/confirm";
+import { formatCredits, useCredits } from "@/lib/credits";
 import type { GithubAccount } from "@/lib/session";
 import { GitHubIcon } from "./GitHubIcon";
 
@@ -17,6 +18,7 @@ export function GithubConnection({ github, error, justConnected = false }: { git
   const router = useRouter();
   const [working, setWorking] = useState(false);
   const [failed, setFailed] = useState(false);
+  const credits = useCredits();
 
   async function disconnect() {
     const ok = await confirmModal("Disconnect GitHub? You won't be able to open or publish your sites until you connect it again. Your sites stay on GitHub.", {
@@ -78,6 +80,11 @@ export function GithubConnection({ github, error, justConnected = false }: { git
             Connect GitHub to create and publish your site. GitHub asks you to allow access to your profile, email, repositories
             and workflows: the site is stored in a repository, and its workflow is what publishes it.
           </p>
+          {credits?.freePending && (
+            <p className="mt-3 rounded-md bg-sky-500/10 px-3 py-2 text-sm text-sky-900 dark:text-sky-200">
+              Connecting GitHub also gives you {formatCredits(credits.freeCredits)} free Claude credits.
+            </p>
+          )}
           {/* Plain <a>: a full-page navigation to the Express OAuth route. */}
           <a
             href="/auth/github"

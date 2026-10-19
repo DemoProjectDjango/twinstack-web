@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
-import { BUY_CREDITS_HREF, CLAUDE_SETUP_HREF } from "@/lib/claude";
+import { BUY_CREDITS_HREF, CLAUDE_SETUP_HREF, CONNECT_GITHUB_HREF } from "@/lib/claude";
 import { type Credits, creditsValue, formatCredits, useCredits, useCreditsFailed } from "@/lib/credits";
 import { BuyCredits } from "./BuyCredits";
 
-/** "low" below a tenth of what the account has had (or 1,000), "empty" at zero. */
+/** "low" below a tenth of what the account has had (or 1,000), "empty" at zero (not while the free credits wait for GitHub). */
 function level(credits: Credits) {
-  if (credits.balance <= 0) return "empty";
+  if (credits.balance <= 0) return credits.freePending ? "ok" : "empty";
   const total = credits.granted + credits.purchased;
   return credits.balance < Math.max(1_000, total / 10) ? "low" : "ok";
 }
@@ -179,10 +179,21 @@ export function CreditBadge() {
                   <p className="text-xs text-zinc-500">
                     {credits.balance > 0
                       ? `About ${creditsValue(credits.balance, credits.creditsPerDollar)} of Claude use left`
-                      : "Buy more credits to keep using Claude."}
+                      : credits.freePending
+                        ? "Connect GitHub to get your free credits."
+                        : "Buy more credits to keep using Claude."}
                   </p>
                 </div>
               </div>
+              {credits.freePending && (
+                <p className="mt-3 rounded-md bg-sky-500/10 px-3 py-2 text-sm text-sky-900 dark:text-sky-200">
+                  Get {formatCredits(credits.freeCredits)} free credits when you{" "}
+                  <Link href={CONNECT_GITHUB_HREF} onClick={() => setOpen(false)} className="font-medium underline">
+                    connect GitHub
+                  </Link>
+                  .
+                </p>
+              )}
               <p
                 className="mt-3 text-xs text-zinc-500"
                 role="meter"

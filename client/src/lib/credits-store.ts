@@ -11,6 +11,9 @@ export type Credits = {
   granted: number;
   purchased: number;
   used: number;
+  /** The free credits are waiting for the account to connect GitHub (`freeCredits` of them). */
+  freePending: boolean;
+  freeCredits: number;
   /** Whose key Claude runs on: credits on the app's key, the account's own key, or neither. */
   source: CreditsSource;
   /** Claude is working for this account right now. */

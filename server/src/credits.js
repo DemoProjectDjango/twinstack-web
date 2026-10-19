@@ -1,10 +1,10 @@
 import { config } from "./config.js";
-import { getAnthropicKey, getCredits, recordClaudeUsage } from "./db.js";
+import { FREE_CREDITS, getAnthropicKey, getCredits, recordClaudeUsage } from "./db.js";
 
 // Claude credits. Claude runs on the app's key (PLATFORM_ANTHROPIC_KEY) for every account without
 // a key of its own, and each request costs credits worked out from what Anthropic charges for it:
-// 1 credit = $0.0001, so the 10,000 every account starts with (FREE_CREDITS in db.js) are $1 of
-// Claude use. Credits are bought in whole PAID_STEP_USD amounts (stripe.js), at
+// 1 credit = $0.0001, so the 10,000 every account gets for connecting GitHub (FREE_CREDITS in db.js)
+// are $1 of Claude use. Credits are bought in whole PAID_STEP_USD amounts (stripe.js), at
 // CREDITS_PER_PAID_USD: less than CREDITS_PER_USD, so the payment fee is covered.
 
 // Accounts' own Anthropic keys, turned off: everyone uses the app's key through credits. Keys saved
@@ -448,6 +448,7 @@ export async function creditsView(userId) {
     source,
     active: isClaudeActive(userId),
     creditsPerDollar: CREDITS_PER_USD,
+    freeCredits: FREE_CREDITS,
     // Amounts are whole dollars: `stepUsd` at a time, up to `maxUsd`, each buying `creditsPerUsd`.
     purchase: { mode: config.purchases, stepUsd: PAID_STEP_USD, maxUsd: MAX_PAID_USD, creditsPerUsd: CREDITS_PER_PAID_USD },
   };

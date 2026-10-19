@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { claudeAccess } from "@/lib/claude";
-import { useCredits } from "@/lib/credits";
+import { formatCredits, useCredits } from "@/lib/credits";
 import { cantManage, type Repo } from "@/lib/repos";
 import type { Access } from "@/lib/session";
 import { CreateSite } from "./CreateSite";
@@ -131,6 +131,11 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
         <>
           GitHub is a free service that stores your site and puts it on the web. No account yet? You can create one on the
           next screen.
+          {credits?.freePending && (
+            <span className="mt-1 block font-medium text-sky-700 dark:text-sky-300">
+              Connecting it also gives you {formatCredits(credits.freeCredits)} free Claude credits.
+            </span>
+          )}
         </>
       ),
       done: Boolean(githubLogin),
@@ -152,7 +157,7 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
       done: approved,
       action:
         access.status === "none" ? (
-          <Button variant={githubLogin ? "primary" : "secondary"} disabled={requesting} onClick={() => void requestAccess()}>
+          <Button className="cursor-pointer" variant={githubLogin ? "primary" : "secondary"} disabled={requesting} onClick={() => void requestAccess()}>
             {requesting ? "Sending…" : "Request access"}
           </Button>
         ) : null,
@@ -243,7 +248,7 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
                 </p>
                 {access.status === "none" && (
                   <div className="mt-3">
-                    <Button variant="primary" disabled={requesting} onClick={() => void requestAccess()}>
+                    <Button className="cursor-pointer" variant="primary" disabled={requesting} onClick={() => void requestAccess()}>
                       {requesting ? "Sending…" : "Request access"}
                     </Button>
                   </div>

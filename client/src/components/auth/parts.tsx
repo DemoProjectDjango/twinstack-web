@@ -58,7 +58,7 @@ const PANELS = {
 
 const PERKS = [
   "A ready-made website with its own free web address",
-  "10,000 free Claude credits to write and design pages",
+  "10,000 free Claude credits to write and design pages when you connect GitHub",
   "Nothing goes live until you press Publish",
 ];
 
