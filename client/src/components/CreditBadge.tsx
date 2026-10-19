@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import { BUY_CREDITS_HREF, CLAUDE_SETUP_HREF, CONNECT_GITHUB_HREF } from "@/lib/claude";
-import { type Credits, creditsValue, formatCredits, useCredits, useCreditsFailed } from "@/lib/credits";
+import { type Credits, formatCredits, useCredits, useCreditsFailed } from "@/lib/credits";
 import { BuyCredits } from "./BuyCredits";
 
 /** "low" below a tenth of what the account has had (or 1,000), "empty" at zero (not while the free credits wait for GitHub). */
@@ -178,7 +178,7 @@ export function CreditBadge() {
                   <p className="text-2xl font-semibold tabular-nums">{formatCredits(shownBalance)}</p>
                   <p className="text-xs text-zinc-500">
                     {credits.balance > 0
-                      ? `About ${creditsValue(credits.balance, credits.creditsPerDollar)} of Claude use left`
+                      ? "Credits left to use with Claude"
                       : credits.freePending
                         ? "Connect GitHub to get your free credits."
                         : "Buy more credits to keep using Claude."}

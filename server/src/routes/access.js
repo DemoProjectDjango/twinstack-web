@@ -1,11 +1,15 @@
 import { Router } from "express";
 import { config } from "../config.js";
+import { CREDITS_PER_PAID_USD, CREDITS_PER_USD, PLATFORM_SHARE, purchaseMoney, totalsMoney } from "../credits.js";
 import { PURCHASE_STATUSES, listAccessRequests, listAllPurchases, publicUser, purchaseTotals, requestAccess, setAccessStatus } from "../db.js";
 import { sendEmail } from "../email.js";
 import { FastModelError, fastModelView, setFastModel } from "../fast-model.js";
 import { ImageModelError, imageModelView, setImageModel } from "../image-model.js";
 import { ProviderHealthError, checkProviderCosts, creditActivityReport, providerHealth, setProviderBalance } from "../provider-health.js";
+import { INSIGHT_PERIODS, purchaseInsights } from "../purchase-insights.js";
+import { PURCHASE_EXPORT_FORMATS, exportPurchases, purchasesFileName } from "../purchases-export.js";
 import { requireAuth } from "../session.js";
+import { zoneOf } from "../zoned-days.js";
 import { requireJson } from "./helpers.js";
 
 // Who may create sites. An account asks once (POST /api/access/request), which emails the admins
@@ -115,7 +119,7 @@ adminRouter.put("/models", async (req, res) => {
 
 // Every account's credit purchases (stripe.js): `?status=&provider=stripe|demo&mode=live|test&q=`
 // narrow the list, `before` (an ISO date) and `limit` page it, newest first. The first page also has
-// the totals. /purchases.csv is the whole filtered list as a spreadsheet, for accounting.
+// the totals. /purchases/export downloads the whole filtered list as PDF, Excel or CSV.
 function purchaseFilters(query) {
   const pick = (value, allowed) => (typeof value === "string" && allowed.includes(value) ? value : null);
   const before = typeof query.before === "string" ? new Date(query.before) : null;
@@ -133,49 +137,54 @@ adminRouter.get("/purchases", async (req, res) => {
   const filters = purchaseFilters(req.query);
   const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 200);
   const [items, totals] = await Promise.all([listAllPurchases({ ...filters, limit }), filters.before ? null : purchaseTotals()]);
-  res.json({ items, more: items.length === limit, ...(totals && { totals, purchases: config.purchases }) });
+  res.json({
+    // Each with its real money (credits.js purchaseMoney): paid, credits' value, refunds, kept, Stripe's fee, profit.
+    items: items.map((p) => ({ ...p, money: purchaseMoney(p) })),
+    more: items.length === limit,
+    ...(totals && {
+      totals: { ...totals, allTime: moneyByMode(totals.allTime), last30Days: moneyByMode(totals.last30Days) },
+      purchases: config.purchases,
+      pricing: { platformShare: PLATFORM_SHARE, creditsPerPaidUsd: CREDITS_PER_PAID_USD, creditsPerUsd: CREDITS_PER_USD },
+    }),
+  });
 });
 
-const CSV_COLUMNS = [
-  ["Created", (p) => p.createdAt?.toISOString()],
-  ["Paid", (p) => p.paidAt?.toISOString()],
-  ["Status", (p) => p.status],
-  ["Provider", (p) => p.provider],
-  ["Mode", (p) => (p.provider === "demo" ? "" : p.livemode ? "live" : "test")],
-  ["Buyer email", (p) => p.buyer?.email ?? p.account.email],
-  ["Buyer name", (p) => p.buyer?.name ?? p.account.name],
-  ["Account id", (p) => p.account.id],
-  ["Account email now", (p) => (p.account.deleted ? "(deleted)" : p.account.email)],
-  ["Credits", (p) => p.credits],
-  ["Credits taken back", (p) => p.refundedCredits ?? 0],
-  ["Currency", (p) => p.currency],
-  ["Price", (p) => cents(p.priceCents)],
-  ["Paid amount", (p) => cents(p.amountPaidCents)],
-  ["Stripe fee", (p) => cents(p.feeCents)],
-  ["Refunded", (p) => cents(p.refundedCents)],
-  ["Disputed", (p) => cents(p.disputedCents)],
-  ["Card", (p) => (p.card ? `${p.card.brand} ${p.card.last4}` : (p.method ?? ""))],
-  ["Card country", (p) => p.card?.country],
-  ["Stripe payment", (p) => p.paymentIntentId],
-  ["Stripe checkout", (p) => p.stripeSessionId],
-  ["Stripe customer", (p) => p.customerId],
-  ["Receipt", (p) => p.receiptUrl],
-];
+const moneyByMode = ({ live, test }) => ({ live: totalsMoney(live), test: totalsMoney(test) });
 
-const cents = (n) => (typeof n === "number" ? (n / 100).toFixed(2) : "");
-// Quoted, and a leading = + - @ neutralised so a spreadsheet never runs a buyer's name as a formula.
-const csvCell = (value) => {
-  const text = value == null ? "" : String(value);
-  return `"${(/^[=+\-@]/.test(text) ? `'${text}` : text).replace(/"/g, '""')}"`;
-};
-
-adminRouter.get("/purchases.csv", async (req, res) => {
-  const items = await listAllPurchases({ ...purchaseFilters(req.query), limit: 10_000 });
-  const lines = [CSV_COLUMNS.map(([name]) => csvCell(name)), ...items.map((p) => CSV_COLUMNS.map(([, get]) => csvCell(get(p))))];
+// `?days=7|30|90|365&mode=live|test&tz=<IANA zone>`: the Purchases page's summary for that period
+// (purchase-insights.js): profit, the period before to compare, a chart series, top buyers and how
+// many purchases are in each status.
+adminRouter.get("/purchases/insights", async (req, res) => {
   res.set("Cache-Control", "no-store");
-  res.attachment(`twinstack-purchases-${new Date().toISOString().slice(0, 10)}.csv`);
-  res.type("text/csv").send(`﻿${lines.map((cells) => cells.join(",")).join("\r\n")}\r\n`);
+  const days = INSIGHT_PERIODS[req.query.days] ?? 30;
+  res.json(await purchaseInsights({ days, live: req.query.mode !== "test", tz: req.query.tz }));
 });
+
+// `?format=pdf|xlsx|csv&tz=<IANA zone>` and the list's filters: every matching purchase as a
+// file (purchases-export.js), dates in the admin's time zone.
+adminRouter.get("/purchases/export", async (req, res) => {
+  const format = typeof req.query.format === "string" && PURCHASE_EXPORT_FORMATS[req.query.format] ? req.query.format : null;
+  if (!format) return res.status(400).json({ error: "Choose PDF, Excel or CSV." });
+  const filters = purchaseFilters(req.query);
+  const items = await listAllPurchases({ ...filters, before: null, limit: 10_000 });
+  const generatedAt = new Date();
+  const body = await exportPurchases(format, { items, filters: filtersWords(filters), zone: zoneOf(req.query.tz), generatedAt });
+  res.set("Cache-Control", "no-store");
+  res.attachment(purchasesFileName(format, generatedAt));
+  res.type(PURCHASE_EXPORT_FORMATS[format].type).send(body);
+});
+
+/** The list's filters in words, for the downloads: "Status: paid; Live payments; Search: ann". */
+function filtersWords({ status, provider, mode, q }) {
+  return [
+    status && `Status: ${status}`,
+    provider && (provider === "demo" ? "Demo purchases" : "Stripe purchases"),
+    mode && (mode === "live" ? "Live payments" : "Test payments"),
+    q && `Search: ${q}`,
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
 
 // The app's provider balances, spend, runway, refusals and daily cost checks. `?fresh=1` asks
 // DeepSeek for its balance again; POST /providers/check also runs the cost check now.

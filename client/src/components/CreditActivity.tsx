@@ -19,7 +19,7 @@ type Activity = {
     usage: Use;
     usedCredits: number;
   };
-  days: { day: string; boughtCredits: number; paidCents: number; purchases: number; freeCredits: number; newAccounts: number; used: Use }[];
+  days: { day: string; boughtCredits: number; paidCents: number; purchases: number; freeCredits: number; newAccounts: number; used: Use; profit: Profit }[];
   users: {
     userId: string;
     email: string | null;
@@ -31,13 +31,19 @@ type Activity = {
     purchases: number;
     used: Use;
     usedCredits: number;
+    profit: Profit;
   }[];
   userCount: number;
   costUsd: Record<ProviderId, number>;
   totalCostUsd: number;
   revenueUsd: number;
+  /** Profit (cents) on purchases paid in these dates: the share kept, less Stripe's fees. */
+  profit: Profit;
+  platformShare: number;
   creditsPerUsd: number;
 };
+
+type Profit = { paidCents: number; keptCents: number; feeCents: number; profitCents: number };
 
 type Range = "today" | "7" | "30" | "month" | "custom";
 
@@ -148,7 +154,6 @@ export function CreditActivity() {
 function ActivityBody({ data }: { data: Activity }) {
   const { totals } = data;
   const p = totals.purchases;
-  const net = data.revenueUsd - data.totalCostUsd;
 
   return (
     <div className="space-y-4">
@@ -164,8 +169,8 @@ function ActivityBody({ data }: { data: Activity }) {
         <Stat title="Credits used" value={formatCredits(totals.usedCredits)}>
           {usd(data.totalCostUsd)} at the providers
         </Stat>
-        <Stat title="Paid minus provider cost" value={usd(net)} tone={net < 0 ? "bad" : "good"}>
-          {usd(data.revenueUsd)} paid − {usd(data.totalCostUsd)} cost. Credits bought now are often used later.
+        <Stat title="Profit" value={usd(data.profit.profitCents / 100)} tone={data.profit.profitCents < 0 ? "bad" : "good"}>
+          {usd(data.profit.keptCents / 100)} kept ({Math.round(data.platformShare * 100)}%) − {usd(data.profit.feeCents / 100)} Stripe fees
         </Stat>
       </div>
 
@@ -210,6 +215,7 @@ function ActivityBody({ data }: { data: Activity }) {
                     </th>
                   ))}
                   <th className={`${TH} text-right`}>Cost</th>
+                  <th className={`${TH} text-right`}>Profit</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
@@ -227,6 +233,9 @@ function ActivityBody({ data }: { data: Activity }) {
                         </td>
                       ))}
                       <td className={`${TD} text-right`}>{used ? usd(used / data.creditsPerUsd) : "—"}</td>
+                      <td className={`${TD} text-right`}>
+                        <ProfitCell profit={d.profit} />
+                      </td>
                     </tr>
                   );
                 })}
@@ -251,6 +260,7 @@ function ActivityBody({ data }: { data: Activity }) {
                   <th className={TH}>User</th>
                   <th className={`${TH} text-right`}>Bought</th>
                   <th className={`${TH} text-right`}>Paid</th>
+                  <th className={`${TH} text-right`}>Profit</th>
                   {PROVIDERS.map((id) => (
                     <th key={id} className={`${TH} text-right`}>
                       {PROVIDER_LABELS[id]}
@@ -270,6 +280,9 @@ function ActivityBody({ data }: { data: Activity }) {
                     </td>
                     <td className={`${TD} text-right`}>{u.boughtCredits ? formatCredits(u.boughtCredits) : "—"}</td>
                     <td className={`${TD} text-right`}>{u.paidCents ? usd(u.paidCents / 100) : "—"}</td>
+                    <td className={`${TD} text-right`}>
+                      <ProfitCell profit={u.profit} />
+                    </td>
                     {PROVIDERS.map((id) => (
                       <td key={id} className={`${TD} text-right`}>
                         {u.used[id].credits ? formatCredits(u.used[id].credits) : "—"}
@@ -289,10 +302,15 @@ function ActivityBody({ data }: { data: Activity }) {
       </details>
       <p className="text-xs text-zinc-500">
         Days are in {data.zone}. Bought credits count on the day they were paid. Cost is what the use cost at the providers, at the app&apos;s
-        prices.
+        prices. Profit is what was kept from purchases, less Stripe&apos;s fees.
       </p>
     </div>
   );
+}
+
+function ProfitCell({ profit }: { profit: Profit }) {
+  if (!profit.paidCents) return <>—</>;
+  return <span className={profit.profitCents < 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}>{usd(profit.profitCents / 100)}</span>;
 }
 
 function Stat({ title, value, tone, children }: { title: string; value: string; tone?: "good" | "bad"; children: React.ReactNode }) {

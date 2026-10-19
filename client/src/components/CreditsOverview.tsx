@@ -4,7 +4,7 @@ import Link from "next/link";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { CLAUDE_SETUP_HREF } from "@/lib/claude";
 import { GitHubIcon } from "./GitHubIcon";
-import { type Credits, creditsValue, formatCredits, formatDollars, useCredits, useCreditsFailed } from "@/lib/credits";
+import { type Credits, formatCredits, formatDollars, useCredits, useCreditsFailed } from "@/lib/credits";
 import { api } from "@/lib/site-api";
 import { BuyCredits } from "./BuyCredits";
 import { Button, ErrorText, Notice, Segmented, Spinner } from "./site/ui";
@@ -126,8 +126,7 @@ export function CreditsOverview() {
         <section className="rounded-lg border border-zinc-200 p-6 dark:border-zinc-800">
           <h2 className="text-lg font-semibold">Buy credits</h2>
           <p className="mb-4 mt-1 text-sm text-zinc-500">
-            Each {formatDollars(1)} buys {formatCredits(credits.purchase.creditsPerUsd)} credits, about{" "}
-            {creditsValue(credits.purchase.creditsPerUsd, credits.creditsPerDollar)} of Claude use.
+            Each {formatDollars(1)} buys {formatCredits(credits.purchase.creditsPerUsd)} credits.
           </p>
           <BuyCredits credits={credits} />
         </section>
@@ -149,7 +148,7 @@ function Balance({ credits }: { credits: Credits }) {
       <p className="mt-1 text-4xl font-semibold tabular-nums">{formatCredits(credits.balance)}</p>
       <p className="mt-1 text-sm text-zinc-500">
         {credits.balance > 0
-          ? `About ${creditsValue(credits.balance, credits.creditsPerDollar)} of Claude use left.`
+          ? "Credits left. Each Claude request uses some, depending on how much it reads and writes."
           : credits.freePending
             ? "Connect GitHub to get your free credits."
             : "You've used all your credits. Buy more to keep using Claude."}
@@ -166,8 +165,7 @@ function Balance({ credits }: { credits: Credits }) {
       {credits.freePending && credits.source === "credits" && (
         <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md bg-sky-500/10 px-4 py-3">
           <p className="min-w-0 flex-1 text-sm text-sky-900 dark:text-sky-200">
-            Connect your GitHub account to get {formatCredits(credits.freeCredits)} free credits, about{" "}
-            {creditsValue(credits.freeCredits, credits.creditsPerDollar)} of Claude use.
+            Connect your GitHub account to get {formatCredits(credits.freeCredits)} free credits.
           </p>
           {/* Plain <a>: a full-page navigation to the Express OAuth route. */}
           <a

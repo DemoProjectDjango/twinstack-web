@@ -1,5 +1,5 @@
 import { config } from "./config.js";
-import { CREDITS_PER_USD } from "./credits.js";
+import { CREDITS_PER_USD, PLATFORM_SHARE, totalsMoney } from "./credits.js";
 import {
   chargedByProvider,
   chargedByProviderPerDay,
@@ -284,9 +284,20 @@ export async function creditActivityReport({ from, to, tz }) {
     costUsd,
     totalCostUsd: Object.values(costUsd).reduce((a, b) => a + b, 0),
     revenueUsd: (activity.totals.purchases.paidCents - activity.totals.purchases.refundedCents) / 100,
+    // Profit on what was paid in these dates: the share kept, less Stripe's fees (credits.js PLATFORM_SHARE).
+    profit: profitOf({ ...activity.totals.purchases, paidCredits: activity.totals.purchases.credits }),
+    days: activity.days.map((d) => ({ ...d, profit: profitOf(d) })),
+    users: activity.users.map((u) => ({ ...u, profit: profitOf(u) })),
+    platformShare: PLATFORM_SHARE,
     creditsPerUsd: CREDITS_PER_USD,
     recentPurchases: purchases,
   };
+}
+
+/** Kept, Stripe's fees (estimated where not reported yet) and profit (cents) of paid purchases' sums. */
+function profitOf(sums) {
+  const m = totalsMoney({ ...sums, credits: sums.paidCredits });
+  return { paidCents: m.paidCents, keptCents: m.keptCents, feeCents: m.feeCents, profitCents: m.profitCents };
 }
 
 /* ------------------------------------------------------------ cost reports */

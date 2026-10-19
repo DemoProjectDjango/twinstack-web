@@ -23,7 +23,14 @@ export type Credits = {
    * Buying: paid through Stripe, a demo (development only: nothing is paid) or off. Amounts are
    * whole dollars, `stepUsd` at a time up to `maxUsd`, each buying `creditsPerUsd`.
    */
-  purchase: { mode: "stripe" | "demo" | "off"; stepUsd: number; maxUsd: number; creditsPerUsd: number };
+  purchase: {
+    mode: "stripe" | "demo" | "off";
+    stepUsd: number;
+    maxUsd: number;
+    creditsPerUsd: number;
+    /** The fixed share of each purchase kept for payment processing and the platform (the rest becomes credits). */
+    platformShare?: number;
+  };
 };
 
 const ACTIVE_POLL_MS = 5_000;

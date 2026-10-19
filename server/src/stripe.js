@@ -4,6 +4,7 @@ import { creditsForDollars } from "./credits.js";
 import {
   createPurchase,
   endPurchase,
+  setPurchaseFee,
   findPurchaseBySession,
   getStripeCustomerId,
   payPurchase,
@@ -188,6 +189,13 @@ export async function stripeWebhook(req, res) {
             status: share >= 1 ? "refunded" : "part-refunded",
             amounts: { refundedCents: object.amount_refunded },
           });
+        }
+        break;
+      // Stripe often fills in a charge's fee after the payment completes: record it then.
+      case "charge.updated":
+        if (object.status === "succeeded" && object.balance_transaction) {
+          const tx = typeof object.balance_transaction === "string" ? await stripe.balanceTransactions.retrieve(object.balance_transaction) : object.balance_transaction;
+          if (typeof tx?.fee === "number") await setPurchaseFee(paymentIntentOf(object), tx.fee);
         }
         break;
       case "charge.dispute.created":

@@ -99,3 +99,21 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
 }
+
+/* Something opening in place (a purchase's details on the admin Purchases page): a short fade down. */
+@keyframes reveal-down {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.reveal {
+  animation: reveal-down 160ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    animation: none;
+  }
+}

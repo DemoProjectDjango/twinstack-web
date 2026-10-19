@@ -506,7 +506,7 @@ Credits are bought through Stripe Checkout. In the [Stripe dashboard](https://da
    test purchase works end to end, then the live one.
 2. **Developers → Webhooks → Add endpoint:** `https://api.mydomain.com/api/stripe/webhook`, with these events:
    `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`,
-   `checkout.session.expired`, `charge.refunded` and `charge.dispute.created`. Copy its signing secret into
+   `checkout.session.expired`, `charge.updated` (Stripe's fee, which it often reports a moment after the payment), `charge.refunded` and `charge.dispute.created`. Copy its signing secret into
    `STRIPE_WEBHOOK_SECRET`. Test and live mode each have their own endpoint and secret.
 3. **Settings → Customer emails:** turn on emails for successful payments and refunds, so buyers get receipts.
 

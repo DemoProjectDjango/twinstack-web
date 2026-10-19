@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { type Credits, creditsValue, formatCredits, formatDollars, setCredits } from "@/lib/credits";
+import { type Credits, formatCredits, formatDollars, setCredits } from "@/lib/credits";
 import { api } from "@/lib/site-api";
 import { toast } from "@/lib/toast";
 import { Button, ErrorText, inputClass } from "./site/ui";
@@ -14,7 +14,7 @@ const PRESETS = [5, 10, 25, 50];
  * development without Stripe it's a demo: the credits are added at once and nothing is paid.
  */
 export function BuyCredits({ credits, onBought, compact = false }: { credits: Credits; onBought?: () => void; compact?: boolean }) {
-  const { mode, stepUsd, maxUsd, creditsPerUsd } = credits.purchase;
+  const { mode, stepUsd, maxUsd, creditsPerUsd, platformShare } = credits.purchase;
   const [amount, setAmount] = useState(PRESETS[0]);
   const [custom, setCustom] = useState("");
   const [working, setWorking] = useState(false);
@@ -110,7 +110,8 @@ export function BuyCredits({ credits, onBought, compact = false }: { credits: Cr
       {typed !== null && problem && <p className="text-xs text-red-600 dark:text-red-400">{problem}</p>}
       {!problem && (
         <p className="text-xs text-zinc-500">
-          {formatCredits(creditsFor(chosen))} credits, about {creditsValue(creditsFor(chosen), credits.creditsPerDollar)} of Claude use.
+          {formatDollars(chosen)} buys {formatCredits(creditsFor(chosen))} credits.
+          {platformShare !== undefined && ` A fixed ${Math.round(platformShare * 100)}% of the price covers payment processing and the platform fee.`}
         </p>
       )}
 

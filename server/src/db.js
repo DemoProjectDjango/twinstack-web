@@ -737,6 +737,12 @@ export async function payPurchase(id, payment) {
   await creditPurchases().updateOne({ _id }, { $set: { credited: true } });
 }
 
+/** Stripe's fee for a paid purchase, once Stripe reports it (only when it isn't known yet). */
+export async function setPurchaseFee(paymentIntentId, feeCents) {
+  if (typeof paymentIntentId !== "string" || !paymentIntentId || typeof feeCents !== "number") return;
+  await creditPurchases().updateOne({ paymentIntentId, feeCents: { $not: { $type: "number" } } }, { $set: { feeCents } });
+}
+
 /** A pending purchase that will never be paid: "failed" or "expired". */
 export async function endPurchase(id, status) {
   await creditPurchases().updateOne({ _id: objectId(id), status: "pending" }, { $set: { status, endedAt: new Date() } });
@@ -959,6 +965,22 @@ export async function listAllPurchases({ before = null, since = null, limit = 50
 
 const PAID_STATUSES = ["paid", "refunded", "part-refunded", "disputed"];
 
+/** Paid Stripe purchases (live or test) paid between `start` and `end`, for purchase-insights.js. */
+export async function paidPurchasesBetween({ start, end, live }) {
+  return creditPurchases()
+    .find(
+      { provider: "stripe", livemode: live ? true : { $ne: true }, status: { $in: PAID_STATUSES }, paidAt: { $gte: start, $lt: end } },
+      { projection: { userId: 1, buyer: 1, credits: 1, refundedCredits: 1, priceCents: 1, amountPaidCents: 1, feeCents: 1, refundedCents: 1, disputedCents: 1, status: 1, provider: 1, paidAt: 1 } },
+    )
+    .toArray();
+}
+
+/** How many purchases there are in each status, all time (the Purchases page's status filter). */
+export async function purchaseStatusCounts() {
+  const rows = await creditPurchases().aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]).toArray();
+  return Object.fromEntries(rows.map((r) => [r._id, r.count]));
+}
+
 /**
  * Money taken through Stripe, all time and in the last 30 days, live and test apart: purchases,
  * amount paid, Stripe's fees, refunded and disputed amounts, and credits sold and taken back.
@@ -969,6 +991,9 @@ export async function purchaseTotals() {
     purchases: { $sum: 1 },
     paidCents: { $sum: { $ifNull: ["$amountPaidCents", 0] } },
     feeCents: { $sum: { $ifNull: ["$feeCents", 0] } },
+    // Paid purchases Stripe hasn't reported a fee for yet: estimated in credits.js (estimatedFeeCents).
+    unreportedPaidCents: { $sum: { $cond: [{ $isNumber: "$feeCents" }, 0, { $ifNull: ["$amountPaidCents", 0] }] } },
+    unreportedCount: { $sum: { $cond: [{ $isNumber: "$feeCents" }, 0, 1] } },
     refundedCents: { $sum: { $ifNull: ["$refundedCents", 0] } },
     disputedCents: { $sum: { $ifNull: ["$disputedCents", 0] } },
     credits: { $sum: "$credits" },
@@ -1083,6 +1108,10 @@ export async function creditActivity({ start, end, zone, userLimit = 100 }) {
             paidCents: { $sum: { $ifNull: ["$amountPaidCents", 0] } },
             refundedCents: { $sum: { $add: [{ $ifNull: ["$refundedCents", 0] }, { $ifNull: ["$disputedCents", 0] }] } },
             creditsTakenBack: { $sum: { $ifNull: ["$refundedCredits", 0] } },
+            feeCents: { $sum: { $ifNull: ["$feeCents", 0] } },
+            // Paid purchases Stripe hasn't reported a fee for yet: estimated in credits.js (estimatedFeeCents).
+            unreportedPaidCents: { $sum: { $cond: [{ $isNumber: "$feeCents" }, 0, { $ifNull: ["$amountPaidCents", 0] }] } },
+            unreportedCount: { $sum: { $cond: [{ $isNumber: "$feeCents" }, 0, 1] } },
           },
         },
       ])
@@ -1096,19 +1125,21 @@ export async function creditActivity({ start, end, zone, userLimit = 100 }) {
   ]);
 
   const usageZero = () => Object.fromEntries(PROVIDERS.map((p) => [p, { credits: 0, requests: 0 }]));
+  // Paid purchases only (not demo ones), for each day's and account's profit.
+  const moneyZero = () => ({ boughtCredits: 0, paidCents: 0, purchases: 0, paidCredits: 0, refundedCents: 0, creditsTakenBack: 0, feeCents: 0, unreportedPaidCents: 0, unreportedCount: 0 });
   const totals = {
-    purchases: { count: 0, credits: 0, paidCents: 0, refundedCents: 0, creditsTakenBack: 0, demoCount: 0, demoCredits: 0 },
+    purchases: { count: 0, credits: 0, paidCents: 0, refundedCents: 0, creditsTakenBack: 0, feeCents: 0, unreportedPaidCents: 0, unreportedCount: 0, demoCount: 0, demoCredits: 0 },
     free: { accounts: 0, credits: 0 },
     usage: usageZero(),
   };
   const days = new Map();
   const dayRow = (d) => {
-    if (!days.has(d)) days.set(d, { day: d, boughtCredits: 0, paidCents: 0, purchases: 0, freeCredits: 0, newAccounts: 0, used: usageZero() });
+    if (!days.has(d)) days.set(d, { day: d, ...moneyZero(), freeCredits: 0, newAccounts: 0, used: usageZero() });
     return days.get(d);
   };
   const people = new Map();
   const person = (id) => {
-    if (!people.has(id)) people.set(id, { userId: id, boughtCredits: 0, paidCents: 0, purchases: 0, used: usageZero() });
+    if (!people.has(id)) people.set(id, { userId: id, ...moneyZero(), used: usageZero() });
     return people.get(id);
   };
 
@@ -1119,9 +1150,10 @@ export async function creditActivity({ start, end, zone, userLimit = 100 }) {
       usage[provider].requests += requests;
     }
   }
-  for (const { _id, purchases, credits, paidCents, refundedCents, creditsTakenBack } of purchaseRows) {
+  for (const { _id, purchases, credits, paidCents, refundedCents, creditsTakenBack, feeCents, unreportedPaidCents, unreportedCount } of purchaseRows) {
     const p = totals.purchases;
-    if (_id.provider === "demo") {
+    const demo = _id.provider === "demo";
+    if (demo) {
       p.demoCount += purchases;
       p.demoCredits += credits;
     } else {
@@ -1130,13 +1162,21 @@ export async function creditActivity({ start, end, zone, userLimit = 100 }) {
       p.paidCents += paidCents;
       p.refundedCents += refundedCents;
       p.creditsTakenBack += creditsTakenBack;
+      p.feeCents += feeCents;
+      p.unreportedPaidCents += unreportedPaidCents;
+      p.unreportedCount += unreportedCount;
     }
-    const d = dayRow(_id.day);
-    const who = person(_id.userId);
-    for (const row of [d, who]) {
+    for (const row of [dayRow(_id.day), person(_id.userId)]) {
       row.boughtCredits += credits;
-      row.paidCents += paidCents;
       row.purchases += purchases;
+      if (demo) continue;
+      row.paidCents += paidCents;
+      row.paidCredits += credits;
+      row.refundedCents += refundedCents;
+      row.creditsTakenBack += creditsTakenBack;
+      row.feeCents += feeCents;
+      row.unreportedPaidCents += unreportedPaidCents;
+      row.unreportedCount += unreportedCount;
     }
   }
   for (const { _id, accounts, credits } of signupRows) {

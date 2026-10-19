@@ -4,8 +4,9 @@ import { FREE_CREDITS, getAnthropicKey, getCredits, recordClaudeUsage } from "./
 // Claude credits. Claude runs on the app's key (PLATFORM_ANTHROPIC_KEY) for every account without
 // a key of its own, and each request costs credits worked out from what Anthropic charges for it:
 // 1 credit = $0.0001, so the 10,000 every account gets for connecting GitHub (FREE_CREDITS in db.js)
-// are $1 of Claude use. Credits are bought in whole PAID_STEP_USD amounts (stripe.js), at
-// CREDITS_PER_PAID_USD: less than CREDITS_PER_USD, so the payment fee is covered.
+// are $1 of Claude use. Credits are bought in whole PAID_STEP_USD amounts (stripe.js): the buyer
+// gets what they pay, less the fixed PLATFORM_SHARE, as credits. Stripe's fee comes out of that share,
+// and what's left is the platform's profit.
 
 // Accounts' own Anthropic keys, turned off: everyone uses the app's key through credits. Keys saved
 // before stay stored but unused. Set to true to let an account use its own key again (never charged,
@@ -13,11 +14,53 @@ import { FREE_CREDITS, getAnthropicKey, getCredits, recordClaudeUsage } from "./
 export const OWN_KEYS = false;
 
 export const CREDITS_PER_USD = 10_000;
-// Stripe takes about 2.9% + 30¢ a payment; 10% off the credits covers that from $5 up. Stripe's own
-// minimum charge is 50¢.
-export const CREDITS_PER_PAID_USD = 9_000;
+// A fixed 20% of every purchase is kept: $10 buys 80,000 credits ($8 of AI use) and $2 is kept. Stripe's
+// fee (about 2.9% + 30¢, more for cards from abroad) is paid from the $2, and the rest is profit:
+// purchaseMoney works it out from Stripe's actual fee. Stripe's own minimum charge is 50¢.
+export const PLATFORM_SHARE = 0.2;
+export const CREDITS_PER_PAID_USD = Math.round(CREDITS_PER_USD * (1 - PLATFORM_SHARE));
 export const PAID_STEP_USD = 5;
 export const MAX_PAID_USD = 500;
+
+// Stripe's standard card fee, for a paid purchase whose real fee Stripe hasn't reported yet.
+const STRIPE_FEE = { share: 0.029, cents: 30 };
+
+/** Stripe's estimated fee for `count` payments adding up to `paidCents`. */
+export const estimatedFeeCents = (paidCents, count = 1) => Math.round(paidCents * STRIPE_FEE.share + count * STRIPE_FEE.cents);
+const SETTLED = new Set(["paid", "refunded", "part-refunded", "disputed"]);
+
+/**
+ * A purchase's real money, for the admin's pages (cents): what the buyer paid, the AI use their
+ * credits are worth (less any taken back), refunds and disputes, what the platform kept (the
+ * PLATFORM_SHARE, less any refund), Stripe's fee from that (`feeEstimated` when Stripe didn't report
+ * it), and the profit left. Null for demo purchases.
+ */
+export function purchaseMoney(p) {
+  if (p.provider === "demo") return null;
+  if (!SETTLED.has(p.status)) {
+    return { paidCents: 0, creditsValueCents: 0, refundedCents: 0, keptCents: 0, stripeFeeCents: 0, feeEstimated: false, profitCents: 0 };
+  }
+  const paidCents = p.amountPaidCents ?? p.priceCents ?? 0;
+  const creditsValueCents = Math.round(((p.credits - (p.refundedCredits ?? 0)) * 100) / CREDITS_PER_USD);
+  const feeEstimated = typeof p.feeCents !== "number";
+  const stripeFeeCents = feeEstimated ? estimatedFeeCents(paidCents) : p.feeCents;
+  const refundedCents = (p.refundedCents ?? 0) + (p.disputedCents ?? 0);
+  const keptCents = paidCents - refundedCents - creditsValueCents;
+  return { paidCents, creditsValueCents, refundedCents, keptCents, stripeFeeCents, feeEstimated, profitCents: keptCents - stripeFeeCents };
+}
+
+/**
+ * The same for many purchases' totals (purchaseTotals' sums): Stripe's fees include an estimate for
+ * the purchases it hasn't reported a fee for yet (`feeEstimatedCents` of them), as each row does.
+ */
+export function totalsMoney(sums) {
+  const creditsValueCents = Math.round(((sums.credits - sums.creditsTakenBack) * 100) / CREDITS_PER_USD);
+  const keptCents = sums.paidCents - sums.refundedCents - (sums.disputedCents ?? 0) - creditsValueCents;
+  const feeEstimatedCents = sums.unreportedCount ? estimatedFeeCents(sums.unreportedPaidCents, sums.unreportedCount) : 0;
+  const feeCents = sums.feeCents + feeEstimatedCents;
+  const profitCents = keptCents - feeCents;
+  return { ...sums, feeCents, feeEstimatedCents, creditsValueCents, keptCents, profitCents, margin: sums.paidCents > 0 ? profitCents / sums.paidCents : 0 };
+}
 
 /** The credits `dollars` buys, or null when it isn't a whole number of steps within the limits. */
 export function creditsForDollars(dollars) {
@@ -450,6 +493,13 @@ export async function creditsView(userId) {
     creditsPerDollar: CREDITS_PER_USD,
     freeCredits: FREE_CREDITS,
     // Amounts are whole dollars: `stepUsd` at a time, up to `maxUsd`, each buying `creditsPerUsd`.
-    purchase: { mode: config.purchases, stepUsd: PAID_STEP_USD, maxUsd: MAX_PAID_USD, creditsPerUsd: CREDITS_PER_PAID_USD },
+    purchase: {
+      mode: config.purchases,
+      stepUsd: PAID_STEP_USD,
+      maxUsd: MAX_PAID_USD,
+      creditsPerUsd: CREDITS_PER_PAID_USD,
+      // The share of each purchase kept (Stripe's fee comes out of it); the rest becomes credits.
+      platformShare: PLATFORM_SHARE,
+    },
   };
 }
