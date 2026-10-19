@@ -19,6 +19,19 @@
   }
 }
 
+/* The sign-up code screen's wait before "Send a new code" (AuthForm.tsx): a ring that drains. */
+.resend-ring {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 0;
+  animation: resend-drain linear forwards;
+}
+
+@keyframes resend-drain {
+  to {
+    stroke-dashoffset: 100;
+  }
+}
+
 /*
  * The site editor's status strip (StatusStrip.tsx): a thin neutral border with one short streak of
  * the status's colour gliding around it. The strip is padded by the border's width and its inner box

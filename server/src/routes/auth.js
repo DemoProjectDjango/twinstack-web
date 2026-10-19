@@ -1,17 +1,22 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { Router } from "express";
 import { config } from "../config.js";
 import {
   DuplicateEmailError,
   GithubInUseError,
   createUser,
+  deletePendingSignup,
+  findPendingSignup,
   findUserByEmail,
   findUserById,
   linkGithub,
   publicUser,
   recordLogin,
+  recordSignupAttempt,
+  savePendingSignup,
   unlinkGithub,
 } from "../db.js";
+import { sendEmail } from "../email.js";
 import { exchangeCode, githubFetch } from "../github.js";
 import { PASSWORD_MAX, PASSWORD_MIN, hashPassword, verifyAgainstDummy, verifyPassword } from "../passwords.js";
 import { clearSession, cookieOptions, readSession, requireAuth, setSession } from "../session.js";
@@ -69,6 +74,37 @@ function readCredentials(body) {
   return { email, password };
 }
 
+// Registering is two steps, so only people who receive email at the address get an
+// account: /register emails a 6-digit code and returns a token for this browser, and
+// /register/verify creates the account once both match. Nothing exists before that,
+// so an address can't be claimed (free credits, an ADMIN_EMAILS address) by someone
+// who doesn't own it. The token stops a second sign-up for the same address from
+// setting the password the owner's code then confirms: a newer attempt replaces it.
+const CODE_TTL_MS = 15 * 60 * 1000;
+const CODE_MAX_ATTEMPTS = 5;
+const CODE_RESEND_MS = 60 * 1000;
+const CODE_MAX_SENDS = 5; // per address, within PENDING_SIGNUP_MS
+// Codes emailed per IP, to stop the form being used to email strangers. In memory, like failures.
+const SIGNUP_IP_WINDOW_MS = 60 * 60 * 1000;
+const SIGNUP_IP_MAX = 10;
+const signupsByIp = new Map();
+
+function signupIpLimited(ip) {
+  const entry = signupsByIp.get(ip);
+  if (!entry || entry.resetAt < Date.now()) {
+    signupsByIp.set(ip, { count: 1, resetAt: Date.now() + SIGNUP_IP_WINDOW_MS });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > SIGNUP_IP_MAX;
+}
+
+const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+
+function sameHash(a, b) {
+  return typeof a === "string" && typeof b === "string" && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
 authRouter.post(
   "/register",
   requireJson,
@@ -82,13 +118,93 @@ authRouter.post(
       return res.status(400).json({ error: `Use a password of ${PASSWORD_MIN} to ${PASSWORD_MAX} characters.` });
     }
     if (!name) return res.status(400).json({ error: "Enter your name." });
+    if (config.isProduction && !config.email.resendKey) {
+      console.error("Sign-up refused: RESEND_API_KEY isn't set, so the confirmation code can't be emailed.");
+      return res.status(503).json({ error: "Sign-up is unavailable right now. Try again later." });
+    }
+
+    if (await findUserByEmail(email)) {
+      return res.status(409).json({ error: "An account with that email already exists." });
+    }
+    const pending = await findPendingSignup(email);
+    const waitMs = pending ? pending.sentAt.getTime() + CODE_RESEND_MS - Date.now() : 0;
+    if (waitMs > 0) {
+      // retryAfter (seconds) drives the form's "Send a new code" countdown.
+      return res.status(429).json({
+        error: "We just sent a code. Wait a minute before asking for another.",
+        retryAfter: Math.ceil(waitMs / 1000),
+      });
+    }
+    if (pending && pending.sends >= CODE_MAX_SENDS) {
+      return res.status(429).json({ error: "Too many codes sent to this address. Try again in an hour." });
+    }
+    if (signupIpLimited(req.ip)) {
+      return res.status(429).json({ error: "Too many sign-ups from here. Try again in an hour." });
+    }
+
+    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    const token = randomBytes(32).toString("hex");
+    await savePendingSignup(email, {
+      name,
+      passwordHash: await hashPassword(password),
+      codeHash: sha256(`${email}:${code}`),
+      tokenHash: sha256(token),
+      codeExpiresAt: new Date(Date.now() + CODE_TTL_MS),
+    });
+
+    const sent = await sendEmail({
+      to: email,
+      subject: `${code} is your Twinstack code`,
+      text:
+        `Hi ${name},\n\nYour Twinstack sign-up code is ${code}\n\n` +
+        `Enter it on the sign-up page to create your account. It expires in 15 minutes.\n\n` +
+        `If you didn't try to create a Twinstack account, ignore this email.\n`,
+    });
+    // Without RESEND_API_KEY (development only, see above) the email is in the server log.
+    if (!sent && config.email.resendKey) {
+      await deletePendingSignup(email);
+      return res.status(502).json({ error: "We couldn't send the code to that address. Check it and try again." });
+    }
+    res.status(202).json({ verify: true, email, token, retryAfter: CODE_RESEND_MS / 1000 });
+  }),
+);
+
+authRouter.post(
+  "/register/verify",
+  requireJson,
+  handle(async (req, res) => {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const token = typeof req.body?.token === "string" ? req.body.token : "";
+    const code = typeof req.body?.code === "string" ? req.body.code.replace(/\s+/g, "") : "";
+    if (!email || !token || !/^\d{6}$/.test(code)) {
+      return res.status(400).json({ error: "Enter the 6-digit code from the email." });
+    }
+
+    const pending = await findPendingSignup(email);
+    const tokenHash = sha256(token);
+    if (!pending || !sameHash(pending.tokenHash, tokenHash)) {
+      return res.status(410).json({ error: "This sign-up has expired or was replaced. Start again.", restart: true });
+    }
+    if (pending.attempts >= CODE_MAX_ATTEMPTS) {
+      await deletePendingSignup(email);
+      return res.status(429).json({ error: "Too many wrong codes. Start again to get a new one.", restart: true });
+    }
+    if (pending.codeExpiresAt.getTime() < Date.now()) {
+      return res.status(410).json({ error: "That code has expired. Send a new one.", expired: true });
+    }
+    if (!sameHash(pending.codeHash, sha256(`${email}:${code}`))) {
+      await recordSignupAttempt(email, tokenHash);
+      return res.status(400).json({ error: "That code isn't right. Check the email and try again." });
+    }
 
     let account;
     try {
-      account = await createUser({ email, name, passwordHash: await hashPassword(password) });
+      account = await createUser({ email, name: pending.name, passwordHash: pending.passwordHash });
     } catch (err) {
       if (err instanceof DuplicateEmailError) return res.status(409).json({ error: err.message });
       throw err;
+    } finally {
+      await deletePendingSignup(email);
     }
     await setSession(res, account._id.toHexString());
     res.status(201).json({ user: publicUser(account) });

@@ -12,7 +12,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   if (user) redirect(safeNext(nextPath));
 
   return (
-    <main className="flex flex-1 items-start justify-center px-4 py-16">
+    <main className="flex flex-1 items-center justify-center px-4 py-16">
       <AuthForm mode="login" next={nextPath} />
     </main>
   );

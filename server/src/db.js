@@ -32,6 +32,8 @@ import { config } from "./config.js";
 //               refused…), kept 30 days (provider-health.js)
 //   providerCosts    one document per provider and UTC day: the provider's own
 //               cost report next to what the app recorded (_id = provider:day)
+//   pendingSignups   one document per sign-up waiting for its emailed code
+//               (_id = the email), deleted an hour after it was first made
 //
 // An account's Claude credits are users.credits ({ balance, granted, purchased,
 // used }), changed only in single atomic updates ($inc, or a pipeline that stops a
@@ -67,6 +69,7 @@ export async function connectDb() {
     analyticsSalts().createIndex({ createdAt: 1 }, { expireAfterSeconds: 2 * 24 * 60 * 60 }),
     providerErrors().createIndex({ at: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 }),
     claudeUsage().createIndex({ charged: 1, createdAt: -1 }),
+    pendingSignups().createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
   ]);
   // Accounts from before credits get the free allowance once.
   await users().updateMany({ credits: { $exists: false } }, { $set: { credits: startingCredits() } });
@@ -94,6 +97,7 @@ const creditPurchases = () => db.collection("creditPurchases");
 const appSettings = () => db.collection("appSettings");
 const analyticsEvents = () => db.collection("analyticsEvents");
 const analyticsSalts = () => db.collection("analyticsSalts");
+const pendingSignups = () => db.collection("pendingSignups");
 
 /** How long a site's visits are kept (the TTL index on analyticsEvents.at). */
 export const ANALYTICS_RETENTION_DAYS = 365;
@@ -171,7 +175,16 @@ export function publicUser(doc) {
 
 export async function createUser({ email, name, passwordHash }) {
   const now = new Date();
-  const doc = { email, name, passwordHash, createdAt: now, lastLoginAt: now, loginCount: 1, credits: startingCredits() };
+  const doc = {
+    email,
+    name,
+    passwordHash,
+    emailVerifiedAt: now,
+    createdAt: now,
+    lastLoginAt: now,
+    loginCount: 1,
+    credits: startingCredits(),
+  };
   try {
     const { insertedId } = await users().insertOne(doc);
     return { ...doc, _id: insertedId };
@@ -183,6 +196,41 @@ export async function createUser({ email, name, passwordHash }) {
 
 export function findUserByEmail(email) {
   return users().findOne({ email });
+}
+
+/* --------------------------------------------------------- pending sign-ups */
+
+// A sign-up waits here (_id = the email) until its emailed code is entered, and only
+// then becomes an account. Each new attempt replaces the last one's code, token and
+// password; `sends` counts the codes emailed since the document was first made.
+
+/** How long a pending sign-up is kept (the TTL index on expireAt), which also bounds `sends`. */
+export const PENDING_SIGNUP_MS = 60 * 60 * 1000;
+
+export async function savePendingSignup(email, { name, passwordHash, codeHash, tokenHash, codeExpiresAt }) {
+  const now = new Date();
+  await pendingSignups().updateOne(
+    { _id: email },
+    {
+      $set: { name, passwordHash, codeHash, tokenHash, codeExpiresAt, attempts: 0, sentAt: now },
+      $inc: { sends: 1 },
+      $setOnInsert: { createdAt: now, expireAt: new Date(now.getTime() + PENDING_SIGNUP_MS) },
+    },
+    { upsert: true },
+  );
+}
+
+export function findPendingSignup(email) {
+  return pendingSignups().findOne({ _id: email });
+}
+
+/** Counts a wrong code against this attempt (matched by its token, so a newer attempt isn't touched). */
+export async function recordSignupAttempt(email, tokenHash) {
+  await pendingSignups().updateOne({ _id: email, tokenHash }, { $inc: { attempts: 1 } });
+}
+
+export async function deletePendingSignup(email) {
+  await pendingSignups().deleteOne({ _id: email });
 }
 
 /** The account whose connected GitHub login is this one (any case), or null. */
