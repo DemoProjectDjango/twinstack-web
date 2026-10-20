@@ -72,11 +72,11 @@ export function AssistantPanel() {
   }
 
   const entries = conversation?.display ?? [];
-  const suggestions = SUGGESTIONS[context.page ? "page" : (context.screen as keyof typeof SUGGESTIONS)] ?? SUGGESTIONS.home;
+  const suggestions = SUGGESTIONS[context.page && context.screen === "pages" ? "page" : (context.screen as keyof typeof SUGGESTIONS)] ?? SUGGESTIONS.home;
 
   return (
     <aside
-      aria-label="Ask Claude"
+      aria-label="Ask the AI"
       {...drop.handlers}
       className="fixed inset-0 z-50 flex flex-col border-zinc-200 bg-background sm:inset-auto sm:bottom-0 sm:right-0 sm:top-14 sm:w-[27rem] sm:border-l sm:shadow-xl dark:border-zinc-800"
     >
@@ -90,7 +90,7 @@ export function AssistantPanel() {
           ✦
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-semibold leading-5">Ask Claude</h2>
+          <h2 className="truncate text-sm font-semibold leading-5">Ask the AI</h2>
           <AutoApplySwitch on={autoApply} onChange={setAutoApply} />
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
@@ -114,11 +114,11 @@ export function AssistantPanel() {
           <div className="space-y-3">
             {nextSteps && <NextSteps data={nextSteps} onSend={(p) => void submit(p)} onFill={fillBox} disabled={running} />}
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              {nextSteps ? "Or tell Claude what you want, in your own words." : "Tell Claude what you want, in your own words: new pages, changes to wording, the menu, search results and more."}{" "}
+              {nextSteps ? "Or tell the AI what you want, in your own words." : "Tell the AI what you want, in your own words: new pages, changes to wording, the menu, search results and more."}{" "}
               You can attach photos, PDFs, Word documents or any other file.{" "}
               {autoApply
-                ? "Claude makes its changes as soon as it answers, and nothing goes live until you publish."
-                : "Claude shows you every change first, and nothing happens until you press Apply."}
+                ? "The AI makes its changes as soon as it answers, and nothing goes live until you publish."
+                : "The AI shows you every change first, and nothing happens until you press Apply."}
             </p>
             {claude.ready && (
               <div className="flex flex-col items-start gap-2">
@@ -154,7 +154,7 @@ export function AssistantPanel() {
           <div className="space-y-2">
             <Parts parts={turn.parts} />
             <p className="flex items-center gap-2 text-xs text-zinc-500">
-              <Spinner /> {turn.parts.length ? "Claude is working…" : "Claude is thinking…"}
+              <Spinner /> {turn.parts.length ? "The AI is working…" : "The AI is thinking…"}
             </p>
           </div>
         )}
@@ -202,7 +202,7 @@ export function AssistantPanel() {
               rows={2}
               maxLength={8000}
               placeholder={suggestions.placeholder}
-              aria-label="Message to Claude"
+              aria-label="Message to the AI"
               className={`${inputClass} resize-none text-sm h-25`}
             />
             <div className="flex items-center gap-2">
@@ -233,7 +233,7 @@ function AutoApplySwitch({ on, onChange }: { on: boolean; onChange: (on: boolean
       role="switch"
       aria-checked={on}
       onClick={() => onChange(!on)}
-      title="On: Claude's changes are made as soon as it answers. Off: you apply or skip each one."
+      title="On: the AI's changes are made as soon as it answers. Off: you apply or skip each one."
       className="group mt-0.5 flex items-center gap-1.5 rounded text-xs text-zinc-600 focus-visible:outline-2 focus-visible:outline-offset-2 dark:text-zinc-400"
     >
       <span

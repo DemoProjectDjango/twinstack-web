@@ -14,7 +14,7 @@ export function BuildPanel() {
   return (
     <div className="space-y-6">
       <ScreenHeader
-        title="Build tools and log"
+        title="Technical log"
         description="The editor builds the preview and installs what the site needs by itself. Use these when something looks wrong, and read the full output below."
       />
 

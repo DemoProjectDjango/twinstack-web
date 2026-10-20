@@ -4,7 +4,11 @@ import { createContext, useContext } from "react";
 import type { ClaudeAccess } from "@/lib/claude";
 import type { EditMode, Job, Overview, Publishing, SiteCheckReport, SiteUpdateInfo, WorkspaceStatus } from "@/lib/site-api";
 
-/** The site editor's screens: the everyday ones first, then the ones under Advanced. */
+/**
+ * The site editor's screens: the everyday ones in the menu ("home" is Edit site, "design" Look &
+ * logo, "details" Business info, "analytics" Visitors), "publish" (What's changed, from the top
+ * bar), then "more" (More tools) and the tools it opens.
+ */
 export type SiteSection =
   | "home"
   | "pages"
@@ -12,7 +16,10 @@ export type SiteSection =
   | "details"
   | "publish"
   | "analytics"
+  | "more"
   | "seo"
+  | "redirects"
+  | "sections"
   | "tree"
   | "schedule"
   | "memory"
@@ -71,6 +78,19 @@ export type SiteUpdateState = {
   undo: () => Promise<void>;
 };
 
+/**
+ * The top bar's Publish button. One press checks the site (the deploy's own check, run first unless
+ * a fresh report exists), asks before publishing with problems, then publishes straight to the live
+ * branch. A first publish (site details not looked at yet) or a site on a review branch opens the
+ * Publish screen instead, which has the details step and the review options.
+ */
+export type PublishNowState = {
+  /** Something to publish: changes, an earlier push that didn't reach GitHub, or a review branch. */
+  available: boolean;
+  working: "checking" | "publishing" | null;
+  publish: () => Promise<void>;
+};
+
 export type SiteContextValue = {
   owner: string;
   repo: string;
@@ -99,6 +119,14 @@ export type SiteContextValue = {
   confirmDiscardDraft: () => Promise<boolean>;
   /** Switches to another screen, e.g. from a hint that points there. */
   showSection: (section: SiteSection) => void;
+  /** Opens Edit site on the page at this address (as the site builds it, e.g. "/about.html"). */
+  showOnSite: (url: string) => void;
+  /** The page Edit site was last asked to show (`n` tells two requests for one page apart). */
+  previewTarget: { url: string; n: number } | null;
+  /** Edit site reports the page its preview shows (its file, or null), which the AI gets as the open page. */
+  setShownPage: (file: string | null) => void;
+  /** Publishes every change straight to the live site, as the Publish button does (see usePublishNow). */
+  publishNow: PublishNowState;
   publishing: PublishingState;
   tools: SiteTools;
   siteUpdate: SiteUpdateState;

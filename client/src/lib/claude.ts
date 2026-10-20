@@ -62,3 +62,15 @@ export function claudeAccess(credits: Credits | null): ClaudeAccess {
         costNote,
       };
 }
+
+/** The editor's words for the same access: it says "the AI" where the rest of the app says Claude. */
+export function inEditorWords(access: ClaudeAccess): ClaudeAccess {
+  const reword = (text: string) =>
+    text
+      .replace(/\bClaude credits\b/g, "AI credits")
+      .replace(/\bClaude settings\b/g, "AI account settings")
+      .replace(/\bClaude request\b/g, "AI request")
+      .replace(/(^|[.!?]\s+)Claude\b/g, "$1The AI")
+      .replace(/\bClaude\b/g, "the AI");
+  return { ...access, reason: reword(access.reason), setupLabel: reword(access.setupLabel), costNote: reword(access.costNote) };
+}

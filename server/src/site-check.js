@@ -21,6 +21,8 @@ const WARNING = /^\s*warning\s{2,}(.+?)\s*$/;
 const MISSING_LINK = /^(\S+) links to missing (\S+)$/;
 const DUPLICATE = /^duplicate URL (\S+): (.+) and (.+)$/;
 const NO_DATE = /^(.+): blog post without a date$/;
+// The template's check.js since it looks for pages cut off mid-tag (unclosedRawText in lib/content.js).
+const CUT_OFF = /^(\S+) is cut off: (.+?) is never closed/;
 
 /** Each step's output lines, by script ("build.js", "check.js"). */
 function stepOutput(output) {
@@ -100,6 +102,11 @@ async function describe(message, { pages, listings, dir }) {
   }
   const noDate = message.match(NO_DATE);
   if (noDate) return { kind: "no-date", message, page: byFile(slash(noDate[1])) };
+  const cutOff = message.match(CUT_OFF);
+  if (cutOff) {
+    const page = byUrl(cutOff[1]);
+    return { kind: "cut-off", message, element: cutOff[2], page: page && { file: page.file, title: page.title } };
+  }
   return { kind: "other", message };
 }
 

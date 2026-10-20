@@ -14,7 +14,7 @@ import { useAssistant } from "./AssistantProvider";
 const SHOWN = 3;
 const SECTIONS: SiteSection[] = ["home", "pages", "design", "details", "publish", "seo", "tree", "schedule", "memory", "styles", "tools"];
 // Steps an owner may put off: nice to have, not needed for a working site.
-const OPTIONAL = new Set(["social", "testimonials", "faq", "seo", "logo", "chrome"]);
+const OPTIONAL = new Set(["social", "testimonials", "faq", "seo", "logo", "chrome", "notfound"]);
 
 /** A word of encouragement for where the owner is. */
 function milestone(percent: number) {
@@ -157,7 +157,7 @@ function Progress({ percent, doneCount, total, size = "sm" }: { percent: number;
   );
 }
 
-const actionLabel = (step: NextStep) => (step.action?.type === "open" ? "Open" : step.action?.type === "fill" ? "Fill in" : "Ask Claude");
+const actionLabel = (step: NextStep) => (step.action?.type === "open" ? "Open" : step.action?.type === "fill" ? "Fill in" : "Ask the AI");
 
 /* ------------------------------------------------------------ the panel's card */
 
@@ -235,7 +235,7 @@ export function NextSteps({
           </button>
         )}
       </div>
-      {todo.length > 0 && !all && <p className="text-xs text-zinc-600 dark:text-zinc-400">Pick one and Claude will help you do it:</p>}
+      {todo.length > 0 && !all && <p className="text-xs text-zinc-600 dark:text-zinc-400">Pick one and the AI will help you do it:</p>}
       <ul className="space-y-2">
         {shown.map((step) => {
           const isPutOff = !step.done && skipped.includes(step.id);
@@ -271,7 +271,7 @@ export function NextSteps({
                   <span className="ml-auto flex shrink-0 items-center gap-1 text-xs font-normal text-zinc-500">
                     {working ? (
                       <>
-                        <Spinner /> Claude is on it…
+                        <Spinner /> The AI is on it…
                       </>
                     ) : (
                       <>
@@ -312,7 +312,7 @@ export function NextSteps({
 
 // Home's "Next steps": the same steps, numbered like the rest of Home, with more of them shown.
 const HOME_SHOWN = 5;
-const OPEN_LABELS: Partial<Record<SiteSection, string>> = { design: "Open Design", publish: "Review and publish", details: "Open Site details", pages: "Open Pages", seo: "Open Search overview" };
+const OPEN_LABELS: Partial<Record<SiteSection, string>> = { design: "Open Look & logo", publish: "See what changed", details: "Open Business info", pages: "Open Pages", seo: "Open Google & sharing" };
 
 /** The steps with a progress bar, or `fallback` until they're loaded (and when Claude isn't set up, since most steps ask Claude). */
 export function HomeNextSteps({ fallback }: { fallback: ReactNode }) {
@@ -360,7 +360,7 @@ export function HomeNextSteps({ fallback }: { fallback: ReactNode }) {
       return (
         <>
           {notNow}
-          <Button onClick={() => fillDraft(action.prompt)}>Fill in with Claude</Button>
+          <Button onClick={() => fillDraft(action.prompt)}>Fill in with the AI</Button>
         </>
       );
     }
@@ -377,10 +377,10 @@ export function HomeNextSteps({ fallback }: { fallback: ReactNode }) {
         >
           {working ? (
             <span className="flex items-center gap-2">
-              <Spinner /> Claude is on it…
+              <Spinner /> The AI is on it…
             </span>
           ) : (
-            "Ask Claude"
+            "Ask the AI"
           )}
         </Button>
       </>
@@ -396,24 +396,18 @@ export function HomeNextSteps({ fallback }: { fallback: ReactNode }) {
     action: buttons(step),
   }));
 
-  const next = todo[0];
+  // Closed, one line above the preview: what's left, not a score, so a live site doesn't look unfinished.
   if (!open) {
     return (
       <button
         type="button"
         onClick={() => setOpen(true)}
         aria-expanded={false}
-        className="group block w-full rounded-lg border border-zinc-200 px-4 py-3 text-left transition hover:border-zinc-400 hover:shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-[0.995] dark:border-zinc-800 dark:hover:border-zinc-600"
+        className="group flex items-center gap-2 text-sm font-medium hover:underline"
       >
-        <Progress percent={percent} doneCount={doneCount} total={total} size="md" />
-        <span className="mt-2 flex items-center gap-2 text-sm">
-          {next && <span className="min-w-0 truncate text-zinc-700 dark:text-zinc-300">Next: {next.title}</span>}
-          <span className="ml-auto shrink-0 font-medium">
-            {todo.length ? `See ${todo.length === 1 ? "the next step" : `the ${todo.length} next steps`}` : "See your steps"}{" "}
-            <span aria-hidden="true" className="inline-block transition-transform group-hover:translate-y-0.5">
-              ▾
-            </span>
-          </span>
+        {todo.length ? `${todo.length} ${todo.length === 1 ? "thing" : "things"} left before you share your site` : "Your site has everything it needs"}
+        <span aria-hidden="true" className="inline-block transition-transform group-hover:translate-x-0.5">
+          ›
         </span>
       </button>
     );

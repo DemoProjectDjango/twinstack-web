@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { createContext, useContext, useId } from "react";
 import type { Json } from "@/lib/site-api";
 import { Button, inputClass } from "./ui";
 
@@ -60,18 +60,25 @@ function itemTitle(item: Json, index: number) {
   return `Item ${index + 1}`;
 }
 
+// Plain-words names for fields by key ('hours' → 'Opening hours'), where humanise isn't enough.
+const Labels = createContext<Record<string, string>>({});
+
 export function JsonForm({
   value,
   shape,
   onChange,
   disabled,
+  labels = {},
 }: {
   value: Json;
   shape: Json;
   onChange: (next: Json) => void;
   disabled?: boolean;
+  /** Field names by key; others are humanised. */
+  labels?: Record<string, string>;
 }) {
   return (
+    <Labels.Provider value={labels}>
     <Node
       value={value}
       shape={shape}
@@ -80,6 +87,7 @@ export function JsonForm({
       label={null}
       fieldKey=""
     />
+    </Labels.Provider>
   );
 }
 
@@ -99,6 +107,7 @@ function Node({
   fieldKey: string;
 }) {
   const id = useId();
+  const labels = useContext(Labels);
   if (Array.isArray(shape)) {
     return <ListNode value={Array.isArray(value) ? value : []} shape={shape} onChange={onChange} disabled={disabled} label={label} />;
   }
@@ -120,7 +129,7 @@ function Node({
               value={current[key]}
               shape={shape[key]}
               fieldKey={key}
-              label={humanise(key)}
+              label={labels[key] ?? humanise(key)}
               disabled={disabled}
               onChange={(next) => {
                 const copy = { ...current };

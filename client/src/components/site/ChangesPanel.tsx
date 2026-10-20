@@ -130,7 +130,7 @@ export function ChangesPanel() {
   return (
     <div className="space-y-6">
       <ScreenHeader
-        title="Publish"
+        title="What's changed"
         description="Everything you've changed since you last published. Publish to put it on your live site, or undo anything you don't want."
       />
 

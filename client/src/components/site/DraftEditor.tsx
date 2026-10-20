@@ -34,7 +34,7 @@ export function DraftEditor({ file }: { file: string }) {
     <>
       {!supportsGenerate && (
         <Notice tone="warning">
-          Your site&apos;s tools are too old for Claude to finish a draft. You can still write and save the page here.
+          Your site&apos;s tools are too old for the AI to finish a draft. You can still write and save the page here.
           <span className="mt-1 block text-xs opacity-80">
             Technical: update scripts/edit-page.js and scripts/lib/claude-writer.js from the template.
           </span>
@@ -44,7 +44,7 @@ export function DraftEditor({ file }: { file: string }) {
         title="Write the page"
         description={
           claude.ready && supportsGenerate
-            ? "Type what the page should say. It can be rough: notes, pasted text, lists and photos. Save it as it is, or let Claude turn it into a polished page. Claude keeps your facts and doesn't make any up."
+            ? "Type what the page should say. It can be rough: notes, pasted text, lists and photos. Save it as it is, or let the AI turn it into a polished page. The AI keeps your facts and doesn't make any up."
             : "Type what the page should say, then save it."
         }
       >
@@ -160,7 +160,7 @@ function DraftForm({ file, canGenerate }: { file: string; canGenerate: boolean }
         label="Text"
         hint={
           <>
-            Add photos with the button below. Notes for Claude go in <code className="font-mono">[note: …]</code> and never
+            Add photos with the button below. Notes for the AI go in <code className="font-mono">[note: …]</code> and never
             appear on the page.
           </>
         }
@@ -186,13 +186,13 @@ function DraftForm({ file, canGenerate }: { file: string; canGenerate: boolean }
           <ImagePicker
             onAdd={insertImage}
             disabled={locked}
-            hint={canGenerate ? "Claude looks at each photo in the text (up to 20) and describes it for people who can't see it." : undefined}
+            hint={canGenerate ? "The AI looks at each photo in the text (up to 20) and describes it for people who can't see it." : undefined}
           />
         </div>
       </div>
 
       {canGenerate && (
-        <Field label="Anything else Claude should know? (optional)">
+        <Field label="Anything else the AI should know? (optional)">
           <textarea
             value={direction}
             onChange={(e) => setDirection(e.target.value)}
@@ -209,7 +209,7 @@ function DraftForm({ file, canGenerate }: { file: string; canGenerate: boolean }
       <div className="flex flex-wrap items-center gap-2">
         {canGenerate && (
           <Button variant="primary" disabled={locked} onClick={() => void generate(true)}>
-            {running ? "Claude is writing…" : "Let Claude polish it"}
+            {running ? "The AI is writing…" : "Let the AI polish it"}
           </Button>
         )}
         <Button variant={canGenerate ? "secondary" : "primary"} disabled={locked || !dirty} onClick={() => void save()}>

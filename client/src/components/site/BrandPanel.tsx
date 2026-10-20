@@ -132,7 +132,7 @@ export function BrandPanel() {
         <>
           The logo, icon and name in the site&apos;s header, footer and browser tab. They&apos;re kept in{" "}
           <code className="font-mono">site.config.json</code> (brand), and uploads go to{" "}
-          <code className="font-mono">assets/img/brand/</code>. Save, and the preview on Home updates by itself.
+          <code className="font-mono">assets/img/brand/</code>. Save, and Edit site shows it by itself.
         </>
       }
     >

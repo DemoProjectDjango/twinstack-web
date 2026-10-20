@@ -59,12 +59,12 @@ function fastOptions(view: FastView): Option[] {
   return [
     {
       id: "default",
-      label: `Default (${view.default?.name ?? "Claude only"})`,
+      label: `Default (${view.default?.name ?? "Main AI only"})`,
       description: "Twinstack's recommended choice. If it changes, this site follows it.",
       note: defaultModel ? wordsNote(defaultModel, view.creditsPerDollar) : null,
     },
     ...view.models.filter((m) => m.available).map((m) => ({ id: m.id, label: m.name, description: m.description, note: wordsNote(m, view.creditsPerDollar) })),
-    { id: "off", label: "Claude only", description: "Claude does everything. The best results, at Claude's prices.", note: null },
+    { id: "off", label: "Main AI only", description: "The main AI does everything. The best results, at its prices.", note: null },
   ];
 }
 
@@ -108,7 +108,7 @@ export function ModelPanel() {
           ? `Pictures for this site are now made with ${active?.name ?? "the default model"}.`
           : active
             ? `${active.name} now does this site's routine work.`
-            : "Claude now does all of this site's work.",
+            : "The main AI now does all of this site's work.",
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Your choice couldn't be saved.");
@@ -117,7 +117,7 @@ export function ModelPanel() {
     }
   }
 
-  const header = <ScreenHeader title="AI models" description="Choose which AI models do this site's work. The choices are shared by everyone who manages this site and apply from the next request." />;
+  const header = <ScreenHeader title="AI settings" description="Choose which AI models do this site's work. The choices are shared by everyone who manages this site and apply from the next request." />;
 
   if (state.status !== "ready") {
     return (
@@ -142,7 +142,7 @@ export function ModelPanel() {
       <div className="grid gap-6 lg:grid-cols-2">
         <ModelCard
           title="Routine work"
-          description="Claude designs and writes the important parts of your site. To save credits, routine work (small page edits, search text, the header and footer, site details) goes to a cheaper, faster model first, and Claude does it again if that work doesn't pass the site's checks."
+          description="The main AI designs and writes the important parts of your site. To save credits, routine work (small page edits, search text, the header and footer, site details) goes to a cheaper, faster model first, and the main AI does it again if that work doesn't pass the site's checks."
           control={
             <ModelSelect
               id="site-fast-model"
@@ -158,13 +158,13 @@ export function ModelPanel() {
             <>
               <Picked options={fastOptions(fast)} value={fast.choice} />
               {fast.unavailable && <Unavailable />}
-              <p className="mt-3 text-xs text-zinc-500">{fast.active ? `${fast.active.name} is doing this site's routine work now.` : "Claude is doing all of this site's work now."}</p>
+              <p className="mt-3 text-xs text-zinc-500">{fast.active ? `${fast.active.name} is doing this site's routine work now.` : "The main AI is doing all of this site's work now."}</p>
             </>
           }
         />
         <ModelCard
           title="Pictures"
-          description="Photos and illustrations Claude makes for your pages when you ask for one. Each picture costs credits; logos and icons Claude draws itself don't."
+          description="Photos and illustrations the AI makes for your pages when you ask for one. Each picture costs credits; logos and icons the AI draws itself don't."
           control={
             image.available ? (
               <ModelSelect
@@ -177,7 +177,7 @@ export function ModelPanel() {
                 onChange={(model) => void choose("image", model)}
               />
             ) : (
-              <Notice>Pictures can&apos;t be made on this server yet. Claude can still draw logos, icons and simple illustrations.</Notice>
+              <Notice>Pictures can&apos;t be made on this server yet. The AI can still draw logos, icons and simple illustrations.</Notice>
             )
           }
           details={

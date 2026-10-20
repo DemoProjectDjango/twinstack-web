@@ -34,7 +34,7 @@ function writePublicUrl(url) {
     ? text.replace(/^PUBLIC_API_URL=.*$/m, line)
     : `${text}${text && !text.endsWith(newline) ? newline : ""}${line}${newline}`;
   writeFileSync(envFile, next);
-  // `node --watch` (npm run dev) restarts on its entry file, not on .env.
+  // `node --watch` (npm run dev) restarts on changes under src/, not on .env.
   const now = new Date();
   utimesSync(path.join(serverDir, "src/index.js"), now, now);
 }

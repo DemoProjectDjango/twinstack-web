@@ -66,7 +66,7 @@ export function TreePanel() {
 
   return (
     <Section
-      title="Site plan"
+      title="Page plan"
       description={
         <>
           The list of every page your site should have. &quot;Create missing pages&quot; adds the ones that don&apos;t exist
@@ -113,7 +113,7 @@ export function TreePanel() {
           </div>
           {force && (
             <div className="mt-3">
-              <Notice tone="warning">Overwriting replaces the existing files&apos; content with skeletons. You can still undo it on the Publish screen before publishing.</Notice>
+              <Notice tone="warning">Overwriting replaces the existing files&apos; content with skeletons. You can still undo it on What&apos;s changed before publishing.</Notice>
             </div>
           )}
         </>

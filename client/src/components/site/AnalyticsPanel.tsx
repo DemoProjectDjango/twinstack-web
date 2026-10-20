@@ -291,7 +291,7 @@ export function AnalyticsPanel() {
   return (
     <div className="space-y-6">
       <ScreenHeader
-        title="Analytics"
+        title="Visitors"
         description="How many people visit your published site, where they come from and what they look at. Only you can see this."
       >
         {showReport && (
@@ -1090,7 +1090,7 @@ function Suggestions({
                 )
               }
             >
-              <span aria-hidden="true">✦</span> Create and write with Claude
+              <span aria-hidden="true">✦</span> Create and write with the AI
             </Button>
           )}
         </>
@@ -1126,7 +1126,7 @@ function Suggestions({
                 )
               }
             >
-              <span aria-hidden="true">✦</span> Ask Claude to improve it
+              <span aria-hidden="true">✦</span> Ask the AI to improve it
             </Button>
           )}
         </>
@@ -1155,7 +1155,7 @@ function Suggestions({
             )
           }
         >
-          <span aria-hidden="true">✦</span> Ask Claude to check them
+          <span aria-hidden="true">✦</span> Ask the AI to check them
         </Button>
       ),
     });

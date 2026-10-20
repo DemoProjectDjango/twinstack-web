@@ -16,7 +16,7 @@ const MAX_CSS_FILES = 10;
 
 const MODES: { id: PageEditMode; label: string }[] = [
   { id: "generate", label: "Write it yourself" },
-  { id: "edit", label: "Ask Claude to change it" },
+  { id: "edit", label: "Ask the AI to change it" },
   { id: "convert", label: "Bring in a page from another website" },
 ];
 
@@ -40,11 +40,11 @@ export function PageContentEditor({ file, initialMode }: { file: string; initial
 
       {!claude.ready && (
         <Notice>
-          {mode === "generate" ? "You can write and save this page yourself. " : "This needs Claude. "}
+          {mode === "generate" ? "You can write and save this page yourself. " : "This needs the AI. "}
           <Link href={claude.setupHref} className="font-medium underline">
             {claude.setupLabel}
           </Link>{" "}
-          to let Claude write and change pages for you.
+          to let the AI write and change pages for you.
         </Notice>
       )}
 
@@ -102,8 +102,8 @@ function InstallMdEdit() {
 
   return (
     <Section
-      title="Edit a markdown file with Claude"
-      description="Edit the site tree, the scaffold schedule, the predefined pages and the docs with Claude."
+      title="Edit a markdown file with the AI"
+      description="Edit the site tree, the scaffold schedule, the predefined pages and the docs with the AI."
     >
       <div className="space-y-3">
         <Notice tone="warning">
@@ -137,7 +137,7 @@ function MarkdownForm() {
 
   return (
     <Section
-      title="Edit a markdown file with Claude"
+      title="Edit a markdown file with the AI"
       description="For markdown outside the site's pages: the site tree, the scaffold schedule, the predefined pages in scripts/site-tree-content/ and the docs. Preview first: you'll see the complete new file below and can adjust it before applying."
     >
       <div className="space-y-4">
@@ -166,7 +166,7 @@ function MarkdownForm() {
 
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="primary" disabled={disabled || !ready} onClick={() => startEdit(true)}>
-            {previewRunning ? "Asking Claude…" : "Preview change"}
+            {previewRunning ? "Asking the AI…" : "Preview change"}
           </Button>
           <Button disabled={disabled || !ready} onClick={() => startEdit(false)}>
             Apply without preview
@@ -202,13 +202,13 @@ function InstructionEditor({ file }: { file: string }) {
     <>
       {!supportsImages && (
         <OldToolsNotice files="scripts/edit-page.js and scripts/lib/claude-writer.js">
-          Your site&apos;s tools are too old for adding photos here or seeing Claude&apos;s version before it&apos;s kept.
+          Your site&apos;s tools are too old for adding photos here or seeing the AI&apos;s version before it&apos;s kept.
         </OldToolsNotice>
       )}
 
       <Section
-        title="Ask Claude to change this page"
-        description="Say what you'd like changed, in your own words. You can add photos for Claude to place. You'll see Claude's version before anything is kept."
+        title="Ask the AI to change this page"
+        description="Say what you'd like changed, in your own words. You can add photos for the AI to place. You'll see the AI's version before anything is kept."
       >
         <div className="space-y-4">
           <Field label="What should change?">
@@ -259,7 +259,7 @@ function InstructionEditor({ file }: { file: string }) {
                   onAdd={addImage}
                   disabled={disabled}
                   room={MAX_IMAGES - images.length}
-                  hint="Claude looks at each photo, places it and describes it for people who can't see it."
+                  hint="The AI looks at each photo, places it and describes it for people who can't see it."
                 />
               </div>
             </div>
@@ -267,7 +267,7 @@ function InstructionEditor({ file }: { file: string }) {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="primary" disabled={disabled || !ready} onClick={() => startEdit(true)}>
-              {previewRunning ? "Claude is working…" : "Show me Claude's version"}
+              {previewRunning ? "The AI is working…" : "Show me the AI's version"}
             </Button>
             <Button variant="ghost" disabled={disabled || !ready} onClick={() => startEdit(false)}>
               Change it without showing me first
@@ -397,7 +397,7 @@ function ConvertEditor({ file }: { file: string }) {
 
       <Section
         title="Bring in a page from another website"
-        description="Upload a page saved from your old website. Claude takes out the old header, menu and footer and fits the rest into this page. Everything on this page now is replaced. You'll see the result before anything is kept."
+        description="Upload a page saved from your old website. The AI takes out the old header, menu and footer and fits the rest into this page. Everything on this page now is replaced. You'll see the result before anything is kept."
       >
         <div className="space-y-4">
           <div>
@@ -414,7 +414,7 @@ function ConvertEditor({ file }: { file: string }) {
             </p>
           </div>
 
-          <Field label={styled ? "Anything to tell Claude about the title and description? (optional)" : "Anything to tell Claude? (optional)"}>
+          <Field label={styled ? "Anything to tell the AI about the title and description? (optional)" : "Anything to tell the AI? (optional)"}>
             <textarea
               value={instruction}
               onChange={(e) => setInstruction(e.target.value)}
@@ -458,7 +458,7 @@ function ConvertEditor({ file }: { file: string }) {
               ))}
               {useChrome !== "site" && (
                 <p className="text-xs text-zinc-500">
-                  A copied header or footer is fixed: the menu settings on the Design screen don&apos;t change it. You can go back to
+                  A copied header or footer is fixed: the menu settings on Look &amp; logo don&apos;t change it. You can go back to
                   your site&apos;s own there at any time.
                 </p>
               )}
@@ -483,7 +483,7 @@ function ConvertEditor({ file }: { file: string }) {
                     {scriptsSupported
                       ? "Its scripts are kept too, and the preview checks they run without errors. "
                       : "This site's tools drop the page's scripts; update scripts/edit-page.js from the template to keep them. "}
-                    Claude only writes the title and description. Untick it to have Claude rewrite the page in your site&apos;s own
+                    The AI only writes the title and description. Untick it to have the AI rewrite the page in your site&apos;s own
                     design instead.
                   </span>
                 </span>
@@ -556,7 +556,7 @@ function ConvertEditor({ file }: { file: string }) {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="primary" disabled={disabled || uploading || !ready} onClick={() => void startConvert(true)}>
-              {uploading ? "Uploading…" : previewRunning ? "Claude is working…" : "Show me the result"}
+              {uploading ? "Uploading…" : previewRunning ? "The AI is working…" : "Show me the result"}
             </Button>
             <Button variant="ghost" disabled={disabled || uploading || !ready} onClick={() => void startConvert(false)}>
               Replace it without showing me first

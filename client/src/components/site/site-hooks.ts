@@ -1,8 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, workspacePath, type Job, type NavigationInfo, type Overview, type Publishing, type SiteUpdateInfo, type WorkspaceStatus } from "@/lib/site-api";
-import type { PublishingState, SiteTools, SiteUpdateState } from "./site-context";
+import { summarizeChanges } from "@/lib/change-labels";
+import { confirmModal } from "@/lib/confirm";
+import { api, workspacePath, type Job, type NavigationInfo, type Overview, type Publishing, type SiteCheck, type SiteUpdateInfo, type WorkspaceStatus } from "@/lib/site-api";
+import { toast } from "@/lib/toast";
+import { wasVisited } from "./HomePanel";
+import type { PublishNowState, PublishingState, SiteTools, SiteUpdateState } from "./site-context";
 
 // While a deploy runs, and for a while after anything changes (a push starts a
 // run a few seconds later), GitHub is asked again every few seconds.
@@ -225,4 +229,84 @@ export function useSiteUpdate({
   }, [owner, repo, setStatus, watch, run]);
 
   return { info, working, error, done, update, undo };
+}
+
+/**
+ * The top bar's Publish button (PublishNowState in site-context.tsx): the Publish screen's "Publish
+ * now" in one press, with the same safeguards. It runs the deploy's check first when there's no
+ * fresh report (the Publish screen runs it by itself while open), asks before publishing with
+ * problems, and leaves a first publish and a review branch to the Publish screen.
+ */
+export function usePublishNow({
+  owner,
+  repo,
+  status,
+  overview,
+  runAndWait,
+  setStatus,
+  refresh,
+  watch,
+  openPublishScreen,
+  onError,
+}: {
+  owner: string;
+  repo: string;
+  status: WorkspaceStatus | null;
+  overview: Overview | null;
+  runAndWait: (command: string) => Promise<Job>;
+  setStatus: (status: WorkspaceStatus) => void;
+  refresh: () => Promise<void>;
+  watch: () => void;
+  openPublishScreen: () => void;
+  onError: (err: unknown) => void;
+}): PublishNowState {
+  const [working, setWorking] = useState<"checking" | "publishing" | null>(null);
+  const available = Boolean(status && (status.changes.length > 0 || status.ahead || !status.onDefaultBranch));
+
+  const publish = useCallback(async () => {
+    if (!status || working) return;
+    // A review branch has its own choices, and a first publish asks to check the site details first.
+    if (!status.onDefaultBranch || !wasVisited(owner, repo, "details")) {
+      openPublishScreen();
+      return;
+    }
+    onError(null);
+    try {
+      setWorking("checking");
+      let check = await api<SiteCheck>(workspacePath(owner, repo, "/check"));
+      if (!check.fresh) {
+        await runAndWait("check");
+        check = await api<SiteCheck>(workspacePath(owner, repo, "/check"));
+      }
+      if (
+        check.fresh &&
+        check.report &&
+        !check.report.ok &&
+        !(await confirmModal(
+          "Your site still has problems that stop it from updating. If you publish now, your changes are saved, but your live site stays as it is until they're fixed. What's changed lists the problems.",
+          { title: "Publish with problems?", confirmLabel: "Publish anyway", danger: true },
+        ))
+      ) {
+        return;
+      }
+      setWorking("publishing");
+      const message = summarizeChanges(status.changes, overview) || "Update the site";
+      const committed = await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/commit"), {
+        method: "POST",
+        body: { message, mode: "direct" },
+      });
+      setStatus(committed.status);
+      watch();
+      await refresh();
+      toast.success("Published. Your live site updates in about a minute.");
+    } catch (err) {
+      onError(err);
+      // A failed push may still have committed locally.
+      await refresh().catch(() => {});
+    } finally {
+      setWorking(null);
+    }
+  }, [owner, repo, status, overview, working, runAndWait, setStatus, refresh, watch, openPublishScreen, onError]);
+
+  return { available, working, publish };
 }

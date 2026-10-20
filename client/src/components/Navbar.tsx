@@ -4,7 +4,8 @@ import { CreditBadge } from "./CreditBadge";
 import { NavLinks } from "./NavLinks";
 
 export async function Navbar() {
-  const user = await getUser();
+  // While the server isn't answering, the page below shows why; the navbar just leaves the account out.
+  const user = await getUser().catch(() => null);
 
   return (
     <header className="sticky top-0 z-20 border-b border-zinc-200 bg-background/90 backdrop-blur dark:border-zinc-800">

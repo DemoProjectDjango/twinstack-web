@@ -71,7 +71,7 @@ export function ErrorText({ error }: { error: unknown }) {
       )}
       {error instanceof ApiError && error.needsAnthropicKey && (
         <Link href={CLAUDE_SETUP_HREF} className="font-medium underline">
-          Set up Claude
+          Set up the AI
         </Link>
       )}
       {error instanceof ApiError && error.outOfCredits && (

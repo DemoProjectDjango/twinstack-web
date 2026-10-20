@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import dns from "node:dns/promises";
 import { MongoClient, ObjectId } from "mongodb";
 import { DEFAULT_ASSISTANT_MODEL, DEFAULT_MODEL, isClaudeModel } from "./claude-models.js";
 import { PROVIDERS, providerOf } from "./ai-providers.js";
@@ -55,7 +56,34 @@ import { config } from "./config.js";
 let client;
 let db;
 
+// A mongodb+srv:// URI needs an SRV lookup, which Node does with its own resolver
+// (c-ares), not the OS one. On some Windows machines c-ares can't read the system
+// DNS settings and falls back to 127.0.0.1, so the lookup is refused while
+// nslookup works. Only then, switch Node's DNS to public resolvers.
+const FALLBACK_DNS = ["1.1.1.1", "8.8.8.8"];
+
+async function ensureSrvResolvable(uri) {
+  const match = /^mongodb\+srv:\/\/(?:[^@/]*@)?([^/?,]+)/.exec(uri);
+  if (!match) return;
+  const name = `_mongodb._tcp.${match[1]}`;
+  try {
+    await dns.resolveSrv(name);
+    return;
+  } catch (err) {
+    const fallback = new dns.Resolver();
+    fallback.setServers(FALLBACK_DNS);
+    try {
+      await fallback.resolveSrv(name);
+    } catch {
+      return; // Not a resolver problem; let the driver report it.
+    }
+    console.warn(`DNS: SRV lookup failed on ${dns.getServers().join(", ")} (${err.code}); using ${FALLBACK_DNS.join(", ")}`);
+    dns.setServers(FALLBACK_DNS);
+  }
+}
+
 export async function connectDb() {
+  await ensureSrvResolvable(config.mongo.uri);
   client = new MongoClient(config.mongo.uri, { serverSelectionTimeoutMS: 10_000 });
   await client.connect();
   db = client.db(config.mongo.dbName);

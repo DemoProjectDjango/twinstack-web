@@ -28,6 +28,9 @@ const MAX_EACH = 3;
 
 const bodyOf = (text) => text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
 const isHome = (page) => page.url === "/" || page.file === "content/pages/home.md";
+// The site's own "page not found" page (url: /404.html). The build has a standard one, so writing
+// it is optional and comes after the business's own steps.
+const isNotFound = (page) => /^\/404(\.html|\/)?$/.test(page.url ?? "");
 const quoted = (title) => `"${String(title).replace(/"/g, "'")}"`;
 
 async function readJson(dir, file) {
@@ -87,7 +90,8 @@ export async function getNextSteps(key) {
 
   // 2. Pages still holding the starter text. Only the next few are listed, but `progress` counts
   // every page (below), so writing any one of them moves it.
-  const others = unwritten.filter((p) => p !== home);
+  const notFound = unwritten.find(isNotFound);
+  const others = unwritten.filter((p) => p !== home && p !== notFound);
   for (const page of others.slice(0, MAX_EACH)) {
     add({
       counts: false,
@@ -159,7 +163,7 @@ export async function getNextSteps(key) {
     add({
       id: "logo",
       title: "Add your logo",
-      why: "It makes the site recognisably yours. Upload it on the Design screen.",
+      why: "It makes the site recognisably yours. Upload it on the Look & logo screen.",
       done: Boolean(brand.brand.logo || brand.brand.logoMark),
       action: { type: "open", section: "design" },
     });
@@ -221,6 +225,21 @@ export async function getNextSteps(key) {
     });
   }
 
+  // 9. The "page not found" page: optional, since the standard one works until it's written.
+  if (notFound) {
+    add({
+      counts: false,
+      id: "notfound",
+      title: `Write your ${quoted(notFound.title)} page`,
+      why: "Visitors see it when they follow a broken link. Until you write it, they see a plain standard one.",
+      done: false,
+      action: {
+        type: "send",
+        prompt: `Write my ${quoted(notFound.title)} page (${notFound.file}) for ${name}: a short, friendly message with links back to the homepage and my main pages, matching the look of my homepage.`,
+      },
+    });
+  }
+
   // Not part of the site itself: changes waiting to go live.
   if (status.changes?.length) {
     steps.unshift({
@@ -234,7 +253,7 @@ export async function getNextSteps(key) {
   }
 
   const counted = steps.filter((s) => s.counts);
-  const pagesToWrite = pages.filter((p) => p !== home).length;
+  const pagesToWrite = pages.filter((p) => p !== home && !isNotFound(p)).length;
   return {
     steps: steps.map(({ counts, ...step }) => ({ ...step, counts })),
     // Each page besides the homepage is one item, written or not, like each other step.

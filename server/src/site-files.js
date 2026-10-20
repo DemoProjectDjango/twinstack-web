@@ -127,12 +127,18 @@ export async function getOverview(key) {
     const pages = [];
     for (const file of await listFiles(collectionDir, ".md")) {
       const fields = frontmatter((await readText(path.join(collectionDir, file))) ?? "");
+      const baseName = path.basename(file, ".md").replace(/^\d{4}-\d{2}-\d{2}-/, "");
+      // As sitePages in navigation.js works it out: a page in a subfolder keeps the folder in its slug.
+      const folder = path.posix.dirname(file);
+      const builtSlug = fields.slug || (folder === "." ? baseName : `${folder}/${baseName}`);
       pages.push({
         file: `${collection.dir}/${file}`,
-        slug: fields.slug || path.basename(file, ".md").replace(/^\d{4}-\d{2}-\d{2}-/, ""),
+        slug: fields.slug || baseName,
         title: fields.title || file,
         // Set when the page chooses its own address; "/" is the homepage (index.html in the site tree).
         url: fields.url || null,
+        // Where the site builds it (its own url, else the collection's urlPattern), for showing it in the preview.
+        address: fields.url || (typeof collection.urlPattern === "string" ? applyUrlPattern(collection.urlPattern, builtSlug) : null),
         draft: fields.draft === "true",
         date: fields.date || null,
       });
@@ -844,6 +850,12 @@ export async function savePage(key, file, content, version) {
   return readPage(key, file);
 }
 
+/** Like the site's applyUrlPattern in scripts/lib/content.js: where a page with this slug is built. */
+export function applyUrlPattern(pattern, slug) {
+  const url = pattern.replace(":slug", slug);
+  return url.endsWith("/") || url.endsWith(".html") ? url : `${url}/`;
+}
+
 /** Removes one page's file. Like any change, it can be undone on the Publish screen until it's published. */
 export async function deletePage(key, file) {
   const target = pageFile(key, file);
@@ -851,6 +863,32 @@ export async function deletePage(key, file) {
   try {
     if (!existsSync(target)) throw new WorkspaceError(`${file} doesn't exist.`, 404);
     await fs.rm(target);
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Hides a page from visitors (frontmatter `draft: true`, which the build leaves out) or shows it
+ * again. Only that line of the file changes. The homepage is never hidden: the site needs it.
+ */
+export async function setPageDraft(key, file, draft) {
+  if (typeof draft !== "boolean") throw new WorkspaceError("Say whether to hide the page.", 400);
+  const target = pageFile(key, file);
+  const release = acquire(key, `${draft ? "hiding" : "showing"} ${file}`);
+  try {
+    const current = await readText(target);
+    if (current === null) throw new WorkspaceError(`${file} doesn't exist.`, 404);
+    const match = current.match(/^(---\r?\n)([\s\S]*?)(\r?\n---)/);
+    if (!match) throw new WorkspaceError(`${file} has no frontmatter to set it in.`, 400);
+    const lines = match[2].split(/\r?\n/);
+    if (draft && lines.some((line) => /^url\s*:\s*["']?\/["']?\s*$/.test(line))) {
+      throw new WorkspaceError("The homepage can't be hidden: visitors see it first at your address.", 400);
+    }
+    const eol = match[1].endsWith("\r\n") ? "\r\n" : "\n";
+    const kept = lines.filter((line) => !/^draft\s*:/.test(line));
+    if (draft) kept.push("draft: true");
+    await fs.writeFile(target, `${match[1]}${kept.join(eol)}${match[3]}${current.slice(match[0].length)}`);
   } finally {
     release();
   }

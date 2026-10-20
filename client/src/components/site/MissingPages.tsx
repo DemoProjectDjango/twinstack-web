@@ -129,7 +129,7 @@ export function MissingPages() {
       </p>
       <p className="mt-1 text-sm opacity-80">
         Visitors who follow {pages.length === 1 ? "that link" : "those links"} get an error page, and they stop your site from going live. Make{" "}
-        {pages.length === 1 ? "it" : "them"} now{claude.ready ? ", empty or written by Claude" : ""}.
+        {pages.length === 1 ? "it" : "them"} now{claude.ready ? ", empty or written by the AI" : ""}.
       </p>
       <ul className="mt-3 space-y-2">
         {pages.map((page) => (
@@ -144,7 +144,7 @@ export function MissingPages() {
             </Button>
             {claude.ready && (
               <Button className="px-2.5 py-1 text-xs" disabled={locked || claudeBusy} onClick={() => withClaude([page])}>
-                <span aria-hidden="true">✦</span> Create and write with Claude
+                <span aria-hidden="true">✦</span> Create and write with the AI
               </Button>
             )}
           </li>
@@ -158,7 +158,7 @@ export function MissingPages() {
       <div className="mt-3 flex flex-wrap gap-2">
         {pages.length > 1 && claude.ready && (
           <Button variant="primary" disabled={locked || claudeBusy} onClick={() => withClaude(pages)}>
-            <span aria-hidden="true">✦</span> Let Claude create and write them all
+            <span aria-hidden="true">✦</span> Let the AI create and write them all
           </Button>
         )}
         {pages.length > 1 && (

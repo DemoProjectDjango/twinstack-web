@@ -68,7 +68,7 @@ function groupProblems(problems: SiteProblem[]): Group[] {
             `design:${href}`,
             () => ({
               text: `Your site's design links to ${href}, which ${problem.target === "file" ? "isn't a file on your site" : "isn't a page on your site"}.`,
-              fixes: [...createAt(problem.target, href), { label: "Open Design", screen: "design" }],
+              fixes: [...createAt(problem.target, href), { label: "Open Look & logo", screen: "design" }],
             }),
             page,
           );
@@ -87,6 +87,14 @@ function groupProblems(problems: SiteProblem[]): Group[] {
           fixes: [{ label: `Open ${quoted(problem.page.title)}`, open: problem.page.file }],
         }));
         break;
+      case "cut-off": {
+        const page = problem.page;
+        add(`cut-off:${page?.file ?? problem.message}`, () => ({
+          text: `${page ? quoted(page.title) : "A page"} is cut off: its text stops part-way through, so the rest of the page, the footer included, doesn't show.`,
+          fixes: page ? [{ label: `Open ${quoted(page.title)}`, open: page.file }] : [],
+        }));
+        break;
+      }
       default:
         add(`other:${problem.message}`, () => ({ text: problem.message, fixes: [] }));
     }
@@ -186,9 +194,9 @@ export function SiteProblems() {
       <p className="mt-1 text-sm opacity-80">
         {report.buildFailed
           ? claude.ready
-            ? "Claude can find the cause and fix it. The full log has every detail."
+            ? "The AI can find the cause and fix it. The full log has every detail."
             : "The full log has every detail."
-          : `Fix ${count === 1 ? "it" : "them"} yourself with the buttons below${claude.ready ? `, or let Claude fix ${count === 1 ? "it" : "them"} for you` : ""}.`}
+          : `Fix ${count === 1 ? "it" : "them"} yourself with the buttons below${claude.ready ? `, or let the AI fix ${count === 1 ? "it" : "them"} for you` : ""}.`}
       </p>
 
       {report.buildFailed ? (
@@ -229,7 +237,7 @@ export function SiteProblems() {
       <div className="mt-3 flex flex-wrap gap-2">
         {claude.ready && (
           <Button variant="primary" disabled={turn?.status === "running"} onClick={() => void send(claudeRequest(report, groups))}>
-            <span aria-hidden="true">✦</span> Fix with Claude
+            <span aria-hidden="true">✦</span> Fix with the AI
           </Button>
         )}
         <Button disabled={locked} onClick={checkNow}>

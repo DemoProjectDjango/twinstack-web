@@ -55,6 +55,7 @@ import {
   saveCss,
   saveHtmlSource,
   saveUpload,
+  setPageDraft,
   updateFromTemplate,
   WORK_LOG_FOR_RUN,
   writeDataFile,
@@ -318,6 +319,17 @@ workspacesRouter.post(
     const { address, before, after, index, count } = req.body ?? {};
     const { file } = await editPreviewText(key, { address, before, after, index, count });
     res.json({ file, status: await getStatus(key) });
+  }),
+);
+
+/* Hides a page from visitors, or shows it again (the Pages list's page menu). */
+
+workspacesRouter.put(
+  "/:owner/:repo/pages/draft",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    await setPageDraft(key, req.body?.file, req.body?.draft);
+    res.json({ status: await getStatus(key) });
   }),
 );
 

@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 import { api, workspacePath, type BrandInfo, type Publishing } from "@/lib/site-api";
 import { confirmModal } from "@/lib/confirm";
 import { useSite, type SiteSection } from "./site-context";
-import { Button, EmptyState, ErrorText, Notice, ScreenHeader, Segmented, Spinner, StepList, type Step } from "./ui";
+import { Button, EmptyState, ErrorText, Notice, Segmented, Spinner, StepList, type Step } from "./ui";
 import { HomeNextSteps } from "./assistant/NextSteps";
 import { EditablePreview } from "./EditablePreview";
+import { FirstRunSetup } from "./FirstRunSetup";
 
 /** Remembers, per browser, that someone has looked at a screen (for ticking off "check your details"). */
 function visitedKey(owner: string, repo: string, section: SiteSection) {
@@ -30,7 +31,11 @@ export function wasVisited(owner: string, repo: string, section: SiteSection) {
   }
 }
 
-/** The site at a glance: is it live, what's unpublished, what to do next, and what it looks like now. */
+/**
+ * Edit site: the site itself, with click-to-edit on, as the screen. Above it only what needs the
+ * owner (a first-run setup, an update, publishing that isn't on or didn't work) and a one-line
+ * "things left" link; whether it's live and the Publish button are in the top bar.
+ */
 export function HomePanel() {
   const { owner, repo, status, overview, claude, version, busy, run, showSection, publishing } = useSite();
   const [brand, setBrand] = useState<BrandInfo | null>(null);
@@ -58,21 +63,21 @@ export function HomePanel() {
       title: "Add your logo and colours",
       text: "Upload your logo and choose the colours of the top and bottom of every page.",
       done: Boolean(brand?.brand.logo || brand?.brand.logoMark),
-      action: <Button onClick={() => showSection("design")}>Open Design</Button>,
+      action: <Button onClick={() => showSection("design")}>Open Look &amp; logo</Button>,
     },
     {
       id: "pages",
       title: "Add and write your pages",
-      text: claude.ready ? "Write each page yourself, or give Claude your notes and let it write the page." : "Write what each page should say.",
+      text: claude.ready ? "Write each page yourself, or give the AI your notes and let it write the page." : "Write what each page should say.",
       done: pagesSeen && pageCount !== null && pageCount > 0,
       action: <Button onClick={() => showSection("pages")}>Open Pages</Button>,
     },
     {
       id: "details",
-      title: "Check your business details",
+      title: "Check your business info",
       text: "Your business name, email, phone and address appear across the whole site.",
       done: detailsSeen,
-      action: <Button onClick={() => showSection("details")}>Open Site details</Button>,
+      action: <Button onClick={() => showSection("details")}>Open Business info</Button>,
     },
     {
       id: "publish",
@@ -81,15 +86,17 @@ export function HomePanel() {
       done: live && changes === 0 && !status.ahead,
       action: (
         <Button variant="primary" onClick={() => showSection("publish")}>
-          Review and publish
+          See what changed
         </Button>
       ),
     },
   ];
 
   return (
-    <div className="space-y-6">
-      <ScreenHeader title="Home" description="Your site at a glance. Follow the steps, and check the preview as you go." />
+    <div className="space-y-4">
+      <h2 className="sr-only">Edit site</h2>
+
+      <FirstRunSetup />
 
       <LiveCard />
 
@@ -97,20 +104,9 @@ export function HomePanel() {
 
       <ToolsNotice />
 
-      {changes > 0 && (
-        <Notice>
-          <span className="font-medium">
-            You have {changes} change{changes === 1 ? "" : "s"} that {changes === 1 ? "isn't" : "aren't"} on your live site yet.
-          </span>{" "}
-          <Button variant="ghost" className="ml-1 underline" onClick={() => showSection("publish")}>
-            Review and publish
-          </Button>
-        </Notice>
-      )}
-
       {!claude.ready && (
         <Notice>
-          <span className="font-medium">Claude can write and improve your pages for you.</span> It&apos;s optional: you can
+          <span className="font-medium">The AI can write and improve your pages for you.</span> It&apos;s optional: you can
           also write everything yourself.{" "}
           <Link href={claude.setupHref} className="ml-1 underline">
             {claude.setupLabel}
@@ -118,20 +114,32 @@ export function HomePanel() {
         </Notice>
       )}
 
-      <section aria-labelledby="next-steps" className="space-y-3">
-        <h3 id="next-steps" className="font-semibold">
-          Next steps
-        </h3>
-        <HomeNextSteps fallback={<StepList steps={steps} />} />
-      </section>
-
       <Preview
         empty={status.build === "empty" || pageCount === 0}
         onStarterPages={() => run("scaffold", { dryRun: false, force: false })}
         onAddPage={() => showSection("pages")}
         busy={busy}
+        steps={<HomeNextSteps fallback={<FallbackSteps steps={steps} />} />}
       />
     </div>
+  );
+}
+
+/** The fixed steps, folded like the loaded ones, until those load (or while the AI isn't set up). */
+function FallbackSteps({ steps }: { steps: Step[] }) {
+  const [open, setOpen] = useState(false);
+  const left = steps.filter((s) => !s.done).length;
+  return open ? (
+    <div className="space-y-3">
+      <button type="button" aria-expanded className="text-sm text-zinc-600 hover:underline dark:text-zinc-400" onClick={() => setOpen(false)}>
+        Hide steps ▴
+      </button>
+      <StepList steps={steps} />
+    </div>
+  ) : (
+    <button type="button" aria-expanded={false} onClick={() => setOpen(true)} className="text-sm font-medium hover:underline">
+      {left ? `${left} ${left === 1 ? "thing" : "things"} left before you share your site` : "Your site has everything it needs"} ›
+    </button>
   );
 }
 
@@ -144,7 +152,10 @@ function deployLabel(p: Publishing): { text: string; tone: string } | null {
   return { text: "The last update didn't work", tone: "text-red-700 dark:text-red-400" };
 }
 
-/** Where the site is on the web, and whether the latest version has gone out. */
+/**
+ * Publishing that needs the owner: not turned on, or the last deploy didn't work. Otherwise the
+ * address and whether it's live are in the top bar, so this shows nothing.
+ */
 function LiveCard() {
   const { busy, publishing: state, showSection } = useSite();
   const { publishing, error, working, act } = state;
@@ -156,6 +167,7 @@ function LiveCard() {
   const label = deployLabel(publishing);
   const failed = publishing.run?.status === "completed" && publishing.run.conclusion !== "success";
   const locked = busy || working !== null;
+  if (publishing.enabled && publishing.url && !(failed && publishing.run?.conclusion !== "cancelled") && !error) return null;
 
   return (
     <section className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
@@ -311,7 +323,7 @@ export function ToolsNotice({ compact = false }: { compact?: boolean }) {
       <Notice tone="warning">
         This needs the latest version of your site.{" "}
         <Button variant="ghost" className="ml-1 underline" onClick={() => showSection("home")}>
-          Update it on Home
+          Update it on Edit site
         </Button>
       </Notice>
     );
@@ -363,43 +375,56 @@ export function ToolsNotice({ compact = false }: { compact?: boolean }) {
   );
 }
 
-/** The latest build of the site, rebuilt by the editor after every change. */
-function Preview({ empty, onStarterPages, onAddPage, busy }: { empty: boolean; onStarterPages: () => void; onAddPage: () => void; busy: boolean }) {
+/** The latest build of the site, rebuilt by the editor after every change, with click-to-edit on. */
+function Preview({
+  empty,
+  onStarterPages,
+  onAddPage,
+  busy,
+  steps,
+}: {
+  empty: boolean;
+  onStarterPages: () => void;
+  onAddPage: () => void;
+  busy: boolean;
+  steps: React.ReactNode;
+}) {
   const { status, job } = useSite();
   const [width, setWidth] = useState<"desktop" | "phone">("desktop");
   const updating = job?.status === "running" && (job.command === "preview" || job.command === "install");
 
   return (
-    <section aria-labelledby="preview-heading" className="space-y-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <h3 id="preview-heading" className="font-semibold">
-          Preview
-        </h3>
+    <section aria-label="Your site" className="space-y-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Segmented
+          label="Preview size"
+          value={width}
+          onChange={setWidth}
+          options={[
+            { value: "desktop", label: "Computer" },
+            { value: "phone", label: "Phone" },
+          ]}
+        />
         {updating && (
           <span className="flex items-center gap-2 text-sm text-zinc-500">
             <Spinner /> Updating…
           </span>
         )}
         <span className="ml-auto flex items-center gap-3">
-          <Segmented
-            label="Preview size"
-            value={width}
-            onChange={setWidth}
-            options={[
-              { value: "desktop", label: "Computer" },
-              { value: "phone", label: "Phone" },
-            ]}
-          />
           {status.previewUrl && (
-            <a href={status.previewUrl} target="_blank" rel="noreferrer" className="text-sm text-zinc-500 hover:underline">
+            <a
+              href={status.previewUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm text-zinc-500 hover:underline"
+              title="Your latest changes, including pages you've hidden. It updates by itself."
+            >
               Open full size ↗
             </a>
           )}
         </span>
       </div>
-      <p className="text-sm text-zinc-500">
-        This is how your site looks with your latest changes, including pages you&apos;ve hidden. It updates by itself.
-      </p>
+      <div>{steps}</div>
 
       {empty && !updating ? (
         <EmptyState

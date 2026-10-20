@@ -19,13 +19,13 @@ export function describeChange(change: Change, overview: Overview | null): { wha
   if (page) what = `Page: ${page.title}`;
   else if (path.startsWith("content/") && path.endsWith(".md")) what = `Page: ${baseName(path).replace(/\.md$/, "")}`;
   else if (path === "content/data/navigation.json") what = "Menu and footer";
-  else if (path.startsWith("content/data/")) what = `Site details: ${baseName(path).replace(/\.json$/, "")}`;
+  else if (path.startsWith("content/data/")) what = `Business info: ${baseName(path).replace(/\.json$/, "")}`;
   else if (path === "site.config.json") what = "Site settings and logo";
   else if (path.startsWith("assets/img/")) what = `Image: ${baseName(path)}`;
   else if (path.startsWith("assets/css/") || path.startsWith("assets/js/") || path.startsWith("styles/")) what = `Styles and scripts: ${baseName(path)}`;
-  else if (path.startsWith("knowledge/")) what = "What Claude remembers";
-  else if (path === "scripts/site-tree.md") what = "Site plan";
-  else if (path === "scripts/scaffold-schedule.md") what = "Scheduled pages";
+  else if (path.startsWith("knowledge/")) what = "AI notes about your site";
+  else if (path === "scripts/site-tree.md") what = "Page plan";
+  else if (path === "scripts/scaffold-schedule.md") what = "Planned posts";
   else if (path.startsWith("scripts/") || path.startsWith("templates/") || path.startsWith(".github/") || /^package(-lock)?\.json$/.test(path)) {
     what = `Site tools: ${baseName(path)}`;
   } else what = path;

@@ -7,7 +7,7 @@ import { type Credits, formatCredits, useCredits, useCreditsFailed } from "@/lib
 import { BuyCredits } from "./BuyCredits";
 
 /** "low" below a tenth of what the account has had (or 1,000), "empty" at zero (not while the free credits wait for GitHub). */
-function level(credits: Credits) {
+export function level(credits: Credits) {
   if (credits.balance <= 0) return credits.freePending ? "ok" : "empty";
   const total = credits.granted + credits.purchased;
   return credits.balance < Math.max(1_000, total / 10) ? "low" : "ok";

@@ -42,9 +42,9 @@ export function MemoryPanel() {
   const { overview } = useSite();
   if (overview && !overview.features.memory) {
     return (
-      <Section title="What Claude remembers">
+      <Section title="AI notes about your site">
         <Notice>
-          This site&apos;s scripts were copied before Claude&apos;s memory existed, so Claude doesn&apos;t keep notes or a work log
+          This site&apos;s scripts were copied before the AI&apos;s memory existed, so the AI doesn&apos;t keep notes or a work log
           here yet. A copy needs <code className="font-mono">scripts/lib/knowledge.js</code> and the updated scripts from the
           template.
         </Notice>
@@ -110,12 +110,12 @@ function NotesSection() {
 
   return (
     <Section
-      title="Notes for Claude"
+      title="Notes for the AI"
       description={
         <>
-          knowledge/notes.md: standing instructions Claude follows on every request (voice, audience, decisions, things to avoid).
+          knowledge/notes.md: standing instructions the AI follows on every request (voice, audience, decisions, things to avoid).
           Text inside &lt;!-- --&gt; comments and headings with nothing under them aren&apos;t sent. Saving makes it a change
-          to publish like any other; Claude uses it here straight away.
+          to publish like any other; the AI uses it here straight away.
         </>
       }
     >
@@ -131,7 +131,7 @@ function NotesSection() {
             spellCheck={false}
             className={`${inputClass} font-mono text-xs leading-relaxed`}
             disabled={busy || saving}
-            aria-label="Notes for Claude"
+            aria-label="Notes for the AI"
           />
           {saved !== null && (
             <div className="mt-3">
@@ -199,7 +199,7 @@ function WorkLogSection() {
   }
 
   async function clearAll() {
-    const ok = await confirmModal("Clear Claude's memory of earlier work on this site? Claude's next requests start without it. Your notes stay.", {
+    const ok = await confirmModal("Clear the AI's memory of earlier work on this site? The AI's next requests start without it. Your notes stay.", {
       confirmLabel: "Clear memory",
       danger: true,
     });
@@ -218,8 +218,8 @@ function WorkLogSection() {
       title="Work log"
       description={
         <>
-          One entry per change Claude made that was kept, newest first: what was asked, and Claude&apos;s summary of what it
-          changed. Claude reads the newest {memory?.sent ?? 60} before every request, including changes that aren&apos;t
+          One entry per change the AI made that was kept, newest first: what was asked, and the AI&apos;s summary of what it
+          changed. The AI reads the newest {memory?.sent ?? 60} before every request, including changes that aren&apos;t
           published or merged yet. Edit an entry to correct what it says, or remove one that&apos;s wrong or was undone.
           Removed entries stay forgotten even if an older branch still has them.
         </>
@@ -228,7 +228,7 @@ function WorkLogSection() {
       <ErrorText error={error} />
       {!memory && !error && <p className="text-sm text-zinc-500">Loading…</p>}
       {memory && lines.length === 0 && (
-        <p className="text-sm text-zinc-500">Nothing yet. Each change Claude makes that you keep adds an entry here.</p>
+        <p className="text-sm text-zinc-500">Nothing yet. Each change the AI makes that you keep adds an entry here.</p>
       )}
       {lines.length > 0 && (
         <ol className="divide-y divide-zinc-200 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">

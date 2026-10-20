@@ -93,18 +93,17 @@ export function SchedulePanel() {
   }
 
   const jobs = schedule?.jobs ?? [];
+  // Once each: the pages collection's folder is usually content/pages too.
   const locations = [
-    ...(overview?.collections.map((c) => c.dir) ?? []),
-    "content/pages",
-    ...(form.kind === "move" ? ["static"] : []),
+    ...new Set([...(overview?.collections.map((c) => c.dir) ?? []), "content/pages", ...(form.kind === "move" ? ["static"] : [])]),
   ];
   const disabled = busy || saving;
 
   return (
     <>
       <Section
-        title="Scheduled pages"
-        description="Dated one-off jobs from scripts/scaffold-schedule.md. A job runs once its date arrives: Claude writes the page from your brief, notes and images, or a finished file is moved into place. Each job is then marked done so it never runs twice."
+        title="Planned posts"
+        description="Dated one-off jobs from scripts/scaffold-schedule.md. A job runs once its date arrives: the AI writes the page from your brief, notes and images, or a finished file is moved into place. Each job is then marked done so it never runs twice."
       >
         <ErrorText error={error} />
         {schedule?.error && <Notice tone="warning">{schedule.error}</Notice>}
@@ -149,7 +148,7 @@ export function SchedulePanel() {
             Run due jobs
           </Button>
           <span className="text-xs text-zinc-500">
-            The preview prints what Claude would be sent, without calling it.{!claude.ready && ` ${claude.reason}`}
+            The preview prints what the AI would be sent, without calling it.{!claude.ready && ` ${claude.reason}`}
           </span>
         </div>
       </Section>
@@ -159,7 +158,7 @@ export function SchedulePanel() {
           <fieldset className="flex gap-4 text-sm sm:col-span-2">
             <label className="flex items-center gap-1.5">
               <input type="radio" checked={form.kind === "generate"} onChange={() => setForm({ ...form, kind: "generate" })} disabled={disabled} />
-              Claude writes the page
+              The AI writes the page
             </label>
             <label className="flex items-center gap-1.5">
               <input type="radio" checked={form.kind === "move"} onChange={() => setForm({ ...form, kind: "move" })} disabled={disabled} />
@@ -201,7 +200,7 @@ export function SchedulePanel() {
             <>
               <label className="flex items-center gap-2 self-end pb-1.5 text-sm">
                 <input type="checkbox" checked={form.research} onChange={(e) => setForm({ ...form, research: e.target.checked })} disabled={disabled} />
-                Let Claude search the web for supporting facts
+                Let the AI search the web for supporting facts
               </label>
               <div className="sm:col-span-2">
                 <Field label="Brief" hint="What the page is for and who it's for.">
@@ -216,7 +215,7 @@ export function SchedulePanel() {
                 </Field>
               </div>
               <div className="sm:col-span-2">
-                <Field label="Notes (optional)" hint="Facts, quotes or copy to write from. Claude won't invent beyond these and the brief.">
+                <Field label="Notes (optional)" hint="Facts, quotes or copy to write from. The AI won't invent beyond these and the brief.">
                   <textarea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} rows={4} className={inputClass} disabled={disabled} />
                 </Field>
               </div>

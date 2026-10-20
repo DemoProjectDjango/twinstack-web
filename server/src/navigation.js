@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { WorkspaceError, acquire, workspaceDir } from "./workspace.js";
-import { contentVersion, frontmatter, inside, listFiles, readText } from "./site-files.js";
+import { applyUrlPattern, contentVersion, frontmatter, inside, listFiles, readText } from "./site-files.js";
 
 // The site's header and footer, kept in content/data/navigation.json: the header menu (links,
 // dropdowns of links, and collection menus that list a collection's pages themselves), the header
@@ -102,12 +102,6 @@ function withDefaults(appearance) {
 
 /** The HTML file a copied header or footer came from (its data-chrome-from), or null. */
 const chromeSource = (partial) => partial.match(/data-chrome-from="([^"]*)"/)?.[1] ?? null;
-
-/** Like the site's applyUrlPattern in scripts/lib/content.js. */
-function applyUrlPattern(pattern, slug) {
-  const url = pattern.replace(":slug", slug);
-  return url.endsWith("/") || url.endsWith(".html") ? url : `${url}/`;
-}
 
 /** Every page the site builds, with its address, for the editor's link picker and its missing-page hints (and the site check, site-check.js). */
 export async function sitePages(dir, site) {

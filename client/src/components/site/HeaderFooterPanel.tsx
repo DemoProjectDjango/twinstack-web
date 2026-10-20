@@ -219,12 +219,12 @@ export function HeaderFooterPanel() {
           {dirty ? (
             <span className="font-medium">You have unsaved changes.</span>
           ) : saved ? (
-            <span className="text-green-700 dark:text-green-400">Saved. The preview on Home updates by itself.</span>
+            <span className="text-green-700 dark:text-green-400">Saved. Edit site shows it by itself.</span>
           ) : (
             <span className="text-zinc-500">Edit below or click any part of the preview. Changes show in the preview straight away.</span>
           )}
         </p>
-        {saved && !dirty && <Button onClick={() => showSection("home")}>See it on Home</Button>}
+        {saved && !dirty && <Button onClick={() => showSection("home")}>See it on Edit site</Button>}
         <Button disabled={!dirty || disabled} onClick={discard}>
           Discard
         </Button>
@@ -247,7 +247,7 @@ export function HeaderFooterPanel() {
         title="Preview"
         description={
           designedHeader || designedFooter
-            ? "What the menu and footer hold, in the template's colours rather than Claude's design (Home shows the real look). Links to pages the site doesn't have yet are struck through: the build leaves them out until those pages exist."
+            ? "What the menu and footer hold, in the template's colours rather than the AI's design (Edit site shows the real look). Links to pages the site doesn't have yet are struck through: the build leaves them out until those pages exist."
             : "An approximation in the template's colours. Links to pages the site doesn't have yet are struck through: the build leaves them out until those pages exist."
         }
       >
@@ -323,8 +323,8 @@ export function HeaderFooterPanel() {
           <div id="hf-header-look" className={`space-y-4 rounded-md p-1 ${flash(selected, "header-look")}`}>
             {designedHeader ? (
               <Notice>
-                Claude designed this header, so its colours, where the menu sits and whether it stays at the top are part of
-                the design. To change them, ask Claude in &quot;Design with Claude&quot; above. The menu, button and logo below
+                The AI designed this header, so its colours, where the menu sits and whether it stays at the top are part of
+                the design. To change them, ask the AI in &quot;Design with the AI&quot; above. The menu, button and logo below
                 are still yours to edit.
               </Notice>
             ) : (
@@ -391,7 +391,7 @@ export function HeaderFooterPanel() {
             <p className="text-xs text-zinc-500">
               The logo is set in the Logo section above, and the site name in{" "}
               <button type="button" className="underline" onClick={() => showSection("details")}>
-                Site details
+                Business info
               </button>
               . On a dark or brand-colour header, the logo for dark backgrounds is used when there is one.
             </p>
@@ -480,7 +480,7 @@ export function HeaderFooterPanel() {
         <Section title="Footer" description="The block at the bottom of every page.">
           <div id="hf-footer-look" className={`space-y-4 rounded-md p-1 ${flash(selected, "footer-look")}`}>
             {designedFooter ? (
-              <p className="text-sm text-zinc-500">Claude designed this footer, so its colours are part of the design.</p>
+              <p className="text-sm text-zinc-500">The AI designed this footer, so its colours are part of the design.</p>
             ) : (
             <Field label="Colour">
               <Segmented<FooterTheme>
@@ -533,7 +533,7 @@ export function HeaderFooterPanel() {
               <p className="text-xs text-zinc-500">
                 The tagline and contact details are edited in{" "}
                 <button type="button" className="underline" onClick={() => showSection("details")}>
-                  Site details
+                  Business info
                 </button>
                 .
               </p>
@@ -1268,16 +1268,16 @@ function ClaudeDesign({ designed, dirty }: { designed: boolean; dirty: boolean }
 
   return (
     <Section
-      title="Design with Claude"
-      description="Claude designs the header and footer together, in the look of your pages, and every page shows them. The menu, button, logo and copyright stay as you set them on this screen."
+      title="Design with the AI"
+      description="The AI designs the header and footer together, in the look of your pages, and every page shows them. The menu, button, logo and copyright stay as you set them on this screen."
     >
       {!supported ? (
-        <Notice>This site&apos;s tools are older than this feature, so Claude can&apos;t design its header and footer yet.</Notice>
+        <Notice>This site&apos;s tools are older than this feature, so the AI can&apos;t design its header and footer yet.</Notice>
       ) : (
         <div className="space-y-3">
           {!claude.ready && (
             <Notice>
-              This needs Claude.{" "}
+              This needs the AI.{" "}
               <Link href={claude.setupHref} className="font-medium underline">
                 {claude.setupLabel}
               </Link>
@@ -1293,14 +1293,14 @@ function ClaudeDesign({ designed, dirty }: { designed: boolean; dirty: boolean }
               className={inputClass}
             />
           </Field>
-          {dirty && <Notice tone="warning">Save your changes first: Claude designs around what&apos;s saved.</Notice>}
+          {dirty && <Notice tone="warning">Save your changes first: the AI designs around what&apos;s saved.</Notice>}
           <div className="flex flex-wrap items-center gap-3">
             <Button
               variant="primary"
               disabled={busy || !claude.ready || dirty}
               onClick={() => void run("chrome-design", { ...(direction.trim() && { instruction: direction.trim() }), dryRun: true })}
             >
-              {running ? "Claude is designing…" : designed ? "Redesign with Claude" : "Design with Claude"}
+              {running ? "The AI is designing…" : designed ? "Redesign with the AI" : "Design with the AI"}
             </Button>
             {running && <span className="text-sm text-zinc-500">This usually takes a minute or two.</span>}
           </div>

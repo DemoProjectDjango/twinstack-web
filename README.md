@@ -92,21 +92,24 @@ in plain language for people who don't know git:
 
 | Screen | What it does | Site command |
 | --- | --- | --- |
-| Home | The site's live address and deploy status, next steps, and a preview (computer or phone width) that rebuilds by itself after every change | `build --drafts` |
-| Pages | Every page; **Add a page** (type, title, and how to fill it: write it yourself, Claude writes it from your notes, or bring in a page from another website); the page editor | `new <type> "Title" [--draft] [--slug=]` |
+| Top bar | The site's address, whether everything is live ("2 changes not live yet"), **See what changed**, how much AI help is left, and **Publish**, which checks the site the way the deploy does and publishes in one press (a first publish opens What's changed to check the business info first) | git; `build` + `check` |
+| Edit site | The site itself (computer or phone width), rebuilt by itself after every change: click any words to change them (switch it off to try links and buttons), pick another page, and a link to what's left to do. A new site starts with three questions (name, what you do, photos), and the AI designs the homepage from them | `build --drafts` |
+| Pages | Every page, each with **Edit on site**, **Edit page** and a ⋯ menu (show in the menu or take it out, hide it from visitors or show it again, delete); **Add a page** (type, title, and how to fill it: write it yourself, Claude writes it from your notes, or bring in a page from another website); the page editor | `new <type> "Title" [--draft] [--slug=]` |
 | Page editor → Content | **Write it yourself**: the page's text (its frontmatter folded away as "Page settings"), photos inserted at the cursor, saved as is or polished by Claude. **Ask Claude to change it**: an instruction, with optional photos. **Bring in a page from another website**: upload a saved `.html` page (and optionally its `.css`/`.js`); the old header, footer and navigation are removed and the rest is kept as it looked, or rewritten in the site's design. Claude's version is shown with what it did, any problems, and the built page; keep it, throw it away, or edit the text first (nothing calls Claude again) | `page:generate`, `page:edit`, `page:convert` |
 | Page editor → Search and sharing | The page as a Google result (desktop and mobile) and a shared link, updating as you type; its title, description, focus keyphrase, social image, canonical and noindex, or a suggestion from Claude | `seo <page> --title=…`, `seo <page> --claude --dry-run` |
-| Design | Logo, and a live preview and editor of the header and footer (`content/data/navigation.json`): menu items, dropdowns, automatic collection menus, the header button, footer columns, legal links, colours and layout. **Add a new section** sets up a new collection | `nav:add` |
-| Site details | `site.config.json` (name, taglines, contact, social, SEO settings) and `content/data/*.json` (company facts, FAQ, testimonials, homepage sections, redirects) in forms | |
-| Publish | Every change since the last publish, in plain words, with undo; **Publish now** commits and pushes straight to the live branch, or **Send for review** opens a pull request (under More options). Beside the button, the site is checked the way the live site's deploy checks it (broken links, a missing homepage or listing page, two pages at one address, a failing build), with a fix for each problem and **Fix with Claude**; a failed deploy says why. Also a custom domain | git; `build` + `check` |
-| Advanced → Search overview | Every page's SEO score and what to fix; Claude writes search text for every page | `seo`, `seo --all --claude` |
-| Advanced → Site plan, Scheduled pages | `scripts/site-tree.md` and `scripts/scaffold-schedule.md` | `scaffold`, `scaffold:schedule` |
-| Advanced → What Claude remembers, Styles (CSS) | `knowledge/notes.md` and the work log; the site's stylesheets | |
-| Advanced → Build tools and log | Build and check, rebuild the preview, install dependencies, changelog, the full command output, and the branch and commit status | `check`, `npm ci`, `changelog` |
+| Look & logo | Logo, and a live preview and editor of the header and footer (`content/data/navigation.json`): menu items, dropdowns, automatic collection menus, the header button, footer columns, legal links, colours and layout. **Add a new section** sets up a new collection | `nav:add` |
+| Business info | Tabs: About, Contact (email, phone, address, opening hours, WhatsApp, booking button), Social media (from `site.config.json`), Customer reviews, Questions & answers and Highlights (`content/data/*.json`), in forms | |
+| Visitors | The site's visits, for the person who created it | |
+| What's changed (from the top bar) | Every change since the last publish, in plain words, with undo; **Publish now** commits and pushes straight to the live branch, or **Send for review** opens a pull request (under More options). Beside the button, the site is checked the way the live site's deploy checks it (broken links, a missing homepage or listing page, two pages at one address, a failing build), with a fix for each problem and **Fix with Claude**; a failed deploy says why. Also a custom domain | git; `build` + `check` |
+| More tools → Google & sharing | Every page's SEO score and what to fix, the AI writes search text for every page, and the site-wide search settings | `seo`, `seo --all --claude` |
+| More tools → Old web addresses, Homepage sections | Redirects, and an older homepage's sections (when the site has them) | |
+| More tools → Page plan, Planned posts | `scripts/site-tree.md` and `scripts/scaffold-schedule.md` | `scaffold`, `scaffold:schedule` |
+| More tools → AI notes about your site, Custom code, AI settings | `knowledge/notes.md` and the work log; the site's stylesheets; the site's AI models | |
+| More tools → Technical log | Build and check, rebuild the preview, install dependencies, changelog, the full command output, and the branch and commit status | `check`, `npm ci`, `changelog` |
 
-Older copies that lack newer template files get them from one **Update site tools** button on Home.
+Older copies that lack newer template files get them from one **Update site tools** button on Edit site.
 
-**Ask Claude.** Every screen has a box where you describe what you want in your own words, for example:
+**Ask the AI** (Claude; the editor says "the AI"). A bar at the bottom of every screen takes what you want in your own words, with photos or files, for example:
 
 - "Add a Careers page with two open roles"
 - "Plan a site for a bakery"

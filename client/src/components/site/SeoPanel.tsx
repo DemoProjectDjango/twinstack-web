@@ -169,7 +169,7 @@ export function SeoPanel() {
 
   if (!info) {
     return (
-      <Section title="Search overview">
+      <Section title="Google & sharing">
         {error ? <ErrorText error={error} /> : <p className="text-sm text-zinc-500">Loading…</p>}
       </Section>
     );
@@ -178,7 +178,7 @@ export function SeoPanel() {
   if (!info.available) {
     return (
       <Section
-        title="Search overview"
+        title="Google & sharing"
         description="How every page shows up on Google and when it's shared, with a score for each."
       >
         <InstallSeo installing={installing} install={install} error={error} />
@@ -192,8 +192,8 @@ export function SeoPanel() {
   return (
     <>
       <Section
-        title="Search overview"
-        description="How every page shows up on Google and when it's shared, scored out of 100. Open a page to improve it, or let Claude write the search text for every page at once."
+        title="Google & sharing"
+        description="How every page shows up on Google and when it's shared, scored out of 100. Open a page to improve it, or let the AI write the search text for every page at once."
       >
         {!info.template && (
           <div className="mb-4">
@@ -225,9 +225,9 @@ export function SeoPanel() {
         )}
 
         <div className="mt-5 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
-          <p className="text-sm font-medium">Write every page&apos;s SEO with Claude</p>
+          <p className="text-sm font-medium">Write every page&apos;s SEO with the AI</p>
           <p className="mt-0.5 text-xs text-zinc-500">
-            Claude writes the title, description and focus keyphrase of {force ? "every page" : `the ${missing} page${missing === 1 ? "" : "s"} without their own`}{" "}
+            The AI writes the title, description and focus keyphrase of {force ? "every page" : `the ${missing} page${missing === 1 ? "" : "s"} without their own`}{" "}
             from what each page says, one request per page, and checks each against the others so none repeat. The changes are added to
             your list of changes to publish. To check one page first, open it below.
           </p>
@@ -249,7 +249,7 @@ export function SeoPanel() {
               disabled={busy || !claude.ready || (!force && missing === 0)}
               onClick={() => run("seo-claude", { all: true, force, instruction: direction.trim() || undefined })}
             >
-              Write with Claude
+              Write with the AI
             </Button>
           </div>
         </div>
@@ -258,7 +258,7 @@ export function SeoPanel() {
         </div>
       </Section>
 
-      <Section title="Pages" description="Worst first. Open a page to see it as a search result, change its fields or ask Claude for a suggestion.">
+      <Section title="Pages" description="Worst first. Open a page to see it as a search result, change its fields or ask the AI for a suggestion.">
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -449,9 +449,9 @@ function SeoEditor({ page, report }: { page: SeoPage; report: SeoReport }) {
         </div>
       </form>
       <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
-        <p className="text-sm font-medium">Suggest with Claude</p>
+        <p className="text-sm font-medium">Suggest with the AI</p>
         <p className="mt-0.5 text-xs text-zinc-500">
-          Claude writes the title, description and focus keyphrase from the page{page.fields.focusKeyword ? `, keeping the keyphrase "${page.fields.focusKeyword}" unless you give a direction` : ""}. You see it here before anything changes.
+          The AI writes the title, description and focus keyphrase from the page{page.fields.focusKeyword ? `, keeping the keyphrase "${page.fields.focusKeyword}" unless you give a direction` : ""}. You see it here before anything changes.
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
           <input
@@ -463,7 +463,7 @@ function SeoEditor({ page, report }: { page: SeoPage; report: SeoReport }) {
             disabled={busy}
           />
           <Button disabled={busy || !claude.ready} onClick={() => run("seo-claude", { page: page.file, instruction: direction.trim() || undefined, dryRun: true })}>
-            {claudeRunning ? "Claude is writing…" : "Suggest"}
+            {claudeRunning ? "The AI is writing…" : "Suggest"}
           </Button>
         </div>
         {proposal?.seo && (
@@ -696,7 +696,7 @@ function Suggestion({
   ];
   return (
     <div className="mt-3 space-y-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-      <p className="text-sm font-medium">Claude suggests</p>
+      <p className="text-sm font-medium">The AI suggests</p>
       <dl className="space-y-2 text-sm">
         {rows.map(([label, before, after]) => (
           <div key={label}>

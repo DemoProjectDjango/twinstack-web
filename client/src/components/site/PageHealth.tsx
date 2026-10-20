@@ -89,7 +89,7 @@ export function PageHealth({ health, onOpen }: { health: ReturnType<typeof usePa
 
   async function remove(page: ScannedPage) {
     const ok = await confirmModal(
-      `Delete ${quoted(page.title)} (${page.url})? You can still undo it on the Publish screen until you publish.`,
+      `Delete ${quoted(page.title)} (${page.url})? You can still undo it on What's changed until you publish.`,
       { confirmLabel: "Delete page", danger: true },
     );
     if (!ok) return;

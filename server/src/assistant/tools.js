@@ -141,7 +141,7 @@ const TOOLS = [
   ),
   tool(
     "read_site_problems",
-    "What the last check before publishing found: the check the live site runs before it updates, so while any problem is left, publishing doesn't change the live site. Each problem has a kind: missing-link (page links to href, which isn't in the published site; target home means the site has no homepage, listing that a collection has no listing page yet (listing names it), hidden a hidden page, page no such page, file no such image or file; inPageText false means the link comes from the site's design, such as the logo, menu, footer or a layout), duplicate (two pages at one address), no-date (a blog post without a date) or other. buildFailed means the site couldn't be built at all (failure has the error). outOfDate means the site changed since; the Publish screen checks again by itself.",
+    "What the last check before publishing found: the check the live site runs before it updates, so while any problem is left, publishing doesn't change the live site. Each problem has a kind: missing-link (page links to href, which isn't in the published site; target home means the site has no homepage, listing that a collection has no listing page yet (listing names it), hidden a hidden page, page no such page, file no such image or file; inPageText false means the link comes from the site's design, such as the logo, menu, footer or a layout), duplicate (two pages at one address), no-date (a blog post without a date) or other. buildFailed means the site couldn't be built at all (failure has the error). outOfDate means the site changed since; the What's changed screen checks again by itself.",
     {},
     [],
     { kind: "read", activity: () => "Checking what stops your site from publishing" },
@@ -288,7 +288,7 @@ const TOOLS = [
   ),
   tool(
     "update_menu_and_footer",
-    "Proposes the complete new navigation object (read_navigation first, change only what's asked, keep every other field and item as it is). Links start with /, #, mailto:, tel: or https://. A header item is a link ({label, url}), a dropdown ({label, children: [links]}) or a collection menu ({label, type: \"collection\", collection, limit}). appearance.header: theme light|dark|brand, layout right|center|left, sticky, style bar|floating, transparent (see-through over the top of the page until scrolled), shrink (lower once scrolled). appearance.footer: theme dark|light|brand, layout columns|centered|minimal, showTagline, showContact, showSocial (icons for the social links in Site details), cta {title, text, label, url} (a call-to-action strip above the footer; null for none), copyright. When read_navigation says supportsStyles is false the site's templates predate style, transparent, shrink, layout, showSocial and cta; when copied says a header or footer was copied from a page, the menu and appearance don't change it.",
+    "Proposes the complete new navigation object (read_navigation first, change only what's asked, keep every other field and item as it is). Links start with /, #, mailto:, tel: or https://. A header item is a link ({label, url}), a dropdown ({label, children: [links]}) or a collection menu ({label, type: \"collection\", collection, limit}). appearance.header: theme light|dark|brand, layout right|center|left, sticky, style bar|floating, transparent (see-through over the top of the page until scrolled), shrink (lower once scrolled). appearance.footer: theme dark|light|brand, layout columns|centered|minimal, showTagline, showContact, showSocial (icons for the social links in Business info), cta {title, text, label, url} (a call-to-action strip above the footer; null for none), copyright. When read_navigation says supportsStyles is false the site's templates predate style, transparent, shrink, layout, showSocial and cta; when copied says a header or footer was copied from a page, the menu and appearance don't change it.",
     { navigation: { type: "object", description: "The full navigation: header {items, cta}, footer [columns], legal [links], appearance." }, ...summaryField, ...continueField },
     ["navigation", "summary"],
     { kind: "change", runs: "server", title: "Change the menu and footer" },
@@ -519,8 +519,8 @@ async function runRead(name, input, key, context) {
     }
     case "read_search_report": {
       const info = await readSeo(key);
-      if (!info.available) return "This site's tools are older than the search settings. Ask the owner to press \"Update site tools\" on the Home screen first.";
-      if (!info.report) return "No search check has run yet. It runs when the owner opens the Search overview screen.";
+      if (!info.available) return "This site's tools are older than the search settings. Ask the owner to press \"Update site tools\" on the Edit site screen first.";
+      if (!info.report) return "No search check has run yet. It runs when the owner opens the Google & sharing screen (under More tools).";
       const file = str(input, "file", { max: 300, optional: true });
       if (file) {
         const page = info.report.pages.find((p) => p.file === file);
@@ -544,7 +544,7 @@ async function runRead(name, input, key, context) {
     }
     case "read_site_problems": {
       const { report, fresh } = await readCheckReport(key);
-      if (!report) return "The site hasn't been checked yet. The Publish screen checks it by itself when the owner opens it.";
+      if (!report) return "The site hasn't been checked yet. The What's changed screen checks it by itself when the owner opens it.";
       return {
         checkedAt: report.checkedAt,
         outOfDate: !fresh,
@@ -645,7 +645,7 @@ async function prepareChange(name, input, key, context) {
       const file = pageFileOf(input);
       const page = await readPage(key, file);
       const overview = await getOverview(key);
-      if (!overview.features.pageConvert) throw new ToolInputError("This site's tools are too old to bring in pages. Ask the owner to update them (Build tools and log).");
+      if (!overview.features.pageConvert) throw new ToolInputError("This site's tools are too old to bring in pages. Ask the owner to update them (Technical log, under More tools).");
       const html = await attachmentOf(input?.attachment, key);
       if (html.kind !== "text" || !/\.html?$/i.test(html.name)) throw new ToolInputError(`${html.name} isn't an .html file.`);
       const extras = Array.isArray(input?.extra_files) ? input.extra_files : [];

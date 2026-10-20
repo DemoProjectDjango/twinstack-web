@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { api, isHomePage, workspacePath, type SitePage, type WorkspaceStatus } from "@/lib/site-api";
+import { confirmModal } from "@/lib/confirm";
+import { api, isHomePage, workspacePath, type NavigationInfo, type NavItem, type SitePage, type WorkspaceStatus } from "@/lib/site-api";
 import { PageContentEditor } from "./EditPanel";
 import { markVisited } from "./HomePanel";
 import { PageHealth, usePageHealth } from "./PageHealth";
@@ -33,7 +34,7 @@ export function PagesPanel({ openPage, onClose }: { openPage: { file: string; mo
 }
 
 function PageList() {
-  const { owner, repo, overview, editFile, showSection, busy, run, setStatus, refresh } = useSite();
+  const { owner, repo, overview, version, editFile, showSection, busy, run, setStatus, refresh } = useSite();
   const [adding, setAdding] = useState(false);
   const [addingHome, setAddingHome] = useState(false);
   const [homeError, setHomeError] = useState<unknown>(null);
@@ -43,6 +44,19 @@ function PageList() {
   // What the last build found: pages nothing links to, and pages that share an address.
   const health = usePageHealth();
   const unlinkedFiles = new Set(health.unlinked.map((p) => p.file));
+  // The header menu and the pages that add themselves to it, for "In the menu" and the page menus.
+  const [nav, setNav] = useState<NavigationInfo | null>(null);
+  const [navTick, setNavTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    api<NavigationInfo>(workspacePath(owner, repo, "/navigation"))
+      .then((next) => !cancelled && setNav(next))
+      // Without it, the list just has no menu actions.
+      .catch(() => !cancelled && setNav(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [owner, repo, version, navTick]);
 
   // "Add a page" can't make it: the homepage's address is "/", not its name.
   async function addHomepage() {
@@ -112,20 +126,7 @@ function PageList() {
             <h3 className="mb-2 text-sm font-medium text-zinc-500">{collection.label}</h3>
             <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
               {sortPages(collection.pages).map((page) => (
-                <li key={page.file}>
-                  <button
-                    type="button"
-                    onClick={() => editFile(page.file, "generate")}
-                    className="flex w-full flex-wrap items-center gap-2 px-4 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                  >
-                    <span className="font-medium">{page.title}</span>
-                    {isHomePage(page) && <Badge>Homepage</Badge>}
-                    {page.draft && <Badge>Hidden</Badge>}
-                    {unlinkedFiles.has(page.file) && <Badge>Not linked from anywhere</Badge>}
-                    <span className="truncate text-xs text-zinc-500">{pageAddress(page)}</span>
-                    <span className="ml-auto text-sm text-zinc-500">Edit →</span>
-                  </button>
-                </li>
+                <PageRow key={page.file} page={page} unlinked={unlinkedFiles.has(page.file)} nav={nav} onNavChanged={() => setNavTick((t) => t + 1)} />
               ))}
             </ul>
           </section>
@@ -135,7 +136,7 @@ function PageList() {
         <p className="text-sm text-zinc-500">
           Need a whole new section, like Events, with its own list of pages?{" "}
           <button type="button" className="underline" onClick={() => showSection("design")}>
-            Add it in Design
+            Add it in Look &amp; logo
           </button>
           .
         </p>
@@ -151,7 +152,155 @@ function sortPages(pages: SitePage[]) {
 
 function pageAddress(page: SitePage) {
   if (isHomePage(page)) return "/";
-  return page.url ?? `/${page.slug}`;
+  return page.address ?? page.url ?? `/${page.slug}`;
+}
+
+/** Two addresses for one page: "/about.html" and "/about.html/", "/blog/" and "/blog". */
+const sameAddress = (a: string | undefined, b: string) => Boolean(a) && a!.replace(/\/+$/, "") === b.replace(/\/+$/, "");
+
+/** Whether the header menu links to `url`: an entry of its own, or one of a dropdown's. */
+function listedInHeader(items: NavItem[], url: string) {
+  return items.some((item) => sameAddress(item.url, url) || (item.children ?? []).some((child) => sameAddress(child.url, url)));
+}
+
+/** The header menu without its links to `url`. A dropdown that opened that page keeps its other links. */
+function withoutLinksTo(items: NavItem[], url: string): NavItem[] {
+  return items.flatMap((item) => {
+    const children = item.children?.filter((child) => !sameAddress(child.url, url));
+    if (!sameAddress(item.url, url)) return [children ? { ...item, children } : item];
+    if (children?.length) {
+      const rest: NavItem = { ...item, children };
+      delete rest.url;
+      return [rest];
+    }
+    return [];
+  });
+}
+
+/** The menu and footer to save with these header links. */
+function navigationWith(nav: NavigationInfo, items: NavItem[]) {
+  const { appearance, ...rest } = nav.navigation;
+  const navigation = { ...rest, header: { ...rest.header, items } };
+  // Copies without appearance settings must not have them written.
+  return nav.supportsAppearance ? { ...navigation, appearance } : navigation;
+}
+
+/**
+ * One page in the list: open it on the site or in the page editor, and its ⋯ menu: put it in the
+ * header menu or take it out, hide it from visitors or show it again, delete it. Each change is an
+ * ordinary unpublished change, undone on What's changed until it's published.
+ */
+function PageRow({ page, unlinked, nav, onNavChanged }: { page: SitePage; unlinked: boolean; nav: NavigationInfo | null; onNavChanged: () => void }) {
+  const { owner, repo, overview, busy, editFile, showOnSite, setStatus, refresh } = useSite();
+  const [open, setOpen] = useState(false);
+  const [working, setWorking] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const home = isHomePage(page);
+  const address = pageAddress(page);
+  const navPage = nav?.pages.find((p) => p.file === page.file);
+  const url = navPage?.url ?? address;
+  const selfListed = navPage?.menu === "header" || navPage?.menu === "both";
+  const listed = nav ? listedInHeader(nav.navigation.header.items, url) : false;
+  const inMenu = selfListed || listed;
+  // The homepage is the menu's logo link; other pages can be put in or taken out.
+  const canMenu = !home && nav !== null;
+
+  async function act(what: string, change: () => Promise<{ status: WorkspaceStatus } | void>) {
+    setWorking(what);
+    setError(null);
+    try {
+      const result = await change();
+      if (result?.status) setStatus(result.status);
+      await refresh();
+      onNavChanged();
+      setOpen(false);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  const toggleMenu = () =>
+    act("menu", async () => {
+      if (!nav) return;
+      let status: WorkspaceStatus | undefined;
+      if (inMenu) {
+        if (selfListed) {
+          const menu = navPage?.menu === "both" ? "footer" : null;
+          status = (await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/navigation/page-menu"), { method: "PUT", body: { file: page.file, menu } })).status;
+        }
+        if (listed) {
+          const navigation = navigationWith(nav, withoutLinksTo(nav.navigation.header.items, url));
+          status = (await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/navigation"), { method: "PUT", body: { navigation, version: nav.version } })).status;
+        }
+      } else if (overview?.features.pageMenus && navPage) {
+        // The page adds itself: it keeps its place when renamed and drops out if it's hidden or removed.
+        const menu = navPage.menu === "footer" ? "both" : "header";
+        status = (await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/navigation/page-menu"), { method: "PUT", body: { file: page.file, menu } })).status;
+      } else {
+        const navigation = navigationWith(nav, [...nav.navigation.header.items, { label: page.title, url }]);
+        status = (await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/navigation"), { method: "PUT", body: { navigation, version: nav.version } })).status;
+      }
+      return status ? { status } : undefined;
+    });
+
+  const toggleHidden = () =>
+    act("hide", () => api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/pages/draft"), { method: "PUT", body: { file: page.file, draft: !page.draft } }));
+
+  async function remove() {
+    const ok = await confirmModal(`Delete “${page.title}”? Visitors won't be able to open it. You can undo it on What's changed until you publish.`, {
+      title: "Delete this page?",
+      confirmLabel: "Delete page",
+      danger: true,
+    });
+    if (!ok) return;
+    await act("delete", () => api<{ status: WorkspaceStatus }>(`${workspacePath(owner, repo, "/pages/source")}?file=${encodeURIComponent(page.file)}`, { method: "DELETE" }));
+  }
+
+  const locked = busy || working !== null;
+  return (
+    <li className="px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <span className="mr-2 font-medium">{page.title}</span>
+          <span className="inline-flex flex-wrap items-center gap-1.5 align-middle">
+            {home && <Badge>Homepage</Badge>}
+            {page.draft && <Badge>Hidden</Badge>}
+            {inMenu && <Badge>In the menu</Badge>}
+            {unlinked && <Badge>Not linked from anywhere</Badge>}
+          </span>
+          <span className="block truncate text-xs text-zinc-500">{address}</span>
+        </div>
+        <Button onClick={() => showOnSite(address)}>Edit on site</Button>
+        <Button onClick={() => void editFile(page.file, "generate")}>Edit page</Button>
+        <Button variant="ghost" aria-expanded={open} aria-label={`More for ${page.title}`} onClick={() => setOpen(!open)}>
+          ⋯
+        </Button>
+      </div>
+      {open && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-2 dark:border-zinc-800">
+          {canMenu && (
+            <Button disabled={locked} onClick={() => void toggleMenu()}>
+              {working === "menu" ? "Saving…" : inMenu ? "Take out of the menu" : "Show in the menu"}
+            </Button>
+          )}
+          {!home && (
+            <Button disabled={locked} onClick={() => void toggleHidden()}>
+              {working === "hide" ? "Saving…" : page.draft ? "Show to visitors" : "Hide from visitors"}
+            </Button>
+          )}
+          {!home && (
+            <Button variant="danger" disabled={locked} onClick={() => void remove()}>
+              {working === "delete" ? "Deleting…" : "Delete…"}
+            </Button>
+          )}
+          {home && <span className="text-sm text-zinc-500">The homepage is always shown, and visitors reach it from your logo.</span>}
+        </div>
+      )}
+      <ErrorText error={error} />
+    </li>
+  );
 }
 
 /** Type, title and how to fill it; creating the page then opens it in the editor. */
@@ -236,10 +385,10 @@ function AddPage({ onDone }: { onDone: () => void }) {
           <legend className="text-sm font-medium">3. How do you want to fill it?</legend>
           <div className="mt-2 space-y-2 text-sm">
             <FillOption value="write" current={fill} onChange={setFill} disabled={working} title="I'll write it myself">
-              You type the text. Claude can tidy it up afterwards if you like.
+              You type the text. The AI can tidy it up afterwards if you like.
             </FillOption>
-            <FillOption value="generate" current={fill} onChange={setFill} disabled={working || !claude.ready} title="Claude writes it from my notes">
-              Jot down the facts, paste text or add photos, and Claude turns them into a finished page.
+            <FillOption value="generate" current={fill} onChange={setFill} disabled={working || !claude.ready} title="The AI writes it from my notes">
+              Jot down the facts, paste text or add photos, and the AI turns them into a finished page.
               {!claude.ready && (
                 <>
                   {" "}
@@ -251,7 +400,7 @@ function AddPage({ onDone }: { onDone: () => void }) {
               )}
             </FillOption>
             <FillOption value="convert" current={fill} onChange={setFill} disabled={working || !canConvert} title="Bring in a page from my old website">
-              Upload a page saved from another website, and Claude fits it into this one.
+              Upload a page saved from another website, and the AI fits it into this one.
             </FillOption>
           </div>
         </fieldset>

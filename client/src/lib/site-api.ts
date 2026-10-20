@@ -37,7 +37,16 @@ export type Job = {
 };
 
 /** `url` is set when the page's frontmatter chooses its address: "/" is the homepage. Older servers send none. */
-export type SitePage = { file: string; slug: string; title: string; url?: string | null; draft: boolean; date: string | null };
+export type SitePage = {
+  file: string;
+  slug: string;
+  title: string;
+  url?: string | null;
+  /** Where the site builds it (the page's own url, else its collection's urlPattern). Absent from older servers. */
+  address?: string | null;
+  draft: boolean;
+  date: string | null;
+};
 
 /**
  * The homepage: the page at "/" (index.html in the site tree, content/pages/home.md when scaffolded).
@@ -379,6 +388,8 @@ export type SiteProblem =
     }
   | { kind: "duplicate"; message: string; url: string; pages: ProblemPage[] }
   | { kind: "no-date"; message: string; page: ProblemPage }
+  /** A page cut off by a tag that's never closed (`element`: "<textarea>", "a comment (<!--)"), which hides the rest of it. */
+  | { kind: "cut-off"; message: string; element: string; page: ProblemPage | null }
   | { kind: "other"; message: string };
 
 export type SiteCheckReport = {
@@ -495,19 +506,33 @@ export function setBeforeChange(hook: (() => Promise<void>) | null) {
   beforeChange = hook;
 }
 
+// Waits before retrying a read when the API didn't answer at all: it's usually restarting for a moment.
+const READ_RETRY_DELAYS_MS = [400, 1200];
+
 export async function api<T>(path: string, { method = "GET", body }: { method?: string; body?: unknown } = {}): Promise<T> {
   if (method !== "GET" && beforeChange && !path.startsWith("/api/jobs/")) await beforeChange();
-  let res: Response;
-  try {
-    res = await fetch(path, {
-      method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch {
-    throw new ApiError("Network error. Check your connection and try again.", 0);
+  let res: Response | null = null;
+  // Whatever the API sent back (the shape varies by route), as res.json() gives it.
+  let data: Awaited<ReturnType<Response["json"]>> = {};
+  for (let attempt = 0; ; attempt++) {
+    let reached = true;
+    try {
+      res = await fetch(path, {
+        method,
+        headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      data = await res.json().catch(() => ({}));
+      // The Next.js proxy's own 5xx (the API is down or restarting) has no JSON error from the API.
+      reached = !(res.status >= 500 && typeof data.error !== "string");
+    } catch {
+      reached = false;
+    }
+    // Only reads are tried again: a change may have been made before the connection dropped.
+    if (reached || method !== "GET" || attempt >= READ_RETRY_DELAYS_MS.length) break;
+    await new Promise((resolve) => setTimeout(resolve, READ_RETRY_DELAYS_MS[attempt]));
   }
-  const data = await res.json().catch(() => ({}));
+  if (!res) throw new ApiError("Network error. Check your connection and try again.", 0);
   if (method !== "GET" && STARTS_CLAUDE.test(path) && (res.ok || res.status === 402)) claudeStarted();
   if (!res.ok) {
     const code = typeof data.error === "string" && /^[a-z_]+$/.test(data.error) ? data.error : undefined;

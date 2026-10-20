@@ -2,14 +2,15 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { claudeAccess } from "@/lib/claude";
+import { claudeAccess, inEditorWords } from "@/lib/claude";
 import { useCredits } from "@/lib/credits";
 import { confirmModal } from "@/lib/confirm";
 import { ApiError, api, setBeforeChange, workspacePath, type Job, type Overview, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
+import { AiHelpBadge } from "./AiHelpBadge";
 import { AnalyticsPanel } from "./AnalyticsPanel";
 import { AskClaude } from "./assistant/AskClaude";
 import { AssistantPanel } from "./assistant/AssistantPanel";
-import { AssistantProvider, useAssistant, useOptionalAssistant } from "./assistant/AssistantProvider";
+import { AssistantProvider, useOptionalAssistant } from "./assistant/AssistantProvider";
 import { BrandPanel } from "./BrandPanel";
 import { BuildPanel } from "./BuildPanel";
 import { ChangesPanel } from "./ChangesPanel";
@@ -18,11 +19,12 @@ import { HomePanel } from "./HomePanel";
 import { MemoryPanel } from "./MemoryPanel";
 import { MissingPages } from "./MissingPages";
 import { ModelPanel } from "./ModelPanel";
+import { MORE_TOOLS, MoreToolsPanel } from "./MoreToolsPanel";
 import { PagesPanel } from "./PagesPanel";
 import { SchedulePanel } from "./SchedulePanel";
 import { SeoPanel } from "./SeoPanel";
 import { SiteContext, useSite, type PageEditMode, type SiteContextValue, type SiteSection } from "./site-context";
-import { usePublishing, useSiteTools, useSiteUpdate } from "./site-hooks";
+import { usePublishNow, usePublishing, useSiteTools, useSiteUpdate } from "./site-hooks";
 import { StaticInfoPanel } from "./StaticInfoPanel";
 import { StatusStrip } from "./StatusStrip";
 import { StylesPanel } from "./StylesPanel";
@@ -30,25 +32,18 @@ import { TreePanel } from "./TreePanel";
 import { Button, ErrorText, Notice, ScreenHeader, Spinner } from "./ui";
 
 const MAIN: { id: SiteSection; label: string; hint: string }[] = [
-  { id: "home", label: "Home", hint: "Your site at a glance" },
-  { id: "pages", label: "Pages", hint: "Add and write pages" },
-  { id: "design", label: "Design", hint: "Logo, menu and footer" },
-  { id: "details", label: "Site details", hint: "Name, contact details and more" },
-  { id: "publish", label: "Publish", hint: "Put your changes live" },
+  { id: "home", label: "Edit site", hint: "Your site: click any words to change them" },
+  { id: "pages", label: "Pages", hint: "Add, open and organise pages" },
+  { id: "design", label: "Look & logo", hint: "Logo, colours, menu and footer" },
+  { id: "details", label: "Business info", hint: "Name, contact details, reviews and more" },
 ];
 
 // Only for the site's creator (GET …/analytics/access): nobody else sees its visits.
-const ANALYTICS = { id: "analytics" as const, label: "Analytics", hint: "Who visits your site" };
+const ANALYTICS = { id: "analytics" as const, label: "Visitors", hint: "Who visits your site" };
 
-const ADVANCED: { id: SiteSection; label: string }[] = [
-  { id: "seo", label: "Search overview" },
-  { id: "tree", label: "Site plan" },
-  { id: "schedule", label: "Scheduled pages" },
-  { id: "memory", label: "What Claude remembers" },
-  { id: "styles", label: "Styles (CSS)" },
-  { id: "models", label: "AI models" },
-  { id: "tools", label: "Build tools and log" },
-];
+// Screens reached from elsewhere, for the small-screen menu button's label.
+const OTHER: { id: SiteSection; label: string }[] = [{ id: "publish", label: "What's changed" }, { id: "more", label: "More tools" }, ...MORE_TOOLS];
+const TOOL_IDS = new Set<SiteSection>(MORE_TOOLS.map((tool) => tool.id));
 
 const POLL_MS = 700;
 const MAX_LOG_CHARS = 500_000;
@@ -71,6 +66,9 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   const [version, setVersion] = useState(0);
   const [section, setSection] = useState<SiteSection>("home");
   const [openPage, setOpenPage] = useState<{ file: string; mode: PageEditMode } | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<{ url: string; n: number } | null>(null);
+  // The page Edit site's preview shows, so "this page" means it there too.
+  const [shownPage, setShownPage] = useState<string | null>(null);
   // Once opened, Pages and Design stay mounted, so a hand-written draft or unsaved menu survives visits elsewhere.
   const [pagesOpened, setPagesOpened] = useState(false);
   const [designOpened, setDesignOpened] = useState(false);
@@ -311,21 +309,47 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   }, [canAutoRun, wantCheck, changeTick, start]);
 
   const publishing = usePublishing(owner, repo, version);
-  // Where the owner is, for Claude: the screen, and the page when one is open.
+  // Where the owner is, for the AI: the screen, and the page open in the page editor or shown on Edit site.
   const assistantContext = useMemo(
-    () => ({ screen: section, page: section === "pages" ? (openPage?.file ?? null) : null }),
-    [section, openPage],
+    () => ({ screen: section, page: section === "pages" ? (openPage?.file ?? null) : section === "home" ? shownPage : null }),
+    [section, openPage, shownPage],
   );
   const tools = useSiteTools({ owner, repo, version, overview, publishing: publishing.publishing, setStatus, refresh: refreshAfterChange });
   const siteUpdate = useSiteUpdate({ owner, repo, version, runJobAt, run, setStatus, watch: publishing.watch });
 
+  // Requests for Edit site to show a page; each one gets the next number, so the same page twice still moves it.
+  const previewRequests = useRef(0);
   const showSection = useCallback((next: SiteSection) => {
+    // Opening a screen from the menu shows the site from its homepage, not the last page asked for.
+    setPreviewTarget(null);
     setSection(next);
     setMenuOpen(false);
     if (next === "pages") setPagesOpened(true);
     if (next === "design") setDesignOpened(true);
     window.scrollTo({ top: 0 });
   }, []);
+
+  const openPublishScreen = useCallback(() => showSection("publish"), [showSection]);
+  const publishNow = usePublishNow({
+    owner,
+    repo,
+    status,
+    overview,
+    runAndWait,
+    setStatus,
+    refresh: refreshAfterChange,
+    watch: publishing.watch,
+    openPublishScreen,
+    onError: setRunError,
+  });
+
+  const showOnSite = useCallback(
+    (url: string) => {
+      showSection("home");
+      setPreviewTarget({ url, n: ++previewRequests.current });
+    },
+    [showSection],
+  );
 
   const setUnsavedDraft = useCallback((unsaved: boolean) => {
     unsavedDraft.current = unsaved;
@@ -405,7 +429,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     repo,
     status,
     overview,
-    claude: claudeAccess(credits),
+    claude: inEditorWords(claudeAccess(credits)),
     job,
     busy,
     version,
@@ -417,6 +441,10 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     setUnsavedDraft,
     confirmDiscardDraft,
     showSection,
+    showOnSite,
+    previewTarget,
+    setShownPage,
+    publishNow,
     publishing,
     tools,
     siteUpdate,
@@ -431,33 +459,16 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     },
   };
 
-  const liveUrl = publishing.publishing?.enabled ? publishing.publishing.url : null;
-  const changes = status.changes.length;
-  const main = isCreator ? [...MAIN.slice(0, 4), ANALYTICS, ...MAIN.slice(4)] : MAIN;
-  const current = [...main, ...ADVANCED].find((s) => s.id === section);
+  const main = isCreator ? [...MAIN, ANALYTICS] : MAIN;
+  const current = [...main, ...OTHER].find((s) => s.id === section);
+  // The AI bar is on every screen but the technical log, which keeps the status strip to itself.
+  const withAiBar = section !== "tools";
 
   return (
     <SiteContext.Provider value={context}>
       <AssistantProvider context={assistantContext}>
-      <Shell
-        title={overview?.site.name || repo}
-        actions={
-          <span className="flex flex-wrap items-center gap-2">
-            {liveUrl && (
-              <a
-                href={liveUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
-              >
-                View live site ↗
-              </a>
-            )}
-            <AskClaudeButton />
-          </span>
-        }
-      >
-        <div className="mt-6 grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
+      <Shell title={overview?.site.name || repo} actions={<TopBar />}>
+        <div className="mt-6 grid gap-6 lg:grid-cols-[12rem_minmax(0,1fr)]">
           <nav aria-label="Site editor" className="lg:sticky lg:top-20 lg:self-start">
             {/* Small screens: one button opens the list, so the menu doesn't push the page down. */}
             <button
@@ -480,25 +491,15 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
                       hint={item.hint}
                     >
                       {item.label}
-                      {item.id === "publish" && changes > 0 && (
-                        <span className="ml-auto rounded-full bg-foreground px-1.5 text-xs text-background" title={`${changes} unpublished change${changes === 1 ? "" : "s"}`}>
-                          {changes}
-                        </span>
-                      )}
                     </NavButton>
                   </li>
                 ))}
               </ul>
-              <p className="mb-1 mt-5 px-3 text-xs font-medium uppercase tracking-wide text-zinc-500">Advanced</p>
-              <ul className="space-y-0.5">
-                {ADVANCED.map((item) => (
-                  <li key={item.id}>
-                    <NavButton active={section === item.id} onClick={() => showSection(item.id)} small>
-                      {item.label}
-                    </NavButton>
-                  </li>
-                ))}
-              </ul>
+              <div className="mt-5 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+                <NavButton active={section === "more" || TOOL_IDS.has(section)} onClick={() => showSection("more")} hint="Tools most owners never need" small>
+                  More tools <span aria-hidden="true">→</span>
+                </NavButton>
+              </div>
             </div>
           </nav>
 
@@ -507,7 +508,11 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
             <ErrorText error={runError} />
             {/* After every build, on every screen: links to pages that don't exist yet, with a way to make them. */}
             {!status.needsInstall && <MissingPages />}
-            {section !== "tools" && <AskClaude />}
+            {TOOL_IDS.has(section) && (
+              <button type="button" onClick={() => showSection("more")} className="text-sm text-zinc-500 hover:underline">
+                ← More tools
+              </button>
+            )}
 
             {section === "home" && <HomePanel />}
             {pagesOpened && (
@@ -517,28 +522,96 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
             )}
             {designOpened && (
               <div hidden={section !== "design"} className="space-y-6">
-                <ScreenHeader title="Design" description="Your logo, colours, menu and footer. They appear on every page of your site." />
+                <ScreenHeader title="Look & logo" description="Your logo, colours, menu and footer. They appear on every page of your site." />
                 <BrandPanel />
                 <HeaderFooterPanel />
               </div>
             )}
-            {section === "details" && <StaticInfoPanel />}
+            {section === "details" && <StaticInfoPanel view="business" />}
             {section === "publish" && <ChangesPanel />}
             {section === "analytics" && isCreator && <AnalyticsPanel />}
-            {section === "seo" && <SeoPanel />}
+            {section === "more" && <MoreToolsPanel />}
+            {section === "seo" && (
+              <>
+                <SeoPanel />
+                <StaticInfoPanel view="search" />
+              </>
+            )}
+            {section === "redirects" && <StaticInfoPanel view="redirects" />}
+            {section === "sections" && <StaticInfoPanel view="sections" />}
             {section === "tree" && <TreePanel />}
             {section === "schedule" && <SchedulePanel />}
             {section === "memory" && <MemoryPanel />}
             {section === "styles" && <StylesPanel />}
             {section === "models" && <ModelPanel />}
             {section === "tools" && <BuildPanel />}
+
+            {withAiBar && (
+              // Stays at the bottom of the window as the screen scrolls, with the status strip above it.
+              <div className="sticky bottom-3 z-30 space-y-2 pt-2">
+                <StatusStrip inline onShowLog={() => showSection("tools")} />
+                <AskClaude />
+              </div>
+            )}
           </div>
         </div>
-        <StatusStrip onShowLog={() => showSection("tools")} />
+        {!withAiBar && <StatusStrip onShowLog={() => showSection("tools")} />}
       </Shell>
       <AssistantPanel />
       </AssistantProvider>
     </SiteContext.Provider>
+  );
+}
+
+/**
+ * Above every screen: where the site is, whether everything is live, what's changed, how much AI
+ * help is left, and the Publish button (PublishNowState).
+ */
+function TopBar() {
+  const { status, busy, publishing: state, publishNow, showSection } = useSite();
+  const publishing = state.publishing;
+  const changes = status.changes.length;
+  const run = publishing?.run;
+  const address = publishing?.enabled && publishing.url ? publishing.url : null;
+
+  const warn = "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300";
+  let pill: { text: string; tone: string };
+  if (changes > 0) {
+    pill = { text: `${changes} ${changes === 1 ? "change" : "changes"} not live yet`, tone: warn };
+  } else if (status.ahead) {
+    pill = { text: "Your last publish didn't finish", tone: warn };
+  } else if (!publishing?.enabled) {
+    pill = { text: "Not on the web yet", tone: "bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300" };
+  } else if (run && run.status !== "completed") {
+    pill = { text: "Updating your live site…", tone: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300" };
+  } else if (run && run.conclusion !== "success" && run.conclusion !== "cancelled") {
+    pill = { text: "The last update didn't go live", tone: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" };
+  } else {
+    pill = { text: "✓ Everything is live", tone: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" };
+  }
+
+  const { available, working, publish } = publishNow;
+  const label = working === "checking" ? "Checking your site…" : working === "publishing" ? "Publishing…" : status.onDefaultBranch ? "Publish" : "Add to the review";
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      {address && (
+        <a href={address} target="_blank" rel="noreferrer" className="max-w-full truncate text-sm text-zinc-500 hover:underline">
+          {address.replace(/^https?:\/\//, "").replace(/\/$/, "")} ↗
+        </a>
+      )}
+      <button type="button" onClick={() => showSection("publish")} className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${pill.tone}`}>
+        {pill.text}
+      </button>
+      <button type="button" onClick={() => showSection("publish")} className="text-sm text-zinc-600 hover:underline dark:text-zinc-400">
+        See what changed
+      </button>
+      <AiHelpBadge />
+      <Button variant="primary" className="flex items-center gap-2 px-4" disabled={!available || busy || working !== null} onClick={() => void publish()}>
+        {working && <Spinner />}
+        {label}
+      </Button>
+    </div>
   );
 }
 
@@ -604,22 +677,6 @@ function NavButton({
   );
 }
 
-/** Opens and closes the conversation with Claude. */
-function AskClaudeButton() {
-  const { open, setOpen, turn } = useAssistant();
-  return (
-    <button
-      type="button"
-      onClick={() => setOpen(!open)}
-      aria-pressed={open}
-      className="flex items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background hover:opacity-90"
-    >
-      <span aria-hidden="true">✦</span> Ask Claude
-      {turn?.status === "running" && <span className="ml-1 size-2 animate-pulse rounded-full bg-background" aria-label="Claude is working" />}
-    </button>
-  );
-}
-
 /** The editor's page; while the conversation panel is open on a wide screen, the page makes room for it. */
 function Shell({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) {
   const assistant = useOptionalAssistant();
@@ -628,9 +685,9 @@ function Shell({ title, actions, children }: { title: string; actions?: React.Re
       <Link href="/dashboard" className="text-sm text-zinc-500 hover:underline">
         ← Your sites
       </Link>
-      <header className="mt-2 flex flex-wrap items-center gap-3">
+      <header className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
         <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{title}</h1>
-        <div className="ml-auto">{actions}</div>
+        <div className="sm:ml-auto">{actions}</div>
       </header>
       {children}
     </main>

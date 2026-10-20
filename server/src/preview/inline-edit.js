@@ -4,7 +4,10 @@
 // keep working, so the menu still opens other pages); Enter or clicking away
 // sends the text before and after to the parent, which saves it (POST …/pages/text). Escape
 // puts the text back. It also tells the parent which page is showing and how far it's scrolled,
-// so the preview can come back to the same place after it rebuilds.
+// so the preview can come back to the same place after it rebuilds. While editing is on, the
+// section under the pointer gets an "Ask the AI to change this section" button; pressing it tells
+// the parent which section (its heading, first words and place on the page), and the parent starts
+// that request in the AI's conversation.
 (function () {
   if (window.parent === window) return;
   var SOURCE = "twinstack-preview";
@@ -25,7 +28,12 @@
     "[data-ts-editing]{outline:2px solid rgb(37,99,235)!important;outline-offset:3px;cursor:text!important}" +
     "[data-ts-saving]{outline:2px solid rgba(37,99,235,.35)!important;outline-offset:3px}" +
     "[data-ts-failed]{outline:2px solid rgb(220,38,38)!important;outline-offset:3px}" +
-    "html[data-ts-editing-on] main a,html[data-ts-editing-on] main button{cursor:text!important}";
+    "html[data-ts-editing-on] main a,html[data-ts-editing-on] main button{cursor:text!important}" +
+    "[data-ts-section]{outline:1px dashed rgba(37,99,235,.45)!important;outline-offset:-1px}" +
+    "[data-ts-ask]{position:absolute!important;z-index:2147483647!important;margin:0!important;font:600 13px/1.2 system-ui,-apple-system,sans-serif!important;" +
+    "color:#fff!important;background:rgb(37,99,235)!important;border:0!important;border-radius:999px!important;padding:7px 12px!important;" +
+    "cursor:pointer!important;box-shadow:0 4px 14px rgba(0,0,0,.2)!important;white-space:nowrap!important;text-transform:none!important;letter-spacing:normal!important}" +
+    "[data-ts-ask]:hover{background:rgb(29,78,216)!important}[data-ts-ask][hidden]{display:none!important}";
   (document.head || document.documentElement).appendChild(style);
 
   function isInline(el) {
@@ -69,6 +77,89 @@
     if (el) el.setAttribute("data-ts-hover", "");
   }
 
+  // The section a node is in: the outermost <section> inside <main>, else the part of <main> it's in,
+  // going down while that part is taller than the window and has more than one block (so a page whose
+  // body is one wrapper, like a converted page's, still has sections).
+  function sectionOf(node) {
+    var el = node && node.nodeType === 1 ? node : node && node.parentElement;
+    var main = el && el.closest("main");
+    if (!main || el === main) return null;
+    var section = el.closest("section");
+    if (section && main.contains(section) && section !== main) {
+      var outer = section.parentElement && section.parentElement.closest("section");
+      while (outer && main.contains(outer) && outer !== main) {
+        section = outer;
+        outer = section.parentElement && section.parentElement.closest("section");
+      }
+      return section;
+    }
+    var part = el;
+    while (part.parentElement && part.parentElement !== main) part = part.parentElement;
+    while (part.children.length > 1 && part.getBoundingClientRect().height > window.innerHeight * 1.2) {
+      var inner = null;
+      for (var i = 0; i < part.children.length; i++) if (part.children[i].contains(el)) inner = part.children[i];
+      if (!inner) break;
+      part = inner;
+    }
+    return part.textContent.trim() ? part : null;
+  }
+
+  // Short, single-line text for the request.
+  function clip(text) {
+    var line = String(text || "").replace(/\s+/g, " ").trim();
+    return line.length > 90 ? line.slice(0, 87).trim() + "\u2026" : line;
+  }
+
+  var askButton = document.createElement("button");
+  askButton.type = "button";
+  askButton.hidden = true;
+  askButton.setAttribute("data-ts-ask", "");
+  // Escaped: the script is inlined into pages whose encoding isn't known here.
+  askButton.textContent = "\u2726 Ask the AI to change this section";
+  var askSection = null;
+
+  function placeAsk() {
+    if (!askSection) return;
+    var rect = askSection.getBoundingClientRect();
+    // A zoomed button's top and left are zoomed too, so they're given in its own units.
+    var zoom = parseFloat(askButton.style.getPropertyValue("zoom")) || 1;
+    var width = askButton.getBoundingClientRect().width;
+    var left = Math.max(rect.left + 8, Math.min(rect.right - width - 8, window.innerWidth - width - 8));
+    askButton.style.top = Math.round((Math.max(rect.top, 0) + window.scrollY + 8) / zoom) + "px";
+    askButton.style.left = Math.round((Math.max(left, 8) + window.scrollX) / zoom) + "px";
+  }
+
+  function setSection(section) {
+    if (askSection === section) return;
+    if (askSection) askSection.removeAttribute("data-ts-section");
+    askSection = section;
+    if (!askButton.parentNode && document.body) document.body.appendChild(askButton);
+    askButton.hidden = !section;
+    if (!section) return;
+    section.setAttribute("data-ts-section", "");
+    placeAsk();
+  }
+
+  askButton.addEventListener("click", function (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!askSection) return;
+    var siblings = askSection.parentElement ? askSection.parentElement.children : [askSection];
+    var position = Array.prototype.indexOf.call(siblings, askSection);
+    var heading = askSection.querySelector("h1, h2, h3, h4");
+    send({
+      type: "ask-section",
+      path: window.location.pathname,
+      heading: heading ? clip(heading.textContent) : "",
+      // innerText keeps the breaks between blocks ("Our story We have…", not "Our storyWe have…").
+      start: clip(askSection.innerText || askSection.textContent),
+      position: position + 1,
+      count: siblings.length,
+    });
+  });
+
+  window.addEventListener("resize", placeAsk);
+
   function caretAt(x, y) {
     var range = null;
     if (document.caretRangeFromPoint) range = document.caretRangeFromPoint(x, y);
@@ -87,6 +178,7 @@
 
   function start(el, x, y) {
     setHover(null);
+    setSection(null);
     var place = placeOf(el);
     active = { el: el, before: el.textContent, html: el.innerHTML, index: place.index, count: place.count };
     try {
@@ -144,6 +236,7 @@
     else {
       document.documentElement.removeAttribute("data-ts-editing-on");
       setHover(null);
+      setSection(null);
       finish();
     }
   }
@@ -151,7 +244,10 @@
   document.addEventListener(
     "mouseover",
     function (event) {
-      if (editing && !active) setHover(editableFrom(event.target));
+      if (!editing || active) return;
+      setHover(editableFrom(event.target));
+      // Over the button itself, its section stays.
+      if (event.target !== askButton) setSection(sectionOf(event.target));
     },
     true,
   );
@@ -223,6 +319,12 @@
     var data = event.data;
     if (!data || data.source !== SOURCE) return;
     if (data.type === "mode") setEditing(Boolean(data.editing));
+    // The editor shows the page scaled down (a desktop layout in a narrower box): the button is
+    // scaled back up by the same amount, so it stays readable.
+    else if (data.type === "scale" && typeof data.value === "number" && data.value > 0.2 && data.value <= 1) {
+      askButton.style.setProperty("zoom", String(1 / data.value), "important");
+      placeAsk();
+    }
     else if (data.type === "go" && typeof data.path === "string" && data.path.charAt(0) === "/") window.location.replace(data.path);
     else if (data.type === "scroll" && typeof data.y === "number") window.scrollTo(0, data.y);
     else if (data.type === "result" && pending[data.id]) {

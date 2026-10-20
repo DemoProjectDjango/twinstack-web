@@ -132,7 +132,7 @@ export function SiteDetailsStep({
       <Notice>
         Before your site goes live for the first time, check the details
         visitors and search engines see. You can change these and more any time
-        under Site details.
+        under Business info.
       </Notice>
       {fields.map((f) => (
         <Field key={f.path.join(".")} label={f.label} hint={f.hint}>

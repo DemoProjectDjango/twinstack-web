@@ -129,13 +129,13 @@ export function ProposalReview({ chrome = false }: { chrome?: boolean } = {}) {
     <>
       {applied && (
         <Notice tone="success">
-          Kept. It&apos;s in your list of changes to publish, and the preview on Home updates by itself.
+          Kept. It&apos;s in your list of changes to publish, and Edit site shows it by itself.
         </Notice>
       )}
       {claudeJob?.status === "failed" && !proposal && (
         // The page editor has no output panel, so the end of the run's output is shown here.
         <Notice tone="warning">
-          Claude couldn&apos;t finish this time. Try again, perhaps with a shorter or clearer request.
+          The AI couldn&apos;t finish this time. Try again, perhaps with a shorter or clearer request.
           <div className="mt-2">
             <Details summary="What went wrong (technical)">
               <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">
@@ -152,14 +152,14 @@ export function ProposalReview({ chrome = false }: { chrome?: boolean } = {}) {
           <div>
             <h3 className="font-semibold">
               {proposal.mode === "chrome"
-                ? "Claude's header and footer"
+                ? "The AI's header and footer"
                 : generated
-                ? "Claude's finished page"
+                ? "The AI's finished page"
                 : converted
                   ? `The page from ${proposal.source ?? "your old website"}`
                   : proposal.mode === "markdown"
-                    ? "Claude's version of the file"
-                    : "Claude's changed page"}
+                    ? "The AI's version of the file"
+                    : "The AI's changed page"}
             </h3>
             <p className="mt-1 text-sm text-zinc-500">
               Nothing is kept yet. Check it, then keep it or throw it away.
@@ -169,7 +169,7 @@ export function ProposalReview({ chrome = false }: { chrome?: boolean } = {}) {
 
           {proposal.summary?.length > 0 && (
             <div className="text-sm">
-              <p className="font-medium">What Claude did</p>
+              <p className="font-medium">What the AI did</p>
               <ul className="mt-1 list-disc pl-5 text-zinc-700 dark:text-zinc-300">
                 {proposal.summary.map((point) => (
                   <li key={point}>{point}</li>
@@ -220,7 +220,7 @@ export function ProposalReview({ chrome = false }: { chrome?: boolean } = {}) {
             </Button>
             {draft !== proposal.content && (
               <>
-                <span className="text-xs text-zinc-500">You&apos;ve edited Claude&apos;s text.</span>
+                <span className="text-xs text-zinc-500">You&apos;ve edited the AI&apos;s text.</span>
                 <Button variant="ghost" className="text-xs" disabled={applying || busy} onClick={() => setDraft(proposal.content)}>
                   Undo my edits
                 </Button>
@@ -364,7 +364,7 @@ function PagePreview({
           <Button variant="ghost" className="underline" disabled={busy || updating} onClick={updateBuildFiles}>
             {updating ? "Updating…" : "Update the site tools"}
           </Button>
-          , then ask Claude again.
+          , then ask the AI again.
           <span className="mt-1 block text-xs opacity-80">
             Technical: copies scripts/build.js, check.js, lib/content.js, lib/seo.js and the deploy workflow from the template.
           </span>

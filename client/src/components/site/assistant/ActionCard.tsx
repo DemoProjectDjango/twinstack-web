@@ -154,13 +154,13 @@ function ChangeDetails({ action }: { action: AssistantAction }) {
   const meta = action.meta as Record<string, unknown>;
   switch (action.tool) {
     case "design_header_and_footer":
-      return <Rows rows={[["Claude's request to the designer", show(input.instruction || "Match the look of the site's pages")]]} />;
+      return <Rows rows={[["The AI's request to the designer", show(input.instruction || "Match the look of the site's pages")]]} />;
     case "edit_page":
       return (
         <Rows
           rows={[
             ["Page", show(meta.title)],
-            ["Claude's request to the writer", show(input.instruction)],
+            ["The AI's request to the writer", show(input.instruction)],
             ...imageRows(input.images),
           ]}
         />
@@ -324,7 +324,7 @@ export function ActionCard({ id }: { id: string }) {
         {busy && (
           <span className="flex items-center gap-2 text-xs text-zinc-500">
             <Spinner />{" "}
-            {action.tool === "edit_page" || action.tool === "create_page" ? "Claude is writing the page…" : action.tool === "design_header_and_footer" ? "Claude is designing the header and footer…" : action.tool === "convert_page_from_html" ? "Claude is bringing in the page…" : "Working on it…"}
+            {action.tool === "edit_page" || action.tool === "create_page" ? "The AI is writing the page…" : action.tool === "design_header_and_footer" ? "The AI is designing the header and footer…" : action.tool === "convert_page_from_html" ? "The AI is bringing in the page…" : "Working on it…"}
           </span>
         )}
         {action.status === "proposed" && !busy && (

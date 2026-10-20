@@ -213,7 +213,7 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
   }, [owner, repo, runningId]);
 
   const startOver = useCallback(async () => {
-    if (conversation && !(await confirmModal("Start a new conversation? Claude won't remember this one, but your site keeps every change you applied.", { title: "New conversation", confirmLabel: "Start over" }))) return;
+    if (conversation && !(await confirmModal("Start a new conversation? The AI won't remember this one, but your site keeps every change you applied.", { title: "New conversation", confirmLabel: "Start over" }))) return;
     try {
       await assistantApi.startOver(owner, repo);
       continued.current.clear();
@@ -272,9 +272,9 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
     async (file: string, instruction: string, images: string[] = [], taskSize?: unknown) => {
       // Claude's own "small"/"complex" label decides which model writes it (the server's task-size.js).
       const job = await runAndWait("page-edit", { page: file, instruction, images, dryRun: true, ...(typeof taskSize === "string" && { taskSize }) });
-      if (job.status !== "succeeded") throw new Error(`Claude couldn't write the page.\n${tail(job.output)}`);
+      if (job.status !== "succeeded") throw new Error(`The AI couldn't write the page.\n${tail(job.output)}`);
       const { proposal } = await api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal"));
-      if (!proposal || proposal.file !== file) throw new Error("Claude didn't come back with a new version of the page.");
+      if (!proposal || proposal.file !== file) throw new Error("The AI didn't come back with a new version of the page.");
     },
     [owner, repo, runAndWait],
   );
@@ -302,11 +302,11 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
           const direction = typeof input.instruction === "string" ? String(input.instruction).trim() : "";
           const sized = typeof input.taskSize === "string" ? { taskSize: input.taskSize } : {};
           const job = await runAndWait("chrome-design", direction ? { instruction: direction, dryRun: true, ...sized } : { dryRun: true, ...sized });
-          if (job.status !== "succeeded") throw new Error(`Claude couldn't design the header and footer.
+          if (job.status !== "succeeded") throw new Error(`The AI couldn't design the header and footer.
 ${tail(job.output)}`);
           const { proposal } = await api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal"));
-          if (proposal?.mode !== "chrome") throw new Error("Claude didn't come back with a new header and footer.");
-          await record(action, "ready", "The new header and footer are ready to look at, on the Design screen.");
+          if (proposal?.mode !== "chrome") throw new Error("The AI didn't come back with a new header and footer.");
+          await record(action, "ready", "The new header and footer are ready to look at, on the Look & logo screen.");
           return;
         }
         case "create_page": {
@@ -374,7 +374,7 @@ ${tail(job.output)}`);
           });
           if (job.status !== "succeeded") throw new Error(`The page couldn't be brought in.\n${tail(job.output)}`);
           const { proposal } = await api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal"));
-          if (!proposal || proposal.file !== input.file) throw new Error("Claude didn't come back with the converted page.");
+          if (!proposal || proposal.file !== input.file) throw new Error("The AI didn't come back with the converted page.");
           await record(action, "ready", "The converted page is ready to look at.");
           return;
         }
@@ -412,13 +412,13 @@ ${tail(job.output)}`);
   const apply = useCallback(
     async (action: AssistantAction, { confirmed = false }: { confirmed?: boolean } = {}) => {
       // Run automatically, the owner's request is the confirmation (Claude only removes or publishes when asked).
-      if (!confirmed && action.tool === "delete_page" && !(await confirmModal(`Remove "${(action.meta.title as string) ?? action.input.file}" from your site? You can still undo it on the Publish screen until you publish.`, { title: "Remove page", confirmLabel: "Remove page", danger: true }))) return;
+      if (!confirmed && action.tool === "delete_page" && !(await confirmModal(`Remove "${(action.meta.title as string) ?? action.input.file}" from your site? You can still undo it on What's changed until you publish.`, { title: "Remove page", confirmLabel: "Remove page", danger: true }))) return;
       if (
         !confirmed &&
         action.tool === "publish_changes" &&
         !(await confirmModal(
           problemsLeft
-            ? "Your site still has problems that stop it from updating (see the Publish screen). If you publish now, your changes are saved, but your live site stays as it is until they're fixed."
+            ? "Your site still has problems that stop it from updating (see What's changed). If you publish now, your changes are saved, but your live site stays as it is until they're fixed."
             : "Publish every unpublished change to your live site?",
           problemsLeft ? { title: "Publish with problems?", confirmLabel: "Publish anyway", danger: true } : { title: "Publish", confirmLabel: "Publish now" },
         ))

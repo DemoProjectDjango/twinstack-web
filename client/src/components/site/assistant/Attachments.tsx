@@ -102,8 +102,8 @@ export function useAttachmentUploads() {
   };
 }
 
-/** The paperclip: picks any number of files of any type. */
-export function AttachButton({ onFiles, disabled }: { onFiles: (files: FileList) => void; disabled?: boolean }) {
+/** The paperclip, or a worded button with `label`: picks any number of files of any type. */
+export function AttachButton({ onFiles, disabled, label }: { onFiles: (files: FileList) => void; disabled?: boolean; label?: string }) {
   const input = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -111,11 +111,13 @@ export function AttachButton({ onFiles, disabled }: { onFiles: (files: FileList)
         type="button"
         onClick={() => input.current?.click()}
         disabled={disabled}
-        aria-label="Attach files"
+        aria-label={label ? undefined : "Attach files"}
         title="Attach files: photos, PDFs, Word documents, web pages or anything else"
-        className="grid size-9 shrink-0 place-items-center rounded-md border border-zinc-300 text-base hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
+        className={`shrink-0 rounded-md border border-zinc-300 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900 ${
+          label ? "px-2.5 py-1.5 text-sm" : "grid size-9 place-items-center text-base"
+        }`}
       >
-        <span aria-hidden="true">📎</span>
+        {label ?? <span aria-hidden="true">📎</span>}
       </button>
       <input
         ref={input}
@@ -163,7 +165,7 @@ export function PendingChips({ pending, onRemove }: { pending: PendingAttachment
               {p.name}
             </span>
             <span className={`block ${p.status === "error" ? "text-red-600 dark:text-red-400" : "text-zinc-500"}`}>
-              {p.status === "uploading" ? "Uploading…" : p.status === "error" ? p.error : p.attachment?.note ? `Claude can't read it (${p.attachment.note})` : p.attachment?.kind === "file" ? "Can be added to your site" : sizeLabel(p.size)}
+              {p.status === "uploading" ? "Uploading…" : p.status === "error" ? p.error : p.attachment?.note ? `The AI can't read it (${p.attachment.note})` : p.attachment?.kind === "file" ? "Can be added to your site" : sizeLabel(p.size)}
             </span>
           </span>
           <button type="button" onClick={() => onRemove(p.key)} aria-label={`Remove ${p.name}`} className="ml-1 text-zinc-500 hover:text-foreground">

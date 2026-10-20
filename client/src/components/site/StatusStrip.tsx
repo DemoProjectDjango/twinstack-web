@@ -16,8 +16,9 @@ type Flow = "working" | "done" | "failed" | "cancelled";
  * What the site is doing right now, in a few words, pinned to the bottom of the screen. The full
  * command output lives on the Build tools screen, one click away, for when something goes wrong.
  * While it's showing, a streak of the status's colour glides around its thin border, so it's noticed.
+ * `inline` puts it in the page's flow instead (above the AI bar, which is pinned to the bottom).
  */
-export function StatusStrip({ onShowLog }: { onShowLog: () => void }) {
+export function StatusStrip({ onShowLog, inline = false }: { onShowLog: () => void; inline?: boolean }) {
   const { job, status } = useSite();
   const [dismissed, setDismissed] = useState<string | null>(null);
   // The succeeded job whose "Done" has been up long enough.
@@ -94,7 +95,7 @@ export function StatusStrip({ onShowLog }: { onShowLog: () => void }) {
   }
 
   return (
-    <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
+    <div aria-live="polite" className={inline ? "pointer-events-none flex justify-center" : "pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4"}>
       {content && (
         <div className="status-strip-border pointer-events-auto w-full max-w-md rounded-lg p-px shadow-md shadow-black/5" data-flow={flow}>
           {/* One fixed height for every status, with or without buttons. */}
