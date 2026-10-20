@@ -61,7 +61,9 @@ export function pageOf(text, pages, openPage) {
       (at[1] ? strong : weak).add(page.file);
     }
   }
-  if (strong.size === 1) return [...strong][0];
+  // Another page named as well, even loosely ("the Privacy Policy page" for a page titled Privacy):
+  // the message may be about two pages, so Claude decides.
+  if (strong.size === 1) return [...weak].every((file) => strong.has(file)) ? [...strong][0] : null;
   if (strong.size > 1) return null;
   if (!weak.size) return openPage ?? null;
   // A name that's also ordinary words ("our bakers") on the open page: it's the open page's part.
@@ -103,7 +105,7 @@ export async function runQuickTurn({ key, text, openPage, autoApply = true, live
   const page = pages.find((p) => p.file === file);
 
   const summary = summaryOf(text);
-  const instruction = `${text.trim()}\n\nChange only what this asks for, and keep everything else on the page exactly as it is.`;
+  const instruction = `${text.trim()}\n\nChange only what this asks for, and keep everything else on the page exactly as it is. Whatever you change must look right and work on phones, tablets and computers.`;
   const outcome = await runTool(TOOL, { file, instruction, task_size: "small", summary }, key);
   if (outcome.error) return null;
 
@@ -123,7 +125,7 @@ export async function runQuickTurn({ key, text, openPage, autoApply = true, live
   // Said the way it will happen: made now, or waiting for the owner's Apply.
   const reply = autoApply
     ? `Making that change to ${where} now. Nothing else on the page changes.`
-    : `Here's that change to ${where}: press Apply to make it. Nothing else on the page changes.`;
+    : `Here's that change to ${where}: press “Write it” to make it. Nothing else on the page changes.`;
   live.parts.push({ type: "text", text: reply }, { type: "action", id: action.id });
   live.actions.push(action);
   onUpdate();

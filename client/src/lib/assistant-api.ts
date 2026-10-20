@@ -64,7 +64,9 @@ export type AssistantPart =
   // conversation up again ("short"); the chat offers to buy more under the latest one.
   | { type: "text"; text: string; credits?: "out" | "short" }
   | { type: "activity"; label: string }
-  | { type: "action"; id: string };
+  | { type: "action"; id: string }
+  // offer_choices: buttons whose text is sent as the owner's message. `question` comes with kind question.
+  | { type: "choices"; kind: "question" | "next"; question?: string; choices: string[] };
 
 export type DisplayEntry =
   | { id: string; role: "user"; text: string; attachments?: Attachment[]; at: string }

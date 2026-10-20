@@ -50,8 +50,13 @@ type AssistantValue = {
   skip: (action: AssistantAction) => Promise<void>;
   keep: (action: AssistantAction) => Promise<void>;
   throwAway: (action: AssistantAction) => Promise<void>;
-  /** Applies a message's open proposals in order, pausing when a page waits to be kept. */
-  applyAll: (entry: DisplayEntry) => void;
+  /**
+   * "Accept all": carries out a message's open proposals in order with no further presses (pages are
+   * kept as they're written), after one confirmation when a page is removed or the site published.
+   */
+  applyAll: (entry: DisplayEntry) => Promise<void>;
+  /** Skips a message's open proposals. */
+  skipAll: (entry: DisplayEntry) => Promise<void>;
   applyingAll: boolean;
   /** Claude's changes are carried out (and its pages kept) as soon as its answer ends, with no buttons to press. */
   autoApply: boolean;
@@ -77,6 +82,17 @@ function subscribeAutoApply(onChange: () => void) {
     window.removeEventListener("storage", onChange);
   };
 }
+
+/**
+ * The "Make changes automatically" switch, read on its own: the screens' AI buttons follow it too
+ * (no preview to keep when it's on), without re-rendering on every poll of the conversation.
+ */
+export function useAutoApply() {
+  // Rendered on the server as automatic (the default), then read from this browser.
+  return useSyncExternalStore(subscribeAutoApply, readAutoApply, () => true);
+}
+
+type QueueKind = "auto" | "all" | null;
 
 const AssistantCtx = createContext<AssistantValue | null>(null);
 
@@ -110,12 +126,11 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
   }, []);
   const [working, setWorking] = useState<Set<string>>(new Set());
   const [queued, setQueued] = useState<string[]>([]);
-  // queueAuto (below) for setAutoApply, which is made before it.
-  const queueAutoRef = useRef(false);
+  // queueKind (below) for setAutoApply, which is made before it.
+  const queueKindRef = useRef<QueueKind>(null);
   // The assistant messages whose proposals have already led to an automatic "carry on".
   const continued = useRef(new Set<string>());
-  // Rendered on the server as automatic (the default), then read from this browser.
-  const autoApply = useSyncExternalStore(subscribeAutoApply, readAutoApply, () => true);
+  const autoApply = useAutoApply();
   const setAutoApply = useCallback((on: boolean) => {
     try {
       window.localStorage.setItem(AUTO_APPLY_KEY, on ? "on" : "off");
@@ -124,8 +139,8 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
     }
     window.dispatchEvent(new Event(AUTO_APPLY_EVENT));
     // Turned off mid-way, the changes that haven't started yet wait for the owner. The one running
-    // finishes (its card shows it), and "Apply all" queues aren't automatic, so they carry on.
-    if (!on) setQueued((q) => (queueAutoRef.current ? [] : q));
+    // finishes (its card shows it), and an "Accept all" the owner pressed carries on.
+    if (!on) setQueued((q) => (queueKindRef.current === "auto" ? [] : q));
   }, []);
   // Answers asked for in this browser tab (a message's entry id is its turn's id): only these are
   // carried out by themselves, never old proposals found when the conversation loads.
@@ -136,7 +151,9 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
     try {
       const { conversation: loaded } = await assistantApi.load(owner, repo);
       setConversation(loaded);
-      setTurn(loaded?.runningTurn ?? null);
+      // The server only reports a running turn. A turn that just finished is kept: automatic
+      // changes need it next to its saved answer to carry out its proposals.
+      setTurn((prev) => loaded?.runningTurn ?? (prev && prev.status !== "running" ? prev : null));
       setError(null);
     } catch (err) {
       setError(err);
@@ -183,6 +200,19 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
       clearTimeout(timer);
     };
   }, [runningId, turn, owner, repo, load]);
+
+  // A finished turn whose answer the loaded conversation doesn't have yet (saved a moment after it
+  // ended, on an older server) is loaded again once, so its changes are still carried out.
+  const reloadedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!turn || turn.status === "running" || !conversation || !startedTurns.current.has(turn.id)) return;
+    if (conversation.display.some((e) => e.id === turn.id) || reloadedFor.current === turn.id) return;
+    const timer = setTimeout(() => {
+      reloadedFor.current = turn.id;
+      void load();
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [turn, conversation, load]);
 
   const sendBody = useCallback(
     async (body: { text?: string; continue?: boolean; attachments?: string[] }) => {
@@ -501,19 +531,46 @@ ${tail(job.output)}`);
     [owner, repo, record, setBusy],
   );
 
-  // Whether the queue was started by itself (automatic changes) rather than by "Apply all".
-  const [queueAuto, setQueueAuto] = useState(false);
+  // Who started the queue: automatic changes ("auto", which stop when the switch is turned off) or
+  // the owner's "Accept all" ("all").
+  const [queueKind, setQueueKind] = useState<QueueKind>(null);
   useEffect(() => {
-    queueAutoRef.current = queueAuto;
-  }, [queueAuto]);
+    queueKindRef.current = queueKind;
+  }, [queueKind]);
+  const openIds = useCallback(
+    (entry: DisplayEntry) => (entry.role === "assistant" ? entry.parts.flatMap((p) => (p.type === "action" && actions[p.id]?.status === "proposed" ? [p.id] : [])) : []),
+    [actions],
+  );
   const applyAll = useCallback(
-    (entry: DisplayEntry) => {
-      if (entry.role !== "assistant") return;
-      const ids = entry.parts.flatMap((p) => (p.type === "action" && actions[p.id]?.status === "proposed" ? [p.id] : []));
-      setQueueAuto(false);
+    async (entry: DisplayEntry) => {
+      const ids = openIds(entry);
+      if (!ids.length) return;
+      // The questions each card would ask, asked once for all of them.
+      const tools = new Set(ids.map((id) => actions[id].tool));
+      const removes = ids.filter((id) => actions[id].tool === "delete_page").map((id) => `"${(actions[id].meta.title as string) ?? actions[id].input.file}"`);
+      if (removes.length || tools.has("publish_changes")) {
+        const parts = [
+          removes.length && `remove ${removes.join(", ")} from your site (you can still undo it on What's changed until you publish)`,
+          tools.has("publish_changes") &&
+            (problemsLeft ? "publish your changes, although your site still has problems that stop the live site from updating" : "publish every unpublished change to your live site"),
+        ].filter(Boolean);
+        const ok = await confirmModal(`Accepting all of them will also ${parts.join(", and ")}. Go ahead?`, {
+          title: `Accept all ${ids.length} changes`,
+          confirmLabel: "Accept all",
+          danger: removes.length > 0 || problemsLeft,
+        });
+        if (!ok) return;
+      }
+      setQueueKind("all");
       setQueued(ids);
     },
-    [actions],
+    [actions, openIds, problemsLeft],
+  );
+  const skipAll = useCallback(
+    async (entry: DisplayEntry) => {
+      for (const id of openIds(entry)) await skip(actions[id]);
+    },
+    [actions, openIds, skip],
   );
 
   // With automatic changes on, an answer asked for in this tab is carried out as soon as it ends:
@@ -523,19 +580,19 @@ ${tail(job.output)}`);
     const last = conversation.display.at(-1);
     if (!last || last.role !== "assistant" || last.id !== turn.id) return;
     if (!startedTurns.current.has(last.id) || autoQueued.current.has(last.id)) return;
-    const ids = last.parts.flatMap((p) => (p.type === "action" && actions[p.id]?.status === "proposed" ? [p.id] : []));
+    const ids = openIds(last);
     const timer = setTimeout(() => {
       autoQueued.current.add(last.id);
       if (!ids.length) return;
-      setQueueAuto(true);
+      setQueueKind("auto");
       setQueued(ids);
     }, 0);
     return () => clearTimeout(timer);
-  }, [autoApply, conversation, turn, actions]);
+  }, [autoApply, conversation, turn, openIds]);
 
-  // The queue works through one proposal at a time, skipping settled ones; a failure stops it. A
-  // page waiting to be kept pauses "Apply all" (the owner decides), but is kept by itself when the
-  // queue is automatic.
+  // The queue works through one proposal at a time, skipping settled ones; a failure stops it. Its
+  // proposals were already confirmed (by the switch or by "Accept all"), so removing and publishing
+  // don't ask again, and a page waiting to be kept is kept by itself.
   const queueHead = useMemo(() => {
     for (const id of queued) {
       const a = actions[id];
@@ -543,17 +600,17 @@ ${tail(job.output)}`);
     }
     return null;
   }, [queued, actions]);
-  const applyingAll = queueHead !== null && queueHead.status !== "failed" && (queueHead.status !== "ready" || queueAuto);
+  const unattended = queueKind === "all" || (queueKind === "auto" && autoApply);
+  const applyingAll = queueHead !== null && queueHead.status !== "failed" && (queueHead.status !== "ready" || unattended);
   useEffect(() => {
     if (!queueHead || working.size) return;
-    const auto = queueAuto && autoApply;
     let next: (() => Promise<void>) | null = null;
-    if (queueHead.status === "proposed") next = () => apply(queueHead, { confirmed: auto });
-    else if (queueHead.status === "ready" && auto) next = () => keep(queueHead);
+    if (queueHead.status === "proposed") next = () => apply(queueHead, { confirmed: unattended });
+    else if (queueHead.status === "ready" && unattended) next = () => keep(queueHead);
     if (!next) return;
     const timer = setTimeout(() => void next(), 0);
     return () => clearTimeout(timer);
-  }, [queueHead, queueAuto, autoApply, working, apply, keep]);
+  }, [queueHead, unattended, working, apply, keep]);
 
   // When the newest message's proposals are all settled and one of them asked to continue (pages
   // to write once they exist, say), Claude carries on by itself.
@@ -592,6 +649,7 @@ ${tail(job.output)}`);
     keep,
     throwAway,
     applyAll,
+    skipAll,
     applyingAll,
     autoApply,
     setAutoApply,

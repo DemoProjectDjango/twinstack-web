@@ -155,8 +155,8 @@ export async function runTurn({ client, key, model: requested, history, live, on
               const part = { type: "activity", label: info.activity({}) };
               live.parts.push(part);
               blockParts.set(event.index, part);
-            } else if (info) {
-              live.parts.push({ type: "activity", label: "Preparing a change", pending: true });
+            } else if (info && info.kind !== "talk") {
+              live.parts.push({ type: "activity", label: "Getting a change ready", pending: true });
               blockParts.set(event.index, live.parts.at(-1));
             }
           }
@@ -246,6 +246,11 @@ export async function runTurn({ client, key, model: requested, history, live, on
         });
         if (outcome.error) {
           results.push({ type: "tool_result", tool_use_id: block.id, is_error: true, content: outcome.error });
+          continue;
+        }
+        if (outcome.talk) {
+          live.parts.push({ type: "choices", ...outcome.talk });
+          results.push({ type: "tool_result", tool_use_id: block.id, content: "Shown to the owner as buttons." });
           continue;
         }
         if (outcome.result !== undefined) {

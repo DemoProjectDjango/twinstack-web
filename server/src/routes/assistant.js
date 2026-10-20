@@ -280,6 +280,9 @@ assistantRouter.post(
 
     (async () => {
       let result = null;
+      // How the turn ended, shown only once its answer is saved: the browser reloads the conversation
+      // as soon as the turn isn't running, and automatic changes look for this answer there.
+      let ended = "done";
       // The Claude model this turn runs on, if Claude takes it: the account's, or Sonnet (below).
       let turnModel = model;
       const spending = () => beginSpend({ userId, siteId, runId: turn.id, kind: "assistant", charged: claude.charged });
@@ -338,13 +341,12 @@ assistantRouter.post(
           // read_analytics answers only the site's creator.
           userId,
         });
-        turn.status = "done";
       } catch (err) {
         const stopped = turn.controller.signal.aborted;
         if (!stopped && !(err instanceof Anthropic.APIError) && !(err instanceof Anthropic.APIUserAbortError)) {
           console.error("Assistant turn failed:", err);
         }
-        turn.status = stopped ? "stopped" : "failed";
+        ended = stopped ? "stopped" : "failed";
         // Stopping while a picture is being made aborts a plain fetch, not a Claude request.
         turn.error = stopped ? "Stopped." : friendlyError(err);
         result = err.partial ?? null;
@@ -367,9 +369,10 @@ assistantRouter.post(
         });
       } catch (err) {
         console.error("Couldn't save the assistant turn:", err);
-        turn.status = "failed";
+        ended = "failed";
         turn.error = "Claude's answer couldn't be saved.";
       } finally {
+        turn.status = ended;
         turn.finishedAt = Date.now();
         endActivity();
       }

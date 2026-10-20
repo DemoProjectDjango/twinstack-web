@@ -18,7 +18,7 @@ import { SUGGESTIONS } from "./suggestions";
 
 export function AssistantPanel() {
   const { claude } = useSite();
-  const { context, conversation, turn, loading, error, open, setOpen, draft, send, stop, startOver, actions, applyAll, applyingAll, autoApply, setAutoApply } = useAssistant();
+  const { context, conversation, turn, loading, error, open, setOpen, draft, send, stop, startOver, actions, applyAll, skipAll, applyingAll, autoApply, setAutoApply } = useAssistant();
   const [text, setText] = useState("");
   const uploads = useAttachmentUploads();
   const drop = useFileDrop(uploads.add, claude.ready);
@@ -42,7 +42,8 @@ export function AssistantPanel() {
   const nextSteps = useNextSteps(open, Object.values(actions).filter((a) => a.status === "applied").length);
 
   // Follow the conversation as it grows, like a chat.
-  const size = JSON.stringify([conversation?.display.length, turn?.parts]).length;
+  // (The text itself, not its length: going from 11 to 12 messages, or a turn finishing, keeps the length.)
+  const size = JSON.stringify([conversation?.display.length, turn?.id, turn?.status, turn?.parts]);
   useEffect(() => {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -143,7 +144,8 @@ export function AssistantPanel() {
             key={entry.id}
             entry={entry}
             last={index === entries.length - 1}
-            onApplyAll={() => applyAll(entry)}
+            onApplyAll={() => void applyAll(entry)}
+            onSkipAll={() => void skipAll(entry)}
             openCount={entry.role === "assistant" ? entry.parts.filter((p) => p.type === "action" && actions[p.id]?.status === "proposed").length : 0}
             applyingAll={applyingAll}
             running={running}
@@ -152,7 +154,7 @@ export function AssistantPanel() {
 
         {running && turn && (
           <div className="space-y-2">
-            <Parts parts={turn.parts} />
+            <Parts parts={[...turn.parts.filter((p) => p.type !== "choices"), ...turn.parts.filter((p) => p.type === "choices")]} choices="waiting" />
             <p className="flex items-center gap-2 text-xs text-zinc-500">
               <Spinner /> {turn.parts.length ? "The AI is working…" : "The AI is thinking…"}
             </p>
@@ -270,6 +272,7 @@ function Entry({
   last,
   openCount,
   onApplyAll,
+  onSkipAll,
   applyingAll,
   running,
 }: {
@@ -277,6 +280,7 @@ function Entry({
   last: boolean;
   openCount: number;
   onApplyAll: () => void;
+  onSkipAll: () => void;
   applyingAll: boolean;
   running: boolean;
 }) {
@@ -293,21 +297,44 @@ function Entry({
   if (entry.role === "notice") {
     return <p className="text-center text-xs text-zinc-500">{entry.text}</p>;
   }
+  // The AI's buttons always end its message, whenever it offered them; "Accept all" goes right under
+  // the message's last card, before the rest of what the AI says.
+  const parts = [...entry.parts.filter((p) => p.type !== "choices"), ...entry.parts.filter((p) => p.type === "choices")];
+  const split = parts.findLastIndex((p) => p.type === "action") + 1;
+  const offerCredits = last && !running;
+  // Only the latest answer's buttons are shown, and they wait while the AI or its changes are working.
+  const choices = !last ? "hidden" : running || applyingAll ? "waiting" : "ready";
   return (
     <div className="space-y-2">
-      <Parts parts={entry.parts} offerCredits={last && !running} />
-      {entry.error && <p className="text-sm text-red-600 dark:text-red-400">{entry.error}</p>}
-      {openCount > 1 && last && (
-        <Button variant="primary" className="text-xs" disabled={applyingAll || running} onClick={onApplyAll}>
-          {applyingAll ? "Applying in order…" : `Apply all ${openCount} in order`}
-        </Button>
+      <Parts parts={parts.slice(0, split)} offerCredits={offerCredits} choices={choices} />
+      {(openCount > 1 || (last && applyingAll)) && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sky-300 bg-sky-50 p-2 dark:border-sky-900 dark:bg-sky-950/40">
+          <span className="mr-auto text-xs text-zinc-700 dark:text-zinc-300">{applyingAll ? "Making the changes in order…" : `${openCount} changes are waiting for you.`}</span>
+          {applyingAll ? (
+            <Spinner />
+          ) : (
+            <>
+              <Button variant="primary" className="text-xs" disabled={running} onClick={onApplyAll}>
+                Accept all {openCount}
+              </Button>
+              <Button variant="ghost" className="text-xs" disabled={running} onClick={onSkipAll}>
+                Skip all
+              </Button>
+            </>
+          )}
+        </div>
       )}
+      <Parts parts={parts.slice(split)} offerCredits={offerCredits} choices={choices} />
+      {entry.error && <p className="text-sm text-red-600 dark:text-red-400">{entry.error}</p>}
     </div>
   );
 }
 
-/** `offerCredits`: show the buy-credits card under an out-of-credits note (only the latest answer's). */
-function Parts({ parts, offerCredits = false }: { parts: AssistantPart[]; offerCredits?: boolean }) {
+/**
+ * `offerCredits`: show the buy-credits card under an out-of-credits note (only the latest answer's).
+ * `choices`: whether the AI's buttons show, and whether they can be pressed yet.
+ */
+function Parts({ parts, offerCredits = false, choices = "hidden" }: { parts: AssistantPart[]; offerCredits?: boolean; choices?: ChoicesState }) {
   return (
     <>
       {parts.map((part, i) =>
@@ -321,10 +348,47 @@ function Parts({ parts, offerCredits = false }: { parts: AssistantPart[]; offerC
             <span aria-hidden="true" className="size-1.5 rounded-full bg-zinc-400" />
             {part.label}
           </p>
+        ) : part.type === "choices" ? (
+          choices !== "hidden" && <Choices key={i} part={part} waiting={choices === "waiting"} />
         ) : (
           <ActionCard key={part.id} id={part.id} />
         ),
       )}
     </>
+  );
+}
+
+type ChoicesState = "hidden" | "waiting" | "ready";
+
+/** The AI's question or next steps as buttons: pressing one sends its words as the owner's message. */
+function Choices({ part, waiting }: { part: Extract<AssistantPart, { type: "choices" }>; waiting: boolean }) {
+  const { send } = useAssistant();
+  const [sent, setSent] = useState<string | null>(null);
+  const question = part.kind === "question";
+  return (
+    <div className={question ? "rounded-lg border border-zinc-200 p-3 dark:border-zinc-800" : ""}>
+      <p className={question ? "text-sm font-medium" : "text-xs font-medium text-zinc-500"}>{question ? part.question : "What next?"}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {part.choices.map((choice) => (
+          <button
+            key={choice}
+            type="button"
+            disabled={waiting || sent !== null}
+            onClick={async () => {
+              setSent(choice);
+              if (!(await send(choice))) setSent(null);
+            }}
+            className={`min-h-9 rounded-full border px-3 py-1.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              sent === choice
+                ? "border-foreground bg-foreground text-background"
+                : "border-zinc-300 hover:border-foreground hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+            }`}
+          >
+            {choice}
+          </button>
+        ))}
+      </div>
+      {question && <p className="mt-2 text-xs text-zinc-500">Or type your own answer below.</p>}
+    </div>
   );
 }

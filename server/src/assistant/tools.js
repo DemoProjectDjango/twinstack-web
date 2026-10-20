@@ -389,6 +389,18 @@ const TOOLS = [
     ["message", "summary"],
     { kind: "change", runs: "server", title: "Publish" },
   ),
+  // ------------------------------------------------------------------ talk
+  tool(
+    "offer_choices",
+    "Shows tappable buttons at the end of your reply, under all of its text; tapping one sends its text as the owner's message (they can still type their own). kind question: a decision you need, with the likely answers; end your reply after it. kind next: 2 or 3 next steps.",
+    {
+      kind: { type: "string", enum: ["question", "next"] },
+      question: { type: "string", description: "kind question: the question, in one short sentence." },
+      choices: { type: "array", items: { type: "string" }, description: "2 to 4, each a few words in the owner's voice, e.g. \"Warm and rustic\" or \"Write the Blog page\"." },
+    },
+    ["kind", "choices"],
+    { kind: "talk" },
+  ),
 ];
 
 const BY_NAME = new Map(TOOLS.map((t) => [t.definition.name, t]));
@@ -867,6 +879,7 @@ export async function runTool(name, input, key, context = {}) {
   if (!info) return { error: `There's no tool called ${name}.` };
   if (!isPlainObject(input)) return { error: "The tool input must be an object." };
   try {
+    if (info.kind === "talk") return { talk: choicesOf(input) };
     if (info.kind === "read") {
       const result = await runRead(name, input, key, context);
       return { result: typeof result === "string" ? result : JSON.stringify(result) };
@@ -876,6 +889,19 @@ export async function runTool(name, input, key, context = {}) {
     if (err instanceof ToolInputError || err instanceof WorkspaceError) return { error: err.message };
     throw err;
   }
+}
+
+/** offer_choices' buttons, checked: shown in the chat as they are. */
+function choicesOf(input) {
+  const kind = input.kind === "question" ? "question" : input.kind === "next" ? "next" : null;
+  if (!kind) throw new ToolInputError("kind must be question or next.");
+  const question = typeof input.question === "string" ? input.question.trim() : "";
+  if (kind === "question" && !question) throw new ToolInputError("A question needs its question.");
+  if (question.length > 200) throw new ToolInputError("Keep the question under 200 characters.");
+  const choices = Array.isArray(input.choices) ? [...new Set(input.choices.filter((c) => typeof c === "string").map((c) => c.trim()).filter(Boolean))] : [];
+  if (choices.length < 2 || choices.length > 4) throw new ToolInputError("Give 2 to 4 different choices.");
+  if (choices.some((c) => c.length > 80)) throw new ToolInputError("Keep each choice under 80 characters.");
+  return { kind, ...(kind === "question" && { question }), choices };
 }
 
 /* --------------------------------------------------------------- applying */

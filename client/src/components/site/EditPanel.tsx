@@ -6,6 +6,7 @@ import { api, workspaceImageUrl, workspacePath, type HtmlSource, type WorkspaceS
 import { DraftEditor } from "./DraftEditor";
 import { ImagePicker } from "./ImagePicker";
 import { ProposalReview } from "./ProposalReview";
+import { useAutoApply } from "./assistant/AssistantProvider";
 import { useSite, type PageEditMode } from "./site-context";
 import { Button, Details, ErrorText, Field, Notice, Section, Segmented, inputClass } from "./ui";
 
@@ -181,6 +182,8 @@ function MarkdownForm() {
 /** Change one page from a plain-English instruction, optionally with images to place. */
 function InstructionEditor({ file }: { file: string }) {
   const { owner, repo, overview, busy, run, claude, job } = useSite();
+  // "Make changes automatically": the change is kept as it's made, and seeing it first is the other button.
+  const autoApply = useAutoApply();
   const [instruction, setInstruction] = useState("");
   const [images, setImages] = useState<string[]>([]);
 
@@ -208,7 +211,7 @@ function InstructionEditor({ file }: { file: string }) {
 
       <Section
         title="Ask the AI to change this page"
-        description="Say what you'd like changed, in your own words. You can add photos for the AI to place. You'll see the AI's version before anything is kept."
+        description={`Say what you'd like changed, in your own words. You can add photos for the AI to place. ${autoApply ? "The change is kept as soon as it's made: you can undo it on What's changed." : "You'll see the AI's version before anything is kept."}`}
       >
         <div className="space-y-4">
           <Field label="What should change?">
@@ -266,11 +269,11 @@ function InstructionEditor({ file }: { file: string }) {
           )}
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="primary" disabled={disabled || !ready} onClick={() => startEdit(true)}>
-              {previewRunning ? "The AI is working…" : "Show me the AI's version"}
+            <Button variant="primary" disabled={disabled || !ready} onClick={() => startEdit(!autoApply)}>
+              {previewRunning ? "The AI is working…" : autoApply ? "Change it" : "Show me the AI's version"}
             </Button>
-            <Button variant="ghost" disabled={disabled || !ready} onClick={() => startEdit(false)}>
-              Change it without showing me first
+            <Button variant="ghost" disabled={disabled || !ready} onClick={() => startEdit(autoApply)}>
+              {autoApply ? "Show me the AI's version first" : "Change it without showing me first"}
             </Button>
             <span className="text-xs text-zinc-500">{claude.costNote}</span>
           </div>
@@ -301,6 +304,7 @@ function chromeIn(html: string) {
 /** Convert an existing HTML page (from an old site, say) into one of the site's pages. */
 function ConvertEditor({ file }: { file: string }) {
   const { owner, repo, overview, busy, run, claude, job } = useSite();
+  const autoApply = useAutoApply();
   const [htmlFile, setHtmlFile] = useState<File | null>(null);
   const [cssFiles, setCssFiles] = useState<File[]>([]);
   // Keeping the page as it is (its HTML and CSS) is the default; markdown rewrites it in the site's design.
@@ -397,7 +401,7 @@ function ConvertEditor({ file }: { file: string }) {
 
       <Section
         title="Bring in a page from another website"
-        description="Upload a page saved from your old website. The AI takes out the old header, menu and footer and fits the rest into this page. Everything on this page now is replaced. You'll see the result before anything is kept."
+        description="Upload a page saved from your old website. The AI takes out the old header, menu and footer and fits the rest into this page. Everything on this page now is replaced."
       >
         <div className="space-y-4">
           <div>
@@ -555,11 +559,11 @@ function ConvertEditor({ file }: { file: string }) {
           <ErrorText error={error} />
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="primary" disabled={disabled || uploading || !ready} onClick={() => void startConvert(true)}>
-              {uploading ? "Uploading…" : previewRunning ? "The AI is working…" : "Show me the result"}
+            <Button variant="primary" disabled={disabled || uploading || !ready} onClick={() => void startConvert(!autoApply)}>
+              {uploading ? "Uploading…" : previewRunning ? "The AI is working…" : autoApply ? "Replace it" : "Show me the result"}
             </Button>
-            <Button variant="ghost" disabled={disabled || uploading || !ready} onClick={() => void startConvert(false)}>
-              Replace it without showing me first
+            <Button variant="ghost" disabled={disabled || uploading || !ready} onClick={() => void startConvert(autoApply)}>
+              {autoApply ? "Show me the result first" : "Replace it without showing me first"}
             </Button>
             <span className="text-xs text-zinc-500">{claude.costNote}</span>
           </div>

@@ -22,6 +22,7 @@ import { confirmModal } from "@/lib/confirm";
 import { HeaderFooterPreview } from "./HeaderFooterPreview";
 import { JobLog } from "./JobLog";
 import { ProposalReview } from "./ProposalReview";
+import { useAutoApply } from "./assistant/AssistantProvider";
 import { kindOf, linkStatus, move, pageIndex, withKind, type ItemKind, type PageIndex } from "./header-footer";
 import { useSite } from "./site-context";
 import { Badge, Button, ErrorText, Field, Notice, Section, inputClass } from "./ui";
@@ -1262,6 +1263,8 @@ function NewSection({ dirty }: { dirty: boolean }) {
  */
 function ClaudeDesign({ designed, dirty }: { designed: boolean; dirty: boolean }) {
   const { busy, run, overview, claude, job } = useSite();
+  // "Make changes automatically": the design is kept as it's made, with no preview to keep.
+  const autoApply = useAutoApply();
   const [direction, setDirection] = useState("");
   const supported = Boolean(overview?.features.chromeDesign);
   const running = job?.command === "chrome-design" && job.status === "running";
@@ -1298,11 +1301,17 @@ function ClaudeDesign({ designed, dirty }: { designed: boolean; dirty: boolean }
             <Button
               variant="primary"
               disabled={busy || !claude.ready || dirty}
-              onClick={() => void run("chrome-design", { ...(direction.trim() && { instruction: direction.trim() }), dryRun: true })}
+              onClick={() => void run("chrome-design", { ...(direction.trim() && { instruction: direction.trim() }), dryRun: !autoApply })}
             >
               {running ? "The AI is designing…" : designed ? "Redesign with the AI" : "Design with the AI"}
             </Button>
-            {running && <span className="text-sm text-zinc-500">This usually takes a minute or two.</span>}
+            {running ? (
+              <span className="text-sm text-zinc-500">This usually takes a minute or two.</span>
+            ) : (
+              <span className="text-xs text-zinc-500">
+                {autoApply ? "It's used as soon as it's ready: you can undo it on What's changed." : "You'll see it before it's used."}
+              </span>
+            )}
           </div>
           <ProposalReview chrome />
         </div>

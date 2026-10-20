@@ -283,7 +283,7 @@ function StatusBadge({ action, busy }: { action: AssistantAction; busy: boolean 
 }
 
 export function ActionCard({ id }: { id: string }) {
-  const { actions, working, apply, skip, keep, throwAway, turn } = useAssistant();
+  const { actions, working, apply, skip, keep, throwAway, turn, applyingAll } = useAssistant();
   const { busy: siteBusy, editFile, showSection } = useSite();
   const action = actions[id];
   if (!action) return null;
@@ -291,7 +291,8 @@ export function ActionCard({ id }: { id: string }) {
   const busy = working.has(id);
   // Proposals from an answer still being written can't be applied yet.
   const pending = turn?.status === "running" && turn.actions.some((a) => a.id === id);
-  const locked = busy || pending;
+  // While "Accept all" (or automatic changes) works through the cards, they wait their turn.
+  const locked = busy || pending || applyingAll;
   const interrupted = action.status === "running" && !busy;
   const file = (action.input.file as string | undefined) ?? (/content\/[\w./-]+\.md/.exec(action.result ?? "")?.[0] ?? null);
   const settled = action.status === "applied" || action.status === "skipped";

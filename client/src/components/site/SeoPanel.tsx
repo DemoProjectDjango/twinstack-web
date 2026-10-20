@@ -14,6 +14,7 @@ import {
   type WorkspaceStatus,
 } from "@/lib/site-api";
 import { LIMITS, descriptionMeter, effectiveSeo, liveChecks, titleMeter, truncateToWidth, type Meter } from "@/lib/seo";
+import { useAutoApply } from "./assistant/AssistantProvider";
 import { useSite } from "./site-context";
 import { Badge, Button, ErrorText, Field, Notice, Section, inputClass } from "./ui";
 
@@ -314,6 +315,8 @@ const FIELD_ORDER: (keyof SeoFields)[] = ["metaTitle", "metaDescription", "focus
 
 function SeoEditor({ page, report }: { page: SeoPage; report: SeoReport }) {
   const { owner, repo, busy, version, run, job, claude, setStatus, refresh } = useSite();
+  // "Make changes automatically": the AI's search text is saved as it's written, with no suggestion to apply.
+  const autoApply = useAutoApply();
   const [fields, setFields] = useState<SeoFields>(page.fields);
   const [direction, setDirection] = useState("");
   const [proposal, setProposal] = useState<Proposal | null>(null);
@@ -451,7 +454,8 @@ function SeoEditor({ page, report }: { page: SeoPage; report: SeoReport }) {
       <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
         <p className="text-sm font-medium">Suggest with the AI</p>
         <p className="mt-0.5 text-xs text-zinc-500">
-          The AI writes the title, description and focus keyphrase from the page{page.fields.focusKeyword ? `, keeping the keyphrase "${page.fields.focusKeyword}" unless you give a direction` : ""}. You see it here before anything changes.
+          The AI writes the title, description and focus keyphrase from the page{page.fields.focusKeyword ? `, keeping the keyphrase "${page.fields.focusKeyword}" unless you give a direction` : ""}.{" "}
+          {autoApply ? "It's saved as soon as it's written: you can undo it on What's changed." : "You see it here before anything changes."}
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
           <input
@@ -462,8 +466,8 @@ function SeoEditor({ page, report }: { page: SeoPage; report: SeoReport }) {
             className={`${inputClass} min-w-48 flex-1`}
             disabled={busy}
           />
-          <Button disabled={busy || !claude.ready} onClick={() => run("seo-claude", { page: page.file, instruction: direction.trim() || undefined, dryRun: true })}>
-            {claudeRunning ? "The AI is writing…" : "Suggest"}
+          <Button disabled={busy || !claude.ready} onClick={() => run("seo-claude", { page: page.file, instruction: direction.trim() || undefined, dryRun: !autoApply })}>
+            {claudeRunning ? "The AI is writing…" : autoApply ? "Write it" : "Suggest"}
           </Button>
         </div>
         {proposal?.seo && (
