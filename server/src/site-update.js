@@ -520,9 +520,13 @@ export function siteUpdateSteps({ key, accessToken, templateToken = accessToken,
         await git(dir, ["worktree", "add", "--quiet", "--detach", before, s.base]);
         await installDependencies(dir, before, exec, env);
         const was = await checkSite(before, exec, env);
-        const known = new Set(was?.errors ?? []);
+        // The update's checker can see problems the site's older one couldn't (a page cut off mid-tag,
+        // say), so it checks the site as it was too: what it finds there was already there.
+        await fs.cp(path.join(work, "scripts"), path.join(before, "scripts"), { recursive: true, force: true });
+        const wasNow = await checkSite(before, exec, env);
+        const known = new Set([...(was?.errors ?? []), ...(wasNow?.errors ?? [])]);
         const added = after.errors.filter((line) => !known.has(line));
-        if (!was || added.length || !after.errors.length) {
+        if ((!was && !wasNow) || added.length || !after.errors.length) {
           throw new Error(
             `The updated site didn't pass its check, so nothing was changed. Your site is exactly as it was.${added.length ? `\nNew problems:\n${added.join("\n")}` : ""}`,
           );
