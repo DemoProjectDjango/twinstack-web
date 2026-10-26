@@ -24,6 +24,7 @@ import {
 } from "../publishing.js";
 import { requireAuth, requireGithub } from "../session.js";
 import { getNextSteps } from "../next-steps.js";
+import { firstDesign, firstDesignModel } from "../first-design.js";
 import { analyticsRouter } from "./analytics.js";
 import { assistantRouter } from "./assistant.js";
 import { handle, keyFor, requireJson } from "./helpers.js";
@@ -195,14 +196,18 @@ workspacesRouter.post(
     let workLog = null;
     // How big the request is (task-size.js), when the cheaper model is in play at all.
     let sized = null;
+    // The site's first homepage or header and footer (first-design.js), and the model that writes it.
+    let first = null;
     try {
       if (claude) {
-        const model = await getClaudeModel(req.user.id);
+        let model = await getClaudeModel(req.user.id);
+        first = command.claude ? await firstDesign(key, name, input).catch(() => null) : null;
+        if (first) model = firstDesignModel(model);
         if (claude.charged) {
           const siteId = await siteIdFor(key).catch(() => null);
           proxy = issueProxyToken({ userId: req.user.id, siteId, command: name });
           // The site's own choice of the cheaper model, else the admin's.
-          let fastModel = await fastModelForSite(siteId);
+          let fastModel = first ? null : await fastModelForSite(siteId);
           if (fastModel && command.sized) {
             sized = taskSize(command.sized(input));
             // Copies made before sizing ignore TWINSTACK_TASK_SIZE: keep complex work off the
@@ -235,8 +240,13 @@ workspacesRouter.post(
       userId: req.user.id,
       command: name,
       label: command.label,
-      // The size goes at the top of the job's log, so the Build tools screen shows why a model ran.
-      steps: sized ? [{ display: describeTaskSize(sized), run: () => {} }, ...steps] : steps,
+      // The size, and a first design's model, go at the top of the job's log, so the Build tools
+      // screen shows why a model ran.
+      steps: [
+        ...(sized ? [{ display: describeTaskSize(sized), run: () => {} }] : []),
+        ...(first ? [{ display: `The site's first ${first}: written by ${env.TWINSTACK_MODEL ?? "the site's own model"}, never the cheaper model.`, run: () => {} }] : []),
+        ...steps,
+      ],
       cwd: workspaceDir(key),
       env,
       // Saved before the lock is released, so no later run rewrites the file first. A

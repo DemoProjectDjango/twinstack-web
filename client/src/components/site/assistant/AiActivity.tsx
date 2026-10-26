@@ -6,14 +6,15 @@ import { Button, inputClass } from "../ui";
 import { useAssistant } from "./AssistantProvider";
 import { RichText } from "./RichText";
 
-// The AI's work in one window in the middle of the screen, so nobody misses it:
-//   - while it answers or carries out its changes, a loader saying what it's on, with Stop and
-//     "Keep working in the background" (which shrinks it to a small pill at the top);
+// The AI's work in one window, so nobody misses it:
+//   - while it answers or carries out its changes, a loader over the screen's card (mounted inside
+//     it, so the header and the menu stay usable) saying what it's on, with Stop and "Keep working
+//     in the background" (which shrinks it to a small pill at the top);
 //   - when an answer from this visit needs something from the owner (its offer_choices question,
 //     or text ending in "?"), the same window turns into the question, with its answer buttons and
 //     a reply box. Answering turns it back into the loader.
 // While it only works, the conversation panel (z-50) stays above it, so "See what it's doing" just
-// opens the panel; a question goes above everything, on a phone too.
+// opens the panel; a question covers the whole window, above everything, on a phone too.
 
 type Question = { context: string; question: string | null; choices: string[] };
 
@@ -67,8 +68,12 @@ export function AiActivity() {
       {/* Always mounted so it can fade, and hiding waits a moment: carrying out several changes has short gaps between them. */}
       <div
         aria-hidden={!shown}
-        className={`fixed inset-0 grid place-items-center bg-background/60 px-4 backdrop-blur-[2px] transition-opacity duration-300 ${
-          question ? "z-[60] bg-black/30 backdrop-blur-sm" : `z-40 ${open ? "sm:pr-[28rem]" : ""}`
+        className={`bg-background/60 px-4 backdrop-blur-[2px] transition-opacity duration-300 ${
+          question
+            ? "fixed inset-0 z-1000 grid place-items-center bg-black/30 backdrop-blur-sm"
+            : // The card can be taller than the window: the loader stays in view as the screen scrolls.
+              // Above the sticky AI bar and status strip (z-30), which it can reach on a short screen; below the panel (z-50).
+              `absolute inset-0 z-40 flex items-start justify-center rounded-2xl ${open ? "sm:pr-[28rem] xl:pr-4" : ""}`
         } ${shown ? "opacity-100" : "pointer-events-none opacity-0 delay-700"}`}
       >
         <div
@@ -76,7 +81,7 @@ export function AiActivity() {
           aria-modal={question ? true : undefined}
           aria-labelledby={question ? "ai-question-title" : undefined}
           aria-live={question ? undefined : "polite"}
-          className={`w-full rounded-2xl border border-zinc-200 bg-background shadow-2xl transition-[max-width] dark:border-zinc-800 ${question ? "max-w-lg" : "max-w-sm"}`}
+          className={`w-full rounded-2xl border border-zinc-200 bg-background shadow-2xl transition-[max-width] dark:border-zinc-800 ${question ? "max-w-lg" : "sticky top-[30vh] my-8 max-w-sm"}`}
         >
           {question && fresh ? (
             <QuestionBody

@@ -18,9 +18,9 @@ import { getStatus, workspaceDir } from "./workspace.js";
 // each; publishing isn't counted.
 
 // A page body that's still the starter skeleton: copies scripts/lib/design-rules.js (STARTER_TEXT,
-// isDesigned) in the template, so keep the two in step.
-const STARTER_TEXT = /One sentence on (what|how)|Replace this with|Opening paragraph: the specific situation/;
-const isDesigned = (body) => /<section\b[^>]*class=/.test(body) && !STARTER_TEXT.test(body);
+// isDesigned) in the template, so keep the two in step. first-design.js uses them too.
+export const STARTER_TEXT = /One sentence on (what|how)|Replace this with|Opening paragraph: the specific situation/;
+export const isDesigned = (body) => /<section\b[^>]*class=/.test(body) && !STARTER_TEXT.test(body);
 // Pages read for starter text, at most: a big blog is still quick to check.
 const MAX_PAGES_READ = 300;
 // Steps of one kind listed one by one, at most (the rest are one step).
@@ -72,7 +72,11 @@ export async function getNextSteps(key) {
   const steps = [];
   const add = (step) => steps.push({ counts: true, ...step });
 
-  // 1. The homepage: the first thing every visitor sees.
+  // The header and footer haven't been designed yet (step 4).
+  const chromeOpen = Boolean(overview.features.chromeDesign && nav) && !((nav.designed?.header && nav.designed?.footer) || nav.copied?.header || nav.copied?.footer);
+
+  // 1. The homepage: the first thing every visitor sees. Written for the first time, it comes with
+  // a header and footer to match (both by Claude Opus: first-design.js).
   const { pages, unwritten } = await unwrittenPages(dir, overview);
   const home = pages.find(isHome);
   if (home) {
@@ -83,7 +87,9 @@ export async function getNextSteps(key) {
       done: !unwritten.includes(home),
       action: {
         type: "send",
-        prompt: `Design my homepage so a first-time visitor understands straight away what ${name} does, why to choose us, and what to do next (contact us, book or buy). Ask me about anything you need to know about the business.`,
+        prompt: `Design my homepage so a first-time visitor understands straight away what ${name} does, why to choose us, and what to do next (contact us, book or buy).${
+          chromeOpen && unwritten.includes(home) ? " Then design a header and footer that match it." : ""
+        } Ask me about anything you need to know about the business.`,
       },
     });
   }
@@ -148,12 +154,11 @@ export async function getNextSteps(key) {
 
   // 4. The header and footer, on every page.
   if (overview.features.chromeDesign && nav) {
-    const designed = (nav.designed?.header && nav.designed?.footer) || nav.copied?.header || nav.copied?.footer;
     add({
       id: "chrome",
       title: "Design a header and footer that match your site",
       why: "They're on every page, so they set the look of the whole site.",
-      done: Boolean(designed),
+      done: !chromeOpen,
       action: { type: "send", prompt: "Design a header and footer that match the look of my homepage." },
     });
   }

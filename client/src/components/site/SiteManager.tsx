@@ -616,7 +616,9 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
           </nav>
 
           <div className="min-w-0 space-y-4">
-            {/* The screen on its white card; the AI bar floats below it on the page's grey. */}
+            {/* The screen on its white card; the AI bar floats below it on the page's grey. The AI's
+                loader covers only this card, so the header and the menu stay usable while it works. */}
+            <div className="relative">
             <div className="space-y-6 rounded-2xl bg-background p-4 shadow-sm sm:p-6">
               <SiteNotices onReset={resetToDefault} />
               <ErrorText error={runError} />
@@ -660,6 +662,8 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
               {section === "models" && <ModelPanel />}
               {section === "tools" && <BuildPanel />}
             </div>
+            <AiActivity />
+            </div>
 
             {withAiBar && (
               // Stays at the bottom of the window as the screen scrolls, with the status strip above it.
@@ -673,7 +677,6 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
         {!withAiBar && <StatusStrip onShowLog={() => showSection("tools")} />}
       </Shell>
       <AssistantPanel />
-      <AiActivity />
       <FirstRunSetup />
       </AssistantProvider>
     </SiteContext.Provider>

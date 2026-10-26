@@ -133,6 +133,8 @@ function SetupDialog({ onDone }: { onDone: () => void }) {
             `Set up my new site for ${business}.`,
             description && `What we do: ${description}`,
             `${hasHome ? "Design my homepage" : "Create my homepage and design it"} so a first-time visitor understands straight away what we do, why to choose us and what to do next.`,
+            // A new site's header and footer are the template's plain ones: designed with the homepage, they match it.
+            overview?.features.chromeDesign && "Then design a header and footer that match it.",
             paths.length && `Use these photos of ours on it: ${paths.join(", ")}.`,
             "Ask me about anything you need to know instead of guessing.",
           ]
