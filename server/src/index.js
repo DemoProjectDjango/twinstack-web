@@ -18,7 +18,9 @@ import { jobsRouter, workspacesRouter } from "./routes/workspaces.js";
 import { requireAuth, requireGithub } from "./session.js";
 import { ReauthRequiredError, getAccessToken, listRepos } from "./github.js";
 import { DuplicateError, MissingScopeError, duplicateRepo, isValidRepoName } from "./duplicate.js";
-import { enablePages } from "./publishing.js";
+import { enablePages, getSiteSummary } from "./publishing.js";
+import { DeletePermissionError, deleteSite } from "./site-delete.js";
+import { WorkspaceError, assertRepoRef } from "./workspace.js";
 
 const app = express();
 
@@ -117,6 +119,52 @@ app.post("/api/repos/:owner/:repo/duplicate", requireAuth, requireGithub, async 
         ? `${err.message}. The empty repository ${err.partialRepo} was kept; retrying with the same name will reuse it.`
         : "Duplicating failed. Please try again.",
     });
+  }
+});
+
+// A site card's name and live status (publishing.js), fetched by each card after the list.
+app.get("/api/repos/:owner/:repo/summary", requireAuth, requireGithub, async (req, res) => {
+  try {
+    assertRepoRef(req.params.owner, req.params.repo);
+    const accessToken = await getAccessToken(req, res);
+    const summary = await getSiteSummary(accessToken, `${req.params.owner}/${req.params.repo}`);
+    if (!summary) return res.status(404).json({ error: "Not one of your sites." });
+    res.json(summary);
+  } catch (err) {
+    if (err instanceof ReauthRequiredError) return res.status(401).json({ error: "reauth_required" });
+    if (err instanceof WorkspaceError) return res.status(err.status).json({ error: err.message });
+    console.error("Failed to read site summary:", err);
+    res.status(502).json({ error: "github_unavailable" });
+  }
+});
+
+// The site card's "Delete site" (site-delete.js): only the site's creator; `deleteRepo` also deletes it on GitHub.
+app.delete("/api/repos/:owner/:repo", requireAuth, requireGithub, async (req, res) => {
+  if (!req.is("application/json")) return res.status(415).json({ error: "Expected JSON" });
+  try {
+    assertRepoRef(req.params.owner, req.params.repo);
+    if (isTemplate(`${req.params.owner}/${req.params.repo}`)) {
+      return res.status(403).json({ error: "The site template can't be deleted." });
+    }
+    const accessToken = await getAccessToken(req, res);
+    res.json(
+      await deleteSite({
+        user: req.user,
+        scopes: req.githubAuth.scopes ?? [],
+        accessToken,
+        owner: req.params.owner,
+        repo: req.params.repo,
+        deleteRepo: req.body?.deleteRepo === true,
+      }),
+    );
+  } catch (err) {
+    if (err instanceof ReauthRequiredError) return res.status(401).json({ error: "reauth_required" });
+    if (err instanceof DeletePermissionError) {
+      return res.status(403).json({ error: "delete_permission_required", message: err.message });
+    }
+    if (err instanceof WorkspaceError) return res.status(err.status).json({ error: err.message });
+    console.error("Failed to delete site:", err);
+    res.status(500).json({ error: "The site couldn't be deleted. Please try again." });
   }
 });
 

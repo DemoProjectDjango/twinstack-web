@@ -14,11 +14,13 @@ export type Repo = {
   updatedAt: string;
   permission: "admin" | "write" | "read";
   role: "template" | "copy";
+  /** A copy this account created: only its creator may delete it. */
+  createdByYou?: boolean;
 };
 
 /** Why a copy can't be opened in the site editor, or null when it can. */
 export function cantManage(repo: Repo) {
-  if (repo.permission === "read") return "You can view this site but not change it. Ask its owner for write access.";
+  if (repo.permission === "read") return "You can look at this site but not change it. Ask its owner to let you edit it.";
   if (repo.archived) return "This site is archived on GitHub, so it can't be changed.";
   return null;
 }

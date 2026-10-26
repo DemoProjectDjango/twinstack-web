@@ -22,6 +22,7 @@ import { sendEmail } from "../email.js";
 import { CODE_RESEND_MS, checkCode, newCode, readCodeAttempt, sendRefusal } from "../email-codes.js";
 import { exchangeCode, githubFetch } from "../github.js";
 import { PASSWORD_MAX, PASSWORD_MIN, hashPassword, verifyAgainstDummy, verifyPassword } from "../passwords.js";
+import { DELETE_REPO_SCOPE } from "../site-delete.js";
 import { clearSession, cookieOptions, requireAuth, sessionAccount, setSession } from "../session.js";
 
 // Accounts are email + password. GitHub is connected to an account afterwards
@@ -322,7 +323,8 @@ authRouter.get(
       redirect_uri: config.github.callbackUrl,
       // `repo` is the only OAuth App scope that grants access to private repositories.
       // `workflow` is required to push .github/workflows/* files when duplicating.
-      scope: "read:user user:email repo workflow",
+      // `delete_repo` only when an owner deleting a site asks for it (?allow=delete_repo, site-delete.js).
+      scope: `read:user user:email repo workflow${req.query.allow === DELETE_REPO_SCOPE ? ` ${DELETE_REPO_SCOPE}` : ""}`,
       state,
     });
     res.redirect(`https://github.com/login/oauth/authorize?${params}`);

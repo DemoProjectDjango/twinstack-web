@@ -43,6 +43,17 @@ export function workspaceDir(key) {
   return path.join(config.workspacesDir, ...key.split("/"));
 }
 
+/** The keys of every account's clone of this repo (collaborators keep their own). */
+export async function workspaceKeysFor(owner, repo) {
+  const userIds = await fs.readdir(config.workspacesDir).catch(() => []);
+  return userIds.map((userId) => workspaceKey(userId, owner, repo)).filter((key) => existsSync(workspaceDir(key)));
+}
+
+/** Deletes a clone from this server. Hold its lock (`acquire`) while doing so. */
+export async function removeWorkspace(key) {
+  await fs.rm(workspaceDir(key), { recursive: true, force: true, maxRetries: 3 });
+}
+
 /* ------------------------------------------------------------------ locks */
 
 // One operation per workspace at a time: two processes writing the same

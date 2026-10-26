@@ -1,5 +1,5 @@
 import { config } from "./config.js";
-import { findSiteCopyIds } from "./db.js";
+import { findSiteCopyCreators, findSiteCopyIds } from "./db.js";
 import { ReauthRequiredError, githubFetch, readRepoFile, toRepo } from "./github.js";
 
 // Users only work with the site template and their copies of it:
@@ -50,17 +50,18 @@ export function appTokenError(err, token) {
 }
 
 /**
- * Adds `role` to each repo and drops every repo that is neither the template nor a copy. The
- * template is listed only for approved accounts, read with the template token when the account
- * can't see it itself.
+ * Adds `role` to each repo and drops every repo that is neither the template nor a copy. Copies
+ * also get `createdByYou` (only their creator may delete them). The template is listed only for
+ * approved accounts, read with the template token when the account can't see it itself.
  */
 export async function withSiteRoles(repos, user) {
-  const copyIds = await findSiteCopyIds(repos.map((repo) => repo.id));
+  const creators = await findSiteCopyCreators(repos.map((repo) => repo.id));
   const listed = repos
-    .map((repo) => ({
-      ...repo,
-      role: isTemplate(repo.fullName) ? "template" : copyIds.has(repo.id) ? "copy" : null,
-    }))
+    .map((repo) =>
+      isTemplate(repo.fullName)
+        ? { ...repo, role: "template" }
+        : { ...repo, role: creators.has(repo.id) ? "copy" : null, createdByYou: creators.get(repo.id) === user?.id },
+    )
     .filter((repo) => repo.role && (repo.role !== "template" || hasTemplateAccess(user)));
   if (hasTemplateAccess(user) && config.templateToken && !listed.some((repo) => repo.role === "template")) {
     const res = await githubFetch(`/repos/${config.siteTemplate}`, config.templateToken).catch((err) => {

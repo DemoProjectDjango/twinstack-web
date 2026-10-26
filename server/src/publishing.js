@@ -1,4 +1,5 @@
 import { githubFetch, readRepoFile } from "./github.js";
+import { isSiteCopy } from "./sites.js";
 import { WorkspaceError } from "./workspace.js";
 
 // Publishing a site copy with GitHub Pages. The copy's own
@@ -28,6 +29,47 @@ function githubMessage(body, fallback) {
  * Whether Pages is on, its URL, the latest deploy run on the default branch,
  * and whether the copy's pushed workflow can publish under /<repo>.
  */
+// The template's site name; a copy still showing it hasn't been named, so the dashboard uses the repo name.
+const UNNAMED_SITE = "My Website";
+
+/**
+ * What a site card on the dashboard shows: the site's own name (`site.config.json` → `name`, null
+ * while it's the template's), and whether it's live, with its address. `status` is `live`,
+ * `publishing`, `failed` (the latest publish didn't work; an earlier one may still be live) or
+ * `unpublished`. Null when the repo isn't a site copy.
+ */
+export async function getSiteSummary(accessToken, fullName) {
+  const repo = await json(`/repos/${fullName}`, accessToken);
+  if (repo.res.status === 404) return null;
+  if (!repo.res.ok) throw new Error(`GitHub GET repo failed with ${repo.res.status}`);
+  if (!(await isSiteCopy({ id: repo.body.id, fullName: repo.body.full_name }))) return null;
+  const branch = encodeURIComponent(repo.body.default_branch);
+
+  const [pages, runs, configText] = await Promise.all([
+    json(`/repos/${fullName}/pages`, accessToken),
+    json(`/repos/${fullName}/actions/workflows/${DEPLOY_WORKFLOW}/runs?branch=${branch}&per_page=1`, accessToken),
+    readRepoFile(accessToken, fullName, "site.config.json").catch(() => null),
+  ]);
+
+  let name = null;
+  try {
+    const value = JSON.parse(configText ?? "null")?.name;
+    if (typeof value === "string" && value.trim() && value.trim() !== UNNAMED_SITE) name = value.trim();
+  } catch {
+    // A broken config just means no name.
+  }
+
+  const run = runs.res.ok ? runs.body?.workflow_runs?.[0] : null;
+  const status = !pages.res.ok || !run
+    ? "unpublished"
+    : run.status !== "completed"
+      ? "publishing"
+      : run.conclusion === "success"
+        ? "live"
+        : "failed";
+  return { name, status, url: pages.res.ok ? (pages.body.html_url ?? null) : null };
+}
+
 export async function getPublishing(accessToken, fullName) {
   const repo = await json(`/repos/${fullName}`, accessToken);
   if (repo.res.status === 404) throw new WorkspaceError("Repository not found.", 404);

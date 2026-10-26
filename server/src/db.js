@@ -536,6 +536,35 @@ export async function findSiteCopyIds(repoIds) {
   return new Set(docs.map((doc) => doc._id));
 }
 
+/** The recorded copies among `repoIds`, as repo id → the account id that created it. */
+export async function findSiteCopyCreators(repoIds) {
+  const docs = await siteCopies()
+    .find({ _id: { $in: repoIds } }, { projection: { userId: 1 } })
+    .toArray();
+  return new Map(docs.map((doc) => [doc._id, doc.userId]));
+}
+
+/** A copy's record (`_id`, `fullName`, `userId`) by repo id, or by the name it was created with (any case). */
+export async function findSiteCopy({ id, fullName }) {
+  const projection = { fullName: 1, userId: 1 };
+  if (typeof id === "number") return siteCopies().findOne({ _id: id }, { projection });
+  return siteCopies().findOne({ fullName }, { projection, collation: { locale: "en", strength: 2 } });
+}
+
+/**
+ * Forgets a deleted site: its record (and with it its model choices and analytics settings), work
+ * log, "Ask Claude" chats and counted visits. claudeUsage stays: it's the account's billing history.
+ */
+export async function deleteSiteRecords(siteId) {
+  await Promise.all([
+    workLog().deleteMany({ siteId }),
+    workLogForgotten().deleteMany({ siteId }),
+    conversations().deleteMany({ siteId }),
+    analyticsEvents().deleteMany({ siteId }),
+  ]);
+  await siteCopies().deleteOne({ _id: siteId });
+}
+
 /* --------------------------------------------------------------- work log */
 
 // Each site's Claude work log (the lines its scripts write to

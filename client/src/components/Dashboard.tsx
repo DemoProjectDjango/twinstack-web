@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { claudeAccess } from "@/lib/claude";
 import { formatCredits, useCredits } from "@/lib/credits";
 import { cantManage, type Repo } from "@/lib/repos";
 import type { Access } from "@/lib/session";
 import { CreateSite } from "./CreateSite";
+import { DeleteSiteDialog, takeResumedDelete } from "./DeleteSiteDialog";
 import { GitHubIcon } from "./GitHubIcon";
 import { Button, EmptyState, Notice, StepList, type Step } from "./site/ui";
 
@@ -63,6 +64,7 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
   const [access, setAccess] = useState(initialAccess);
   const [requesting, setRequesting] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<{ repo: Repo; title: string; deleteRepo: boolean } | null>(null);
   const approved = access.status === "approved";
 
   useEffect(() => {
@@ -74,7 +76,12 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
           if (cancelled) return;
           if (!res.ok) return setSites({ status: "error", reauth: res.status === 401 });
           const data = (await res.json()) as { repos: Repo[] };
-          if (!cancelled) setSites({ status: "ready", repos: data.repos });
+          if (cancelled) return;
+          setSites({ status: "ready", repos: data.repos });
+          // Back from allowing repository deletion on GitHub: ask again for the same site.
+          const resumed = takeResumedDelete();
+          const repo = data.repos.find((r) => r.role === "copy" && r.createdByYou && r.fullName === resumed);
+          if (repo) setDeleting({ repo, title: nameFromRepo(repo.name), deleteRepo: true });
         })
         .catch(() => !cancelled && setSites({ status: "error", reauth: false }));
     }
@@ -115,6 +122,16 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
 
   function added(repo: Repo) {
     setSites((s) => (s.status === "ready" ? { ...s, repos: [repo, ...s.repos] } : s));
+  }
+
+  function deleted(repo: Repo) {
+    setDeleting(null);
+    try {
+      localStorage.removeItem(summaryKey(repo.id));
+    } catch {
+      // Nothing to tidy.
+    }
+    setSites((s) => (s.status === "ready" ? { ...s, repos: s.repos.filter((r) => r.id !== repo.id) } : s));
   }
 
   const createAction = template ? (
@@ -225,7 +242,13 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
           </h2>
           <ul className="grid gap-3 sm:grid-cols-2">
             {copies.map((repo) => (
-              <SiteCard key={repo.id} repo={repo} login={githubLogin!} />
+              <SiteCard
+                key={repo.id}
+                repo={repo}
+                login={githubLogin!}
+                // Not while the list is the cached one: the delete must act on what GitHub says now.
+                onDelete={sites.status === "ready" && repo.createdByYou ? (title) => setDeleting({ repo, title, deleteRepo: false }) : null}
+              />
             ))}
             {/* There's no limit on sites: the card makes another, or says why it can't yet. */}
             {approved && template && !creating && (
@@ -257,6 +280,16 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
             )}
           </ul>
         </section>
+      )}
+
+      {deleting && (
+        <DeleteSiteDialog
+          repo={deleting.repo}
+          title={deleting.title}
+          initialDeleteRepo={deleting.deleteRepo}
+          onDeleted={deleted}
+          onClose={() => setDeleting(null)}
+        />
       )}
 
       {githubLogin && loaded && copies.length === 0 && !template && approved && (
@@ -320,16 +353,112 @@ function AccessText({ access, email, error }: { access: Access; email: string; e
   return <>We approve each new account by hand. Ask once, and we&apos;ll email you at {email} when you can start.</>;
 }
 
-function SiteCard({ repo, login }: { repo: Repo; login: string }) {
+type Summary = { name: string | null; status: "live" | "publishing" | "failed" | "unpublished"; url: string | null };
+
+const STATUS: Record<Summary["status"], { label: string; dot: string }> = {
+  live: { label: "Live", dot: "bg-emerald-500" },
+  publishing: { label: "Publishing…", dot: "bg-amber-500 animate-pulse" },
+  failed: { label: "Last publish didn't work", dot: "bg-red-500" },
+  unpublished: { label: "Not published yet", dot: "bg-zinc-400" },
+};
+
+const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
+/** "today", "yesterday", "6 days ago", then the date. */
+function editedWhen(iso: string) {
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(iso).setHours(0, 0, 0, 0)) / 86_400_000);
+  return days >= 0 && days < 14 ? relativeTime.format(-days, "day") : `on ${dateFormat.format(new Date(iso))}`;
+}
+
+// Each card's last summary, so a reload shows the site's name and status at once instead of a
+// guess while GitHub answers. A per-browser convenience like the site list's cache.
+const summaryKey = (repoId: number) => `twinstack:site-summary:${repoId}`;
+
+function readSummary(repoId: number): Summary | null {
+  try {
+    const summary = JSON.parse(localStorage.getItem(summaryKey(repoId)) ?? "null");
+    return summary && typeof summary.status === "string" && summary.status in STATUS ? summary : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSummary(repoId: number, summary: Summary) {
+  try {
+    localStorage.setItem(summaryKey(repoId), JSON.stringify(summary));
+  } catch {
+    // Storage full or blocked: the card just waits for GitHub next time.
+  }
+}
+
+/** "new-site110" → "New site110", when the site has no name of its own (or GitHub didn't say). */
+const nameFromRepo = (name: string) => name.replace(/[-_.]+/g, " ").trim().replace(/^./, (c) => c.toUpperCase()) || name;
+
+/** "https://ibnul.github.io/bakery/" → "ibnul.github.io/bakery" */
+const shortAddress = (url: string) => url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+
+function SiteCard({ repo, login, onDelete }: { repo: Repo; login: string; onDelete: ((title: string) => void) | null }) {
   const reason = cantManage(repo);
+  // Its name and whether it's live, from GitHub after the list (null while asking, false if it couldn't).
+  // Cards only render in the browser (after the list loads), so reading storage here can't break hydration.
+  const [summary, setSummary] = useState<Summary | null | false>(() => readSummary(repo.id));
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/summary`)
+      .then(async (res) => {
+        const data = res.ok ? ((await res.json()) as Summary) : null;
+        if (data) writeSummary(repo.id, data);
+        // On failure keep what the cache showed, if anything.
+        if (!cancelled) setSummary((shown) => data ?? shown ?? false);
+      })
+      .catch(() => !cancelled && setSummary((shown) => shown ?? false));
+    return () => {
+      cancelled = true;
+    };
+  }, [repo.id, repo.owner, repo.name]);
+
+  const loading = summary === null;
+  const title = (summary && summary.name) || nameFromRepo(repo.name);
+  const liveUrl = summary && summary.status !== "unpublished" ? summary.url : null;
+  const status = summary ? STATUS[summary.status] : null;
+
   return (
     <li className="flex flex-col rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-      <p className="truncate font-medium">{repo.name}</p>
-      <p className="mt-0.5 text-xs text-zinc-500">
-        {repo.owner !== login && <>Shared by @{repo.owner} · </>}
-        Last changed {dateFormat.format(new Date(repo.updatedAt))}
+      <div className="flex items-start gap-2">
+        {loading ? (
+          <span className="mt-1 block h-5 flex-1" aria-label="Loading site">
+            <span className="block h-4 w-40 max-w-full animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          </span>
+        ) : (
+          <h3 className="min-w-0 flex-1 truncate font-medium" title={title}>
+            {title}
+          </h3>
+        )}
+        <SiteMenu name={title} liveUrl={liveUrl} filesUrl={repo.htmlUrl} onDelete={onDelete && (() => onDelete(title))} />
+      </div>
+
+      <div className="mt-1 min-h-5 text-sm">
+        {loading ? (
+          <span className="block h-3 w-36 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" aria-hidden="true" />
+        ) : status ? (
+          <span className="flex min-w-0 items-center gap-2">
+            <span className={`size-2 shrink-0 rounded-full ${status.dot}`} aria-hidden="true" />
+            <span className="shrink-0">{status.label}</span>
+            {liveUrl && (
+              <a href={liveUrl} target="_blank" rel="noreferrer" className="min-w-0 truncate text-zinc-500 hover:text-foreground hover:underline">
+                {shortAddress(liveUrl)}
+              </a>
+            )}
+          </span>
+        ) : null}
+      </div>
+
+      <p className="mt-1 text-xs text-zinc-500">
+        {repo.owner !== login && <>Shared with you by {repo.owner} · </>}
+        Edited {editedWhen(repo.updatedAt)}
       </p>
-      {repo.description && <p className="mt-2 line-clamp-2 text-sm text-zinc-500">{repo.description}</p>}
+
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {reason ? (
           <p className="text-xs text-zinc-500">{reason}</p>
@@ -338,13 +467,123 @@ function SiteCard({ repo, login }: { repo: Repo; login: string }) {
             href={`/sites/${repo.owner}/${repo.name}`}
             className="rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background hover:opacity-90"
           >
-            Open editor
+            Edit site
           </Link>
         )}
-        <a href={repo.htmlUrl} target="_blank" rel="noreferrer" className="ml-auto text-xs text-zinc-500 hover:underline">
-          On GitHub ↗
-        </a>
+        {liveUrl && (
+          <a
+            href={liveUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+          >
+            View site ↗
+          </a>
+        )}
       </div>
     </li>
+  );
+}
+
+const menuItem = "flex w-full items-center rounded-md px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-900";
+
+/**
+ * The ⋮ button at the top right of a site card and its menu: view the live site, its files on
+ * GitHub, and (for its creator) delete it. Escape or a click elsewhere closes it.
+ */
+function SiteMenu({
+  name,
+  liveUrl,
+  filesUrl,
+  onDelete,
+}: {
+  name: string;
+  liveUrl: string | null;
+  filesUrl: string;
+  onDelete: (() => void) | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    menu.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+    const onDown = (event: MouseEvent) => {
+      if (box.current && !box.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        button.current?.focus();
+      } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        // Up and down move between the items, wrapping round.
+        const items = [...(menu.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? [])];
+        const at = items.indexOf(document.activeElement as HTMLElement);
+        items[(at + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+        event.preventDefault();
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={box} className="relative -mr-2 -mt-1">
+      <button
+        ref={button}
+        type="button"
+        aria-label={`More options for ${name}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex size-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-foreground dark:hover:bg-zinc-900"
+      >
+        <svg viewBox="0 0 16 16" className="size-4" fill="currentColor" aria-hidden="true">
+          <circle cx="8" cy="3" r="1.5" />
+          <circle cx="8" cy="8" r="1.5" />
+          <circle cx="8" cy="13" r="1.5" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          ref={menu}
+          role="menu"
+          aria-label={`${name} options`}
+          className="absolute right-0 top-full z-30 mt-1 w-60 rounded-lg border border-zinc-200 bg-background p-1 shadow-lg dark:border-zinc-800"
+        >
+          {liveUrl && (
+            <a href={liveUrl} target="_blank" rel="noreferrer" role="menuitem" onClick={() => setOpen(false)} className={menuItem}>
+              View your live site ↗
+            </a>
+          )}
+          <a href={filesUrl} target="_blank" rel="noreferrer" role="menuitem" onClick={() => setOpen(false)} className={`${menuItem} flex-col items-start`}>
+            <span>See its files on GitHub ↗</span>
+            <span className="text-xs text-zinc-500">Advanced: where your site is stored</span>
+          </a>
+          {onDelete && (
+            <>
+              <div role="separator" className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  onDelete();
+                }}
+                className="flex w-full items-center rounded-md px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+              >
+                Delete site…
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
