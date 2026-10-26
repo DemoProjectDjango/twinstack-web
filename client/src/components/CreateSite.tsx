@@ -46,7 +46,7 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // Always public: GitHub Pages can't publish a private repo on a free plan.
-        body: JSON.stringify({ name, private: false }),
+        body: JSON.stringify({ name, displayName: siteName.trim(), private: false }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {

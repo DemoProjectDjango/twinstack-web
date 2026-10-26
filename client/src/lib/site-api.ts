@@ -141,6 +141,8 @@ export type CssSource = { file: string; exists: boolean; content: string; versio
 
 export type Overview = {
   site: { name: string; url: string; model: string | null };
+  /** What the owner called the site when creating it (null for older sites); shown until `site.name` is set (`siteTitle`). */
+  displayName?: string | null;
   /**
    * pageEditImages: the copy's edit-page.js supports --image and --proposal-out.
    * pageGenerate: it supports --generate (turn a hand-written draft into the finished page).

@@ -25,6 +25,21 @@ export function cantManage(repo: Repo) {
   return null;
 }
 
+/** The site template's placeholder name (`site.config.json` → `name`): a site still showing it hasn't been named. */
+export const TEMPLATE_SITE_NAME = "My Website";
+
+/** "new-site110" → "New site110": a site's address in words, when nothing better names it. */
+export const nameFromRepo = (name: string) => name.replace(/[-_.]+/g, " ").trim().replace(/^./, (c) => c.toUpperCase()) || name;
+
+/**
+ * The name to show for a site: its own (from its details), else the one it was created with
+ * (`displayName`), else its address in words, never the template's placeholder.
+ */
+export function siteTitle(siteName: string | null | undefined, displayName: string | null | undefined, repo: string) {
+  const own = siteName?.trim();
+  return (own && own !== TEMPLATE_SITE_NAME ? own : null) || displayName?.trim() || nameFromRepo(repo);
+}
+
 /** A GitHub repository name from a site name: "Bright Bakery!" → "bright-bakery". */
 export function repoNameFor(siteName: string) {
   return siteName

@@ -956,15 +956,42 @@ ${lines.map((line) => `    ${line}`).join("\n")}
 `;
 }
 
-/** Whether a page with this layout (or the pages collection's, or "page") shows only its body: the layout doesn't draw the title. */
-function bodyIsPage(dir, site, layout) {
+/** The layout a page is drawn with: its own, else the pages collection's, else "page". Null if it isn't a safe file name. */
+function layoutName(site, layout) {
   const name = layout || site.collections?.pages?.layout || "page";
-  if (!/^[\w-]+$/.test(name)) return false;
+  return /^[\w-]+$/.test(name) ? name : null;
+}
+
+/** Whether a layout's HTML shows only the page's body: it doesn't draw the title. */
+const showsOnlyBody = (layoutHtml) => !/\bpage\.(title|heroHeading)\b/.test(layoutHtml);
+
+/** Whether a page with this layout (or the pages collection's, or "page") shows only its body. */
+function bodyIsPage(dir, site, layout) {
+  const name = layoutName(site, layout);
+  if (!name) return false;
   try {
-    return !/\bpage\.(title|heroHeading)\b/.test(readFileSync(path.join(dir, `templates/layouts/${name}.html`), "utf8"));
+    return showsOnlyBody(readFileSync(path.join(dir, `templates/layouts/${name}.html`), "utf8"));
   } catch {
     return false;
   }
+}
+
+/**
+ * The homepage a brand-new copy starts with (new-site.js), made the way createHomepage makes one
+ * but from files read through `read(path)` (text, or null when missing), since a copy being
+ * created has no workspace yet. `{ file, content }`, or null when the site has no pages collection.
+ */
+export async function starterHomepage(site, read) {
+  const pagesDir = site.collections?.pages?.dir;
+  if (typeof pagesDir !== "string" || !pagesDir) return null;
+  const file = `${pagesDir}/home.md`;
+  const predefined = await read("scripts/site-tree-content/index.md");
+  if (predefined && frontmatter(predefined).url === "/") return { file, content: predefined };
+  const layout = (await read("templates/layouts/home.html")) !== null ? "home" : null;
+  const name = layoutName(site, layout);
+  const layoutHtml = name ? await read(`templates/layouts/${name}.html`) : null;
+  const title = site.tagline || site.name || "Home";
+  return { file, content: pageSkeleton({ title, slug: "home", url: "/", layout, bodyIsPage: layoutHtml !== null && showsOnlyBody(layoutHtml) }) };
 }
 
 const addressOf = (url) => (url.endsWith("/") || path.posix.extname(url) ? url : `${url}/`);

@@ -5,7 +5,7 @@ import express, { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
 import { describeTaskSize, taskSize } from "../task-size.js";
 import { config } from "../config.js";
-import { getClaudeModel } from "../db.js";
+import { getClaudeModel, getSiteDisplayName } from "../db.js";
 import { issueProxyToken } from "../claude-proxy.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeKeyFor } from "../credits.js";
 import { FastModelError, chooseSiteFastModel, fastModelForSite, siteFastModelView } from "../fast-model.js";
@@ -110,7 +110,11 @@ workspacesRouter.get(
 
 workspacesRouter.get(
   "/:owner/:repo/overview",
-  handle(async (req, res) => res.json(await getOverview(keyFor(req)))),
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const [overview, displayName] = await Promise.all([getOverview(key), siteIdFor(key).then(getSiteDisplayName).catch(() => null)]);
+    res.json({ ...overview, displayName });
+  }),
 );
 
 workspacesRouter.get(

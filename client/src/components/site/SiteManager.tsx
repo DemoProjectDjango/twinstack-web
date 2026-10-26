@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { claudeAccess, inEditorWords } from "@/lib/claude";
 import { useCredits } from "@/lib/credits";
 import { confirmModal } from "@/lib/confirm";
+import { siteTitle } from "@/lib/repos";
 import { ApiError, api, setBeforeChange, workspacePath, type Job, type Overview, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
 import { AiHelpBadge } from "./AiHelpBadge";
 import { AnalyticsPanel } from "./AnalyticsPanel";
@@ -467,7 +468,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   return (
     <SiteContext.Provider value={context}>
       <AssistantProvider context={assistantContext}>
-      <Shell title={overview?.site.name || repo} actions={<TopBar />}>
+      <Shell title={siteTitle(overview?.site.name, overview?.displayName, repo)} actions={<TopBar />}>
         <div className="mt-6 grid gap-6 lg:grid-cols-[12rem_minmax(0,1fr)]">
           <nav aria-label="Site editor" className="lg:sticky lg:top-20 lg:self-start">
             {/* Small screens: one button opens the list, so the menu doesn't push the page down. */}

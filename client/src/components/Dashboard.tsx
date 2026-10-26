@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { claudeAccess } from "@/lib/claude";
 import { formatCredits, useCredits } from "@/lib/credits";
-import { cantManage, type Repo } from "@/lib/repos";
+import { cantManage, nameFromRepo, type Repo } from "@/lib/repos";
 import type { Access } from "@/lib/session";
 import { CreateSite } from "./CreateSite";
 import { DeleteSiteDialog, takeResumedDelete } from "./DeleteSiteDialog";
@@ -391,8 +391,6 @@ function writeSummary(repoId: number, summary: Summary) {
   }
 }
 
-/** "new-site110" → "New site110", when the site has no name of its own (or GitHub didn't say). */
-const nameFromRepo = (name: string) => name.replace(/[-_.]+/g, " ").trim().replace(/^./, (c) => c.toUpperCase()) || name;
 
 /** "https://ibnul.github.io/bakery/" → "ibnul.github.io/bakery" */
 const shortAddress = (url: string) => url.replace(/^https?:\/\//, "").replace(/\/$/, "");

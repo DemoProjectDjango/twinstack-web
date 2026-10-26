@@ -1,4 +1,5 @@
 import { githubFetch, readRepoFile } from "./github.js";
+import { getSiteDisplayName } from "./db.js";
 import { isSiteCopy } from "./sites.js";
 import { WorkspaceError } from "./workspace.js";
 
@@ -33,8 +34,8 @@ function githubMessage(body, fallback) {
 const UNNAMED_SITE = "My Website";
 
 /**
- * What a site card on the dashboard shows: the site's own name (`site.config.json` → `name`, null
- * while it's the template's), and whether it's live, with its address. `status` is `live`,
+ * What a site card on the dashboard shows: the site's own name (`site.config.json` → `name`; while
+ * that's still the template's, the name it was created with, else null), and whether it's live, with its address. `status` is `live`,
  * `publishing`, `failed` (the latest publish didn't work; an earlier one may still be live) or
  * `unpublished`. Null when the repo isn't a site copy.
  */
@@ -45,10 +46,11 @@ export async function getSiteSummary(accessToken, fullName) {
   if (!(await isSiteCopy({ id: repo.body.id, fullName: repo.body.full_name }))) return null;
   const branch = encodeURIComponent(repo.body.default_branch);
 
-  const [pages, runs, configText] = await Promise.all([
+  const [pages, runs, configText, displayName] = await Promise.all([
     json(`/repos/${fullName}/pages`, accessToken),
     json(`/repos/${fullName}/actions/workflows/${DEPLOY_WORKFLOW}/runs?branch=${branch}&per_page=1`, accessToken),
     readRepoFile(accessToken, fullName, "site.config.json").catch(() => null),
+    getSiteDisplayName(repo.body.id),
   ]);
 
   let name = null;
@@ -67,7 +69,7 @@ export async function getSiteSummary(accessToken, fullName) {
       : run.conclusion === "success"
         ? "live"
         : "failed";
-  return { name, status, url: pages.res.ok ? (pages.body.html_url ?? null) : null };
+  return { name: name ?? displayName, status, url: pages.res.ok ? (pages.body.html_url ?? null) : null };
 }
 
 export async function getPublishing(accessToken, fullName) {

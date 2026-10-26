@@ -147,7 +147,7 @@ export function DeleteSiteDialog({
 
         {deleteRepo && (
           <label className="mt-4 block text-sm">
-            Type <span className="font-medium">{title}</span> to confirm
+            Type <span className="font-bold">{title}</span> to confirm
             <input
               value={typed}
               onChange={(e) => setTyped(e.target.value)}

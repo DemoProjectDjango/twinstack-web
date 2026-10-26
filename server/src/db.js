@@ -470,12 +470,20 @@ export async function getAssistantModel(id) {
 
 /* ------------------------------------------------------------ site copies */
 
-export async function recordSiteCopy({ userId, repo, source }) {
+/** `displayName` is what the owner called the site when creating it (null when unknown). */
+export async function recordSiteCopy({ userId, repo, source, displayName = null }) {
   await siteCopies().updateOne(
     { _id: repo.id },
-    { $set: { fullName: repo.fullName, userId, source }, $setOnInsert: { createdAt: new Date() } },
+    { $set: { fullName: repo.fullName, userId, source, ...(displayName ? { displayName } : {}) }, $setOnInsert: { createdAt: new Date() } },
     { upsert: true },
   );
+}
+
+/** The name the site was given when it was created, or null (older sites, or sites known only by name). */
+export async function getSiteDisplayName(siteId) {
+  if (typeof siteId !== "number") return null;
+  const doc = await siteCopies().findOne({ _id: siteId }, { projection: { displayName: 1 } });
+  return typeof doc?.displayName === "string" ? doc.displayName : null;
 }
 
 // A site's own choice of AI model, shared by everyone who manages it: `fastModel` (fast-model.js)

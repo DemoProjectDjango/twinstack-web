@@ -4,16 +4,17 @@ import { useState } from "react";
 import { api, isHomePage, workspacePath, type BrandInfo, type Json, type StaticSection, type WorkspaceStatus } from "@/lib/site-api";
 import { useAssistant } from "./assistant/AssistantProvider";
 import { markVisited } from "./HomePanel";
+import { TEMPLATE_SITE_NAME as TEMPLATE_NAME } from "@/lib/repos";
 import { useSite } from "./site-context";
 import { Button, ErrorText, Field, inputClass } from "./ui";
 
 // A new site's first visit to Edit site: three questions (the business's name, what it does, a few
 // photos), then straight to the site. The answers go where the owner would otherwise type them
 // (Business info, the header's name, the site's images), and with the AI set up, it's asked to
-// design the homepage from them. Shown while the site still has the template's placeholder name,
-// until it's done or skipped in this browser.
+// design the homepage from them. Shown while the site still has the template's placeholder name, or
+// the name it was created with (which creating it writes into site.config.json), until it's done or
+// skipped in this browser.
 
-const TEMPLATE_NAME = "My Website";
 const MAX_PHOTOS = 6;
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const PHOTO_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
@@ -51,14 +52,17 @@ export function FirstRunSetup() {
   const { owner, repo, overview, claude, busy, refresh, setStatus } = useSite();
   const { send } = useAssistant();
   const [hidden, setHidden] = useState(() => readDone(owner, repo));
-  const [name, setName] = useState("");
+  // Starts as the name the site was created with, until the owner types.
+  const [typedName, setName] = useState<string | null>(null);
   const [what, setWhat] = useState("");
   const [photos, setPhotos] = useState<File[]>([]);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
   const siteName = overview?.site.name ?? null;
-  if (hidden || !overview || (siteName && siteName !== TEMPLATE_NAME)) return null;
+  const name = typedName ?? overview?.displayName ?? "";
+  const unsetUp = !siteName || siteName === TEMPLATE_NAME || siteName === overview?.displayName;
+  if (hidden || !overview || !unsetUp) return null;
 
   function finish() {
     markDone(owner, repo);
@@ -86,7 +90,8 @@ export function FirstRunSetup() {
       }
       // The header shows the logo's name, which starts as the placeholder too.
       const brand = await api<BrandInfo>(workspacePath(owner, repo, "/brand")).catch(() => null);
-      if (brand && (!brand.brand.logoText || brand.brand.logoText === TEMPLATE_NAME)) {
+      const logoText = brand?.brand.logoText;
+      if (brand && (!logoText || logoText === TEMPLATE_NAME || logoText === siteName)) {
         const saved = await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/brand"), { method: "PUT", body: { brand: { logoText: business } } });
         setStatus(saved.status);
       }
