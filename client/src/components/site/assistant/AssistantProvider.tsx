@@ -42,6 +42,8 @@ type AssistantValue = {
   send: (text: string, attachments?: Attachment[]) => Promise<boolean>;
   stop: () => Promise<void>;
   startOver: () => Promise<void>;
+  /** Makes a past conversation the one shown (the current one goes to the history). Resolves to whether it opened. */
+  reopen: (id: string) => Promise<boolean>;
   /** Every proposal by id: the conversation's, and the running turn's. */
   actions: Record<string, AssistantAction>;
   /** Proposals being worked on in this browser right now. */
@@ -243,7 +245,7 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
   }, [owner, repo, runningId]);
 
   const startOver = useCallback(async () => {
-    if (conversation && !(await confirmModal("Start a new conversation? The AI won't remember this one, but your site keeps every change you applied.", { title: "New conversation", confirmLabel: "Start over" }))) return;
+    if (conversation && !(await confirmModal("Start a new conversation? This one is kept in your past conversations, and your site keeps every change you applied.", { title: "New conversation", confirmLabel: "Start over" }))) return;
     try {
       await assistantApi.startOver(owner, repo);
       continued.current.clear();
@@ -255,6 +257,24 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
       setError(err);
     }
   }, [conversation, owner, repo]);
+
+  const reopen = useCallback(
+    async (id: string) => {
+      try {
+        const { conversation: reopened } = await assistantApi.reopen(owner, repo, id);
+        continued.current.clear();
+        setQueued([]);
+        setConversation(reopened);
+        setTurn(null);
+        setError(null);
+        return true;
+      } catch (err) {
+        setError(err);
+        return false;
+      }
+    },
+    [owner, repo],
+  );
 
   const actions = useMemo(() => {
     const all: Record<string, AssistantAction> = { ...(conversation?.actions ?? {}) };
@@ -642,6 +662,7 @@ ${tail(job.output)}`);
     send,
     stop,
     startOver,
+    reopen,
     actions,
     working,
     apply,

@@ -10,6 +10,7 @@ import { AttachButton, PendingChips, SentAttachments, useAttachmentUploads, useF
 import { useAssistant } from "./AssistantProvider";
 import { NextSteps, useNextSteps } from "./NextSteps";
 import { OutOfCredits } from "./OutOfCredits";
+import { PastConversations } from "./PastConversations";
 import { RichText } from "./RichText";
 import { SUGGESTIONS } from "./suggestions";
 
@@ -21,6 +22,8 @@ export function AssistantPanel() {
   const { claude } = useSite();
   const { context, conversation, turn, loading, error, open, setOpen, draft, send, stop, startOver, actions, applyAll, skipAll, applyingAll, autoApply, setAutoApply } = useAssistant();
   const [text, setText] = useState("");
+  // The past conversations, shown in place of the current one.
+  const [showHistory, setShowHistory] = useState(false);
   const uploads = useAttachmentUploads();
   const drop = useFileDrop(uploads.add, claude.ready);
   const listRef = useRef<HTMLDivElement>(null);
@@ -68,6 +71,7 @@ export function AssistantPanel() {
     const message = value.trim();
     if ((!message && !uploads.ready.length) || running || uploads.uploading) return;
     if (await send(message, uploads.ready)) {
+      setShowHistory(false);
       setText("");
       uploads.clear();
     }
@@ -96,8 +100,13 @@ export function AssistantPanel() {
           <AutoApplySwitch on={autoApply} onChange={setAutoApply} />
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
+          <IconButton label="Past conversations" aria-pressed={showHistory} disabled={running || applyingAll} onClick={() => setShowHistory((s) => !s)}>
+            <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+            <path d="M3 3v5h5" />
+            <path d="M12 7v5l3 2" />
+          </IconButton>
           {conversation && (
-            <IconButton label="New conversation" disabled={running} onClick={() => void startOver()}>
+            <IconButton label="New conversation" disabled={running || applyingAll} onClick={() => void startOver().then(() => setShowHistory(false))}>
               <path d="M12 20h9" />
               <path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
             </IconButton>
@@ -110,9 +119,11 @@ export function AssistantPanel() {
       </header>
 
       <div ref={listRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
-        {loading && <p className="text-sm text-zinc-500">Loading…</p>}
+        {showHistory && <PastConversations onClose={() => setShowHistory(false)} />}
 
-        {!loading && !entries.length && !running && (
+        {!showHistory && loading && <p className="text-sm text-zinc-500">Loading…</p>}
+
+        {!showHistory && !loading && !entries.length && !running && (
           <div className="space-y-3">
             {nextSteps && <NextSteps data={nextSteps} onSend={(p) => void submit(p)} onFill={fillBox} disabled={running} />}
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
@@ -141,7 +152,7 @@ export function AssistantPanel() {
           </div>
         )}
 
-        {entries.map((entry, index) => (
+        {(showHistory ? [] : entries).map((entry, index) => (
           <Entry
             key={entry.id}
             entry={entry}

@@ -89,6 +89,21 @@ export type Conversation = {
   runningTurn: Turn | null;
 };
 
+/**
+ * A conversation in the history list. `current`: the one the panel shows. `continuable`: the AI can
+ * pick it up where it left off; otherwise a message sent in it starts a fresh one.
+ */
+export type PastConversation = {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  /** How many messages it has, the owner's and the AI's. */
+  entries: number;
+  current: boolean;
+  continuable: boolean;
+};
+
 /** Where the owner is in the editor, so Claude knows what "this page" means. */
 // `autoApply` is the "Make changes automatically" switch, so Claude describes its changes the way
 // they'll happen (made at once, or waiting for the owner).
@@ -103,6 +118,10 @@ export const assistantApi = {
   turn: (owner: string, repo: string, id: string) => api<{ turn: Turn }>(base(owner, repo, `/turns/${id}`)),
   stop: (owner: string, repo: string, id: string) => api<{ turn: Turn }>(base(owner, repo, `/turns/${id}/stop`), { method: "POST", body: {} }),
   startOver: (owner: string, repo: string) => api<{ conversation: null }>(base(owner, repo, "/new"), { method: "POST", body: {} }),
+  history: (owner: string, repo: string) => api<{ conversations: PastConversation[] }>(base(owner, repo, "/history")),
+  reopen: (owner: string, repo: string, id: string) =>
+    api<{ conversation: Conversation }>(base(owner, repo, `/history/${encodeURIComponent(id)}/open`), { method: "POST", body: {} }),
+  forget: (owner: string, repo: string, id: string) => api<{ ok: true }>(base(owner, repo, `/history/${encodeURIComponent(id)}`), { method: "DELETE" }),
   apply: (owner: string, repo: string, id: string) =>
     api<{ action: AssistantAction; status: WorkspaceStatus }>(base(owner, repo, `/actions/${id}/apply`), { method: "POST", body: {} }),
   setStatus: (owner: string, repo: string, id: string, body: { status: AssistantAction["status"]; result?: string; file?: string }) =>

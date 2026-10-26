@@ -17,7 +17,16 @@ import { TOOLSET_VERSION, applyServerAction } from "../assistant/tools.js";
 import { anthropicClient, runTurn } from "../assistant/turn.js";
 import { DETAILS_FAILED, runDetailsTurn } from "../assistant/details-turn.js";
 import { runQuickTurn } from "../assistant/quick-turn.js";
-import { archiveConversations, createConversation, findConversation, getAssistantModel, updateConversation } from "../db.js";
+import {
+  archiveConversations,
+  createConversation,
+  deleteConversation,
+  findConversation,
+  getAssistantModel,
+  listConversations,
+  reopenConversation,
+  updateConversation,
+} from "../db.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeFilesKeyFor, claudeKeyFor } from "../credits.js";
 import { fastModelForSite, fastModelKey } from "../fast-model.js";
 import { imageModelForSite } from "../image-model.js";
@@ -56,6 +65,8 @@ const MAX_NOTES_CHARS = 20_000;
 const TURN_KEEP_MS = 30 * 60 * 1000;
 const STATUSES = ["running", "ready", "applied", "skipped", "failed"];
 const MAX_ATTACHMENTS = 5;
+// How much of a past conversation's first message titles it in the history list.
+const TITLE_CHARS = 80;
 
 // Turns in progress (and finished ones, briefly), by id. Lost on restart, like jobs.
 const turns = new Map();
@@ -99,6 +110,30 @@ async function siteOf(req) {
     throw new WorkspaceError("Open the site first.", 409);
   }
   return { key, siteId };
+}
+
+/** Deletes the files of conversations that are gone (deleted, or pushed out of the history). */
+async function removeFiles(req, ids) {
+  if (!ids.length) return;
+  const apiKey = await claudeFilesKeyFor(req.user.id);
+  await deleteAttachments(apiKey ? anthropicClient(apiKey) : null, keyFor(req), ids);
+}
+
+/** A conversation in the history list. `continuable`: Claude can pick it up where it left off. */
+function historyView(doc) {
+  const first = doc.first?.[0];
+  const text = first?.text?.replace(/\s+/g, " ").trim() ?? "";
+  const files = (first?.attachments ?? []).map((a) => a.name).join(", ");
+  const title = text || files || "A conversation";
+  return {
+    id: doc.id,
+    title: title.length > TITLE_CHARS ? `${title.slice(0, TITLE_CHARS - 1).trimEnd()}…` : title,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+    entries: doc.entries,
+    current: !doc.archived,
+    continuable: doc.toolset === TOOLSET_VERSION && !doc.filesDeleted,
+  };
 }
 
 async function ownConversation(req, siteId) {
@@ -165,19 +200,50 @@ assistantRouter.get(
   }),
 );
 
-/** Starts a new conversation: the current one is archived. */
+/** Starts a new conversation: the current one is archived, and stays in the history. */
 assistantRouter.post(
   "/new",
   handle(async (req, res) => {
     const { siteId } = await siteOf(req);
     const current = await findConversation(req.user.id, siteId);
     if (current && runningTurnFor(current.id)) throw new WorkspaceError("Wait for Claude to finish, or stop it first.", 409);
-    await archiveConversations(req.user.id, siteId);
-    if (current?.attachments?.length) {
-      const apiKey = await claudeFilesKeyFor(req.user.id);
-      await deleteAttachments(apiKey ? anthropicClient(apiKey) : null, keyFor(req), current.attachments);
-    }
+    await removeFiles(req, await archiveConversations(req.user.id, siteId));
     res.json({ conversation: null });
+  }),
+);
+
+/** The past conversations on this site, newest first (the current one included, marked). */
+assistantRouter.get(
+  "/history",
+  handle(async (req, res) => {
+    const { siteId } = await siteOf(req);
+    res.json({ conversations: (await listConversations(req.user.id, siteId)).map(historyView) });
+  }),
+);
+
+/** Opens a past conversation: it becomes the current one, and the current one goes to the history. */
+assistantRouter.post(
+  "/history/:id/open",
+  handle(async (req, res) => {
+    const { siteId } = await siteOf(req);
+    const current = await findConversation(req.user.id, siteId);
+    if (current && runningTurnFor(current.id)) throw new WorkspaceError("Wait for Claude to finish, or stop it first.", 409);
+    const reopened = await reopenConversation(req.params.id, req.user.id, siteId);
+    if (!reopened) throw new WorkspaceError("That conversation isn't there any more.", 404);
+    await removeFiles(req, reopened.removed);
+    res.json({ conversation: conversationView(reopened.conversation) });
+  }),
+);
+
+/** Deletes a past conversation and its attached files (never the current one). */
+assistantRouter.delete(
+  "/history/:id",
+  handle(async (req, res) => {
+    const { siteId } = await siteOf(req);
+    const files = await deleteConversation(req.params.id, req.user.id, siteId);
+    if (!files) throw new WorkspaceError("That conversation isn't there any more.", 404);
+    await removeFiles(req, files);
+    res.json({ ok: true });
   }),
 );
 
@@ -215,12 +281,16 @@ assistantRouter.post(
     let conversation = await findConversation(userId, siteId);
     if (conversation && runningTurnFor(conversation.id)) throw new WorkspaceError("Claude is still answering. Wait for it, or stop it.", 409);
     // A conversation is bound to the tools it started with: when they've changed (Claude learnt
-    // something new), it carries on as a fresh one.
+    // something new), it carries on as a fresh one. So does a past one reopened from before past
+    // conversations kept their files: its history points at files Claude no longer has.
     let notice = null;
-    if (conversation && conversation.toolset !== TOOLSET_VERSION) {
-      await archiveConversations(userId, siteId);
+    if (conversation && (conversation.toolset !== TOOLSET_VERSION || conversation.filesDeleted)) {
+      notice =
+        conversation.toolset !== TOOLSET_VERSION
+          ? "Claude has been updated, so this is a fresh conversation. Your site keeps every change you applied."
+          : "The files attached to that conversation are gone, so this is a fresh one. Your site keeps every change you applied.";
+      await removeFiles(req, await archiveConversations(userId, siteId));
       conversation = null;
-      notice = "Claude has been updated, so this is a fresh conversation. Your site keeps every change you applied.";
     }
     conversation ??= await createConversation({ userId, siteId, toolset: TOOLSET_VERSION });
     if (JSON.stringify(conversation.messages).length > MAX_HISTORY_CHARS) {

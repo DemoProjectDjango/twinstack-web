@@ -16,7 +16,8 @@ import { config } from "./config.js";
 //   workLogForgotten  lines the user removed from a site's work log
 //   assistantConversations  the "Ask Claude" chats: one active conversation per
 //               user and site (siteId = GitHub repo id), with the exact Claude
-//               message history, what the chat shows and the proposed changes
+//               message history, what the chat shows and the proposed changes;
+//               the newest KEPT_CONVERSATIONS archived ones stay as past chats
 //   claudeUsage one document per Claude request made for a user (tokens in and
 //               out, and the credits it cost), the account's usage history
 //   creditPurchases  one document per purchase of Claude credits: the buyer as they
@@ -109,6 +110,11 @@ export async function connectDb() {
     pendingSignups().createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
     passwordResets().createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
   ]);
+  // Conversations archived before past ones were kept had their attached files deleted.
+  await conversations().updateMany(
+    { archived: true, filesKept: { $exists: false }, filesDeleted: { $exists: false }, "attachments.0": { $exists: true } },
+    { $set: { filesDeleted: true } },
+  );
   // Accounts from before credits get the free allowance once.
   await users().updateMany({ credits: { $exists: false } }, { $set: { credits: startingCredits() } });
   // GitHub accounts connected before free credits waited for GitHub already had theirs.
@@ -631,10 +637,13 @@ export async function recentWorkLogLines(siteId, limit) {
 
 /* ------------------------------------------------------- the assistant */
 
-// One active conversation per user and site; starting a new one archives the old. `messages` is
-// the exact history sent to Claude and is only ever appended to (thinking blocks are bound to it).
-// Updates are targeted ($push / $set on one action) so a turn finishing and a change being
-// applied at the same moment can't overwrite each other.
+// One active conversation per user and site; starting a new one archives the old, which stays as a
+// past conversation (with its files) until it's deleted or KEPT_CONVERSATIONS newer ones push it out.
+// `messages` is the exact history sent to Claude and is only ever appended to (thinking blocks are
+// bound to it). Updates are targeted ($push / $set on one action) so a turn finishing and a change
+// being applied at the same moment can't overwrite each other.
+
+export const KEPT_CONVERSATIONS = 30;
 
 function conversationView(doc) {
   if (!doc) return null;
@@ -681,8 +690,71 @@ export async function updateConversation(id, userId, update) {
   return conversationView(doc);
 }
 
+/**
+ * Archives the user's active conversation on the site and removes the archived ones past
+ * KEPT_CONVERSATIONS. Returns the removed ones' attachment ids, for the caller to delete.
+ */
 export async function archiveConversations(userId, siteId) {
-  await conversations().updateMany({ userId, siteId, archived: false }, { $set: { archived: true, archivedAt: new Date() } });
+  await conversations().updateMany({ userId, siteId, archived: false }, { $set: { archived: true, archivedAt: new Date(), filesKept: true } });
+  const old = await conversations()
+    .find({ userId, siteId, archived: true }, { sort: { updatedAt: -1 }, skip: KEPT_CONVERSATIONS, projection: { attachments: 1 } })
+    .toArray();
+  if (!old.length) return [];
+  await conversations().deleteMany({ _id: { $in: old.map((c) => c._id) } });
+  return old.flatMap((c) => c.attachments ?? []);
+}
+
+/**
+ * The user's conversations on the site, newest first, as the history list shows them: the first
+ * few chat entries (for a title) and how many there are, never the history itself.
+ */
+export async function listConversations(userId, siteId) {
+  const docs = await conversations()
+    .aggregate([
+      { $match: { userId, siteId } },
+      { $sort: { updatedAt: -1 } },
+      { $limit: KEPT_CONVERSATIONS + 1 },
+      {
+        $project: {
+          archived: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          filesDeleted: 1,
+          toolset: 1,
+          first: { $slice: [{ $filter: { input: "$display", cond: { $eq: ["$$this.role", "user"] } } }, 1] },
+          entries: { $size: { $filter: { input: "$display", cond: { $ne: ["$$this.role", "notice"] } } } },
+        },
+      },
+    ])
+    .toArray();
+  return docs.map(conversationView);
+}
+
+/**
+ * Makes one of the user's archived conversations on the site the active one again (archiving the
+ * active one). Returns it, plus the attachment ids of any conversation pushed out, or null.
+ */
+export async function reopenConversation(id, userId, siteId) {
+  const _id = objectId(id);
+  if (!_id) return null;
+  // Made the newest first, so making room for the active one can't push it out.
+  const { matchedCount } = await conversations().updateOne({ _id, userId, siteId }, { $set: { updatedAt: new Date() } });
+  if (!matchedCount) return null;
+  const removed = await archiveConversations(userId, siteId);
+  const doc = await conversations().findOneAndUpdate(
+    { _id, userId, siteId },
+    { $set: { archived: false, updatedAt: new Date() }, $unset: { archivedAt: "" } },
+    { returnDocument: "after" },
+  );
+  return doc && { conversation: conversationView(doc), removed };
+}
+
+/** Deletes one of the user's archived conversations on the site. Returns its attachment ids, or null. */
+export async function deleteConversation(id, userId, siteId) {
+  const _id = objectId(id);
+  if (!_id) return null;
+  const doc = await conversations().findOneAndDelete({ _id, userId, siteId, archived: true }, { projection: { attachments: 1 } });
+  return doc ? (doc.attachments ?? []) : null;
 }
 
 /* ---------------------------------------------------------------- credits */
