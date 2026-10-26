@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
 import { repoNameFor, type Repo } from "@/lib/repos";
+import { markSiteEntry } from "@/lib/site-entry";
 import { Button, Details, Spinner, inputClass } from "./site/ui";
 
 // What a copy goes through; the request is one call, so these advance on a timer while it runs.
@@ -62,6 +63,7 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
       setStatus({ state: "done", repo: data.repo });
       onCreated(data.repo);
       // Straight on to the new site.
+      markSiteEntry(data.repo.owner, data.repo.name);
       router.push(`/sites/${encodeURIComponent(data.repo.owner)}/${encodeURIComponent(data.repo.name)}`);
     } catch {
       setStatus({ state: "error", message: "Network error. The site may still have been created: refresh this page to check." });

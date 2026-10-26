@@ -8,7 +8,6 @@ import { useSite, type SiteSection } from "./site-context";
 import { Button, EmptyState, ErrorText, Notice, Segmented, Spinner, StepList, type Step } from "./ui";
 import { HomeNextSteps } from "./assistant/NextSteps";
 import { EditablePreview } from "./EditablePreview";
-import { FirstRunSetup } from "./FirstRunSetup";
 
 /** Remembers, per browser, that someone has looked at a screen (for ticking off "check your details"). */
 function visitedKey(owner: string, repo: string, section: SiteSection) {
@@ -33,7 +32,7 @@ export function wasVisited(owner: string, repo: string, section: SiteSection) {
 
 /**
  * Edit site: the site itself, with click-to-edit on, as the screen. Above it only what needs the
- * owner (a first-run setup, an update, publishing that isn't on or didn't work) and a one-line
+ * owner (an update, publishing that isn't on or didn't work) and a one-line
  * "things left" link; whether it's live and the Publish button are in the top bar.
  */
 export function HomePanel() {
@@ -95,8 +94,6 @@ export function HomePanel() {
   return (
     <div className="space-y-4">
       <h2 className="sr-only">Edit site</h2>
-
-      <FirstRunSetup />
 
       <LiveCard />
 

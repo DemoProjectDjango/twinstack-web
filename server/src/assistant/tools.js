@@ -392,11 +392,11 @@ const TOOLS = [
   // ------------------------------------------------------------------ talk
   tool(
     "offer_choices",
-    "Shows tappable buttons at the end of your reply, under all of its text; tapping one sends its text as the owner's message (they can still type their own). kind question: a decision you need, with the likely answers; end your reply after it. kind next: 2 or 3 next steps.",
+    "Ends your reply with a question for the owner or with next steps; buttons tap to send their text as the owner's message (they can still type their own). kind question: anything you need from the owner before you can go on, shown to them in the middle of the screen; give 2 to 4 likely answers for a decision, or no choices for a fact only they know (a phone number, prices); end your reply after it. kind next: 2 or 3 next steps.",
     {
       kind: { type: "string", enum: ["question", "next"] },
       question: { type: "string", description: "kind question: the question, in one short sentence." },
-      choices: { type: "array", items: { type: "string" }, description: "2 to 4, each a few words in the owner's voice, e.g. \"Warm and rustic\" or \"Write the Blog page\"." },
+      choices: { type: "array", items: { type: "string" }, description: "2 to 4, each a few words in the owner's voice, e.g. \"Warm and rustic\" or \"Write the Blog page\". kind question may give none, for a fact they type." },
     },
     ["kind", "choices"],
     { kind: "talk" },
@@ -899,7 +899,10 @@ function choicesOf(input) {
   if (kind === "question" && !question) throw new ToolInputError("A question needs its question.");
   if (question.length > 200) throw new ToolInputError("Keep the question under 200 characters.");
   const choices = Array.isArray(input.choices) ? [...new Set(input.choices.filter((c) => typeof c === "string").map((c) => c.trim()).filter(Boolean))] : [];
-  if (choices.length < 2 || choices.length > 4) throw new ToolInputError("Give 2 to 4 different choices.");
+  // A question may have no buttons (a fact the owner types); next steps always have them.
+  if (!(kind === "question" && choices.length === 0) && (choices.length < 2 || choices.length > 4)) {
+    throw new ToolInputError(kind === "question" ? "Give 2 to 4 different choices, or none for a fact they type." : "Give 2 to 4 different choices.");
+  }
   if (choices.some((c) => c.length > 80)) throw new ToolInputError("Keep each choice under 80 characters.");
   return { kind, ...(kind === "question" && { question }), choices };
 }

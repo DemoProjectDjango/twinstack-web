@@ -9,9 +9,11 @@ import { siteTitle } from "@/lib/repos";
 import { ApiError, api, setBeforeChange, workspacePath, type Job, type Overview, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
 import { AiHelpBadge } from "./AiHelpBadge";
 import { AnalyticsPanel } from "./AnalyticsPanel";
+import { AiActivity } from "./assistant/AiActivity";
+import { FirstRunSetup } from "./FirstRunSetup";
 import { AskClaude } from "./assistant/AskClaude";
 import { AssistantPanel } from "./assistant/AssistantPanel";
-import { AssistantProvider, useOptionalAssistant } from "./assistant/AssistantProvider";
+import { AssistantProvider, useAssistant, useOptionalAssistant } from "./assistant/AssistantProvider";
 import { BrandPanel } from "./BrandPanel";
 import { BuildPanel } from "./BuildPanel";
 import { ChangesPanel } from "./ChangesPanel";
@@ -46,6 +48,72 @@ const ANALYTICS = { id: "analytics" as const, label: "Visitors", hint: "Who visi
 const OTHER: { id: SiteSection; label: string }[] = [{ id: "publish", label: "What's changed" }, { id: "more", label: "More tools" }, ...MORE_TOOLS];
 const TOOL_IDS = new Set<SiteSection>(MORE_TOOLS.map((tool) => tool.id));
 
+// The menu's icons (24×24 stroke paths), by screen.
+const NAV_ICONS: Partial<Record<SiteSection, React.ReactNode>> = {
+  home: (
+    <>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </>
+  ),
+  pages: (
+    <>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z" />
+      <path d="M14 3v6h6" />
+    </>
+  ),
+  design: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="8" cy="10" r="1.2" />
+      <circle cx="12" cy="7.5" r="1.2" />
+      <circle cx="16" cy="10" r="1.2" />
+      <path d="M12 21a3 3 0 0 1 0-6h2" />
+    </>
+  ),
+  details: (
+    <>
+      <path d="M3 9 5 4h14l2 5" />
+      <path d="M4 9v11h16V9" />
+      <path d="M9 20v-6h6v6" />
+    </>
+  ),
+  analytics: (
+    <>
+      <path d="M4 20V10" />
+      <path d="M10 20V4" />
+      <path d="M16 20v-7" />
+      <path d="M22 20H2" />
+    </>
+  ),
+  more: (
+    <>
+      <circle cx="5" cy="12" r="1.3" />
+      <circle cx="12" cy="12" r="1.3" />
+      <circle cx="19" cy="12" r="1.3" />
+    </>
+  ),
+};
+
+function NavIcon({ section }: { section: SiteSection }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-[19px] shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      {NAV_ICONS[section]}
+    </svg>
+  );
+}
+
+// Whether the menu is folded to its icons (on wide screens), per browser.
+const NAV_KEY = "twinstack:editor-nav";
+
+function readNavCollapsed() {
+  try {
+    return typeof window !== "undefined" && localStorage.getItem(NAV_KEY) === "icons";
+  } catch {
+    return false;
+  }
+}
+
 const POLL_MS = 700;
 const MAX_LOG_CHARS = 500_000;
 // The preview rebuilds this long after the last change, so a burst of saves builds once.
@@ -74,6 +142,18 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   const [pagesOpened, setPagesOpened] = useState(false);
   const [designOpened, setDesignOpened] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // The editor only renders its menu once the site has loaded in the browser, so reading storage here can't break hydration.
+  const [navCollapsed, setNavCollapsed] = useState(readNavCollapsed);
+  const toggleNav = useCallback(() => {
+    setNavCollapsed((collapsed) => {
+      try {
+        localStorage.setItem(NAV_KEY, collapsed ? "full" : "icons");
+      } catch {
+        // It just won't be remembered.
+      }
+      return !collapsed;
+    });
+  }, []);
   const [isCreator, setIsCreator] = useState(false);
   const unsavedDraft = useRef(false);
   const [resetting, setResetting] = useState(false);
@@ -417,9 +497,11 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   if (!status) {
     return (
       <Shell title={repo}>
-        <div className="mt-10 flex items-center gap-3 text-sm text-zinc-500">
-          <Spinner />
-          Opening your site. The first time takes about a minute while it&apos;s set up.
+        {/* In the middle of the window, below the header. */}
+        <div role="status" className="flex min-h-[calc(100dvh-14rem)] flex-col items-center justify-center text-center">
+          <span aria-hidden="true" className="size-10 animate-spin rounded-full border-[3px] border-zinc-200 border-t-indigo-600 motion-reduce:animate-none dark:border-zinc-800 dark:border-t-indigo-400" />
+          <p className="mt-5 font-semibold">Opening your site</p>
+          <p className="mt-1 text-sm text-zinc-500">The first time takes about a minute while it&apos;s set up.</p>
         </div>
       </Shell>
     );
@@ -469,19 +551,39 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     <SiteContext.Provider value={context}>
       <AssistantProvider context={assistantContext}>
       <Shell title={siteTitle(overview?.site.name, overview?.displayName, repo)} actions={<TopBar />}>
-        <div className="mt-6 grid gap-6 lg:grid-cols-[12rem_minmax(0,1fr)]">
-          <nav aria-label="Site editor" className="lg:sticky lg:top-20 lg:self-start">
+        {/* On wide screens the grid takes over the page's bottom padding (-mb-24 pb-24), so it reaches the
+            foot of the page and the sticky menu card is never pushed up by the end of its row. */}
+        <div className={`mt-6 grid gap-5 transition-[grid-template-columns] duration-300 lg:-mb-24 lg:pb-24 ${navCollapsed ? "lg:grid-cols-[4.25rem_minmax(0,1fr)]" : "lg:grid-cols-[14rem_minmax(0,1fr)]"}`}>
+          {/* Wide screens: the menu card runs to the bottom of the window and stays where it starts (the
+              header above it is about 11rem tall), so it always fits on screen; More tools sits at its foot. */}
+          <nav aria-label="Site editor" className="lg:sticky lg:top-[11rem] lg:self-start">
             {/* Small screens: one button opens the list, so the menu doesn't push the page down. */}
             <button
               type="button"
               onClick={() => setMenuOpen((o) => !o)}
               aria-expanded={menuOpen}
-              className="flex w-full items-center justify-between rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium lg:hidden dark:border-zinc-700"
+              className="flex w-full items-center justify-between rounded-2xl bg-background px-4 py-3 text-sm font-medium shadow-sm lg:hidden"
             >
               <span>{current?.label ?? "Menu"}</span>
               <span aria-hidden="true">{menuOpen ? "▴" : "▾"}</span>
             </button>
-            <div className={`${menuOpen ? "mt-2 block" : "hidden"} rounded-lg border border-zinc-200 p-2 lg:mt-0 lg:block lg:border-0 lg:p-0 dark:border-zinc-800`}>
+            <div className={`${menuOpen ? "mt-2 flex" : "hidden"} flex-col rounded-2xl bg-background p-2.5 shadow-sm lg:mt-0 lg:flex lg:h-[calc(100dvh-12rem)] lg:min-h-80 lg:overflow-y-auto`}>
+              <div className={`mb-1 hidden items-center lg:flex ${navCollapsed ? "justify-center" : "justify-between pl-2.5"}`}>
+                {!navCollapsed && <span className="text-xs font-semibold tracking-wider text-zinc-500">YOUR SITE</span>}
+                <button
+                  type="button"
+                  onClick={toggleNav}
+                  aria-label={navCollapsed ? "Show the menu" : "Hide the menu"}
+                  title={navCollapsed ? "Show the menu" : "Hide the menu"}
+                  aria-expanded={!navCollapsed}
+                  className="grid size-9 place-items-center rounded-xl bg-zinc-100 text-zinc-700 hover:bg-zinc-200 hover:text-foreground dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="16" rx="3" />
+                    <path d="M9 4v16" />
+                  </svg>
+                </button>
+              </div>
               <ul className="space-y-0.5">
                 {main.map((item) => (
                   <li key={item.id}>
@@ -489,63 +591,75 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
                       active={section === item.id}
                       // Pages again, while a page is open: back to the list.
                       onClick={() => (item.id === "pages" && section === "pages" && openPage ? closePage() : showSection(item.id))}
-                      hint={item.hint}
+                      hint={navCollapsed ? item.label : item.hint}
+                      icon={item.id}
+                      collapsed={navCollapsed}
                     >
                       {item.label}
                     </NavButton>
                   </li>
                 ))}
               </ul>
-              <div className="mt-5 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-                <NavButton active={section === "more" || TOOL_IDS.has(section)} onClick={() => showSection("more")} hint="Tools most owners never need" small>
-                  More tools <span aria-hidden="true">→</span>
+              <div className="mt-3 border-t border-zinc-100 pt-2 lg:mt-auto dark:border-zinc-800">
+                <NavButton
+                  active={section === "more" || TOOL_IDS.has(section)}
+                  onClick={() => showSection("more")}
+                  hint={navCollapsed ? "More tools" : "Tools most owners never need"}
+                  icon="more"
+                  collapsed={navCollapsed}
+                  small
+                >
+                  More tools
                 </NavButton>
               </div>
             </div>
           </nav>
 
-          <div className="min-w-0 space-y-6">
-            <SiteNotices onReset={resetToDefault} />
-            <ErrorText error={runError} />
-            {/* After every build, on every screen: links to pages that don't exist yet, with a way to make them. */}
-            {!status.needsInstall && <MissingPages />}
-            {TOOL_IDS.has(section) && (
-              <button type="button" onClick={() => showSection("more")} className="text-sm text-zinc-500 hover:underline">
-                ← More tools
-              </button>
-            )}
+          <div className="min-w-0 space-y-4">
+            {/* The screen on its white card; the AI bar floats below it on the page's grey. */}
+            <div className="space-y-6 rounded-2xl bg-background p-4 shadow-sm sm:p-6">
+              <SiteNotices onReset={resetToDefault} />
+              <ErrorText error={runError} />
+              {/* After every build, on every screen: links to pages that don't exist yet, with a way to make them. */}
+              {!status.needsInstall && <MissingPages />}
+              {TOOL_IDS.has(section) && (
+                <button type="button" onClick={() => showSection("more")} className="text-sm text-zinc-500 hover:underline">
+                  ← More tools
+                </button>
+              )}
 
-            {section === "home" && <HomePanel />}
-            {pagesOpened && (
-              <div hidden={section !== "pages"}>
-                <PagesPanel openPage={openPage} onClose={closePage} />
-              </div>
-            )}
-            {designOpened && (
-              <div hidden={section !== "design"} className="space-y-6">
-                <ScreenHeader title="Look & logo" description="Your logo, colours, menu and footer. They appear on every page of your site." />
-                <BrandPanel />
-                <HeaderFooterPanel />
-              </div>
-            )}
-            {section === "details" && <StaticInfoPanel view="business" />}
-            {section === "publish" && <ChangesPanel />}
-            {section === "analytics" && isCreator && <AnalyticsPanel />}
-            {section === "more" && <MoreToolsPanel />}
-            {section === "seo" && (
-              <>
-                <SeoPanel />
-                <StaticInfoPanel view="search" />
-              </>
-            )}
-            {section === "redirects" && <StaticInfoPanel view="redirects" />}
-            {section === "sections" && <StaticInfoPanel view="sections" />}
-            {section === "tree" && <TreePanel />}
-            {section === "schedule" && <SchedulePanel />}
-            {section === "memory" && <MemoryPanel />}
-            {section === "styles" && <StylesPanel />}
-            {section === "models" && <ModelPanel />}
-            {section === "tools" && <BuildPanel />}
+              {section === "home" && <HomePanel />}
+              {pagesOpened && (
+                <div hidden={section !== "pages"}>
+                  <PagesPanel openPage={openPage} onClose={closePage} />
+                </div>
+              )}
+              {designOpened && (
+                <div hidden={section !== "design"} className="space-y-6">
+                  <ScreenHeader title="Look & logo" description="Your logo, colours, menu and footer. They appear on every page of your site." />
+                  <BrandPanel />
+                  <HeaderFooterPanel />
+                </div>
+              )}
+              {section === "details" && <StaticInfoPanel view="business" />}
+              {section === "publish" && <ChangesPanel />}
+              {section === "analytics" && isCreator && <AnalyticsPanel />}
+              {section === "more" && <MoreToolsPanel />}
+              {section === "seo" && (
+                <>
+                  <SeoPanel />
+                  <StaticInfoPanel view="search" />
+                </>
+              )}
+              {section === "redirects" && <StaticInfoPanel view="redirects" />}
+              {section === "sections" && <StaticInfoPanel view="sections" />}
+              {section === "tree" && <TreePanel />}
+              {section === "schedule" && <SchedulePanel />}
+              {section === "memory" && <MemoryPanel />}
+              {section === "styles" && <StylesPanel />}
+              {section === "models" && <ModelPanel />}
+              {section === "tools" && <BuildPanel />}
+            </div>
 
             {withAiBar && (
               // Stays at the bottom of the window as the screen scrolls, with the status strip above it.
@@ -559,17 +673,21 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
         {!withAiBar && <StatusStrip onShowLog={() => showSection("tools")} />}
       </Shell>
       <AssistantPanel />
+      <AiActivity />
+      <FirstRunSetup />
       </AssistantProvider>
     </SiteContext.Provider>
   );
 }
 
 /**
- * Above every screen: where the site is, whether everything is live, what's changed, how much AI
- * help is left, and the Publish button (PublishNowState).
+ * Above every screen: where the site is, whether everything is live (which opens what's changed),
+ * how much AI help is left, the conversation's show/hide button, and Publish (PublishNowState).
  */
 function TopBar() {
   const { status, busy, publishing: state, publishNow, showSection } = useSite();
+  const { open: chatOpen, setOpen: setChatOpen, turn } = useAssistant();
+  const aiWorking = turn?.status === "running";
   const publishing = state.publishing;
   const changes = status.changes.length;
   const run = publishing?.run;
@@ -595,23 +713,42 @@ function TopBar() {
   const label = working === "checking" ? "Checking your site…" : working === "publishing" ? "Publishing…" : status.onDefaultBranch ? "Publish" : "Add to the review";
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
       {address && (
-        <a href={address} target="_blank" rel="noreferrer" className="max-w-full truncate text-sm text-zinc-500 hover:underline">
+        <a href={address} target="_blank" rel="noreferrer" className="max-w-full truncate text-sm text-zinc-500 hover:text-foreground">
           {address.replace(/^https?:\/\//, "").replace(/\/$/, "")} ↗
         </a>
       )}
-      <button type="button" onClick={() => showSection("publish")} className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${pill.tone}`}>
+      {/* The pill is also the way to what's changed. */}
+      <button type="button" onClick={() => showSection("publish")} title="See what changed" className={`rounded-full px-3 py-1 text-xs font-medium hover:opacity-80 ${pill.tone}`}>
         {pill.text}
       </button>
-      <button type="button" onClick={() => showSection("publish")} className="text-sm text-zinc-600 hover:underline dark:text-zinc-400">
-        See what changed
-      </button>
       <AiHelpBadge />
-      <Button variant="primary" className="flex items-center gap-2 px-4" disabled={!available || busy || working !== null} onClick={() => void publish()}>
+      <button
+        type="button"
+        onClick={() => setChatOpen(!chatOpen)}
+        aria-pressed={chatOpen}
+        className={`flex h-10 items-center gap-2 rounded-xl px-3.5 text-sm font-semibold transition-colors ${
+          chatOpen
+            ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200"
+            : "bg-background text-foreground shadow-sm hover:bg-zinc-50 dark:hover:bg-zinc-900"
+        }`}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" />
+        </svg>
+        {chatOpen ? "Hide chat" : "Chat with the AI"}
+        {aiWorking && !chatOpen && <span className="size-2 animate-pulse rounded-full bg-indigo-500 motion-reduce:animate-none" aria-label="The AI is working" />}
+      </button>
+      <button
+        type="button"
+        disabled={!available || busy || working !== null}
+        onClick={() => void publish()}
+        className="flex h-10 items-center gap-2 rounded-xl bg-indigo-700 px-5 text-sm font-bold text-white hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-50"
+      >
         {working && <Spinner />}
         {label}
-      </Button>
+      </button>
     </div>
   );
 }
@@ -654,12 +791,16 @@ function NavButton({
   active,
   onClick,
   hint,
+  icon,
+  collapsed = false,
   small = false,
   children,
 }: {
   active: boolean;
   onClick: () => void;
   hint?: string;
+  icon: SiteSection;
+  collapsed?: boolean;
   small?: boolean;
   children: React.ReactNode;
 }) {
@@ -668,30 +809,39 @@ function NavButton({
       type="button"
       onClick={onClick}
       title={hint}
+      aria-label={collapsed ? String(children) : undefined}
       aria-current={active ? "page" : undefined}
-      className={`flex w-full items-center gap-2 rounded-md px-3 text-left ${small ? "py-1.5 text-sm" : "py-2 text-sm font-medium"} ${
-        active ? "bg-zinc-100 text-foreground dark:bg-zinc-900" : "text-zinc-600 hover:bg-zinc-50 hover:text-foreground dark:text-zinc-400 dark:hover:bg-zinc-900"
+      className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm transition-colors ${collapsed ? "lg:justify-center lg:px-0" : ""} ${
+        active
+          ? "bg-indigo-50 font-semibold text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200"
+          : `${small ? "" : "font-medium"} text-zinc-600 hover:bg-zinc-100 hover:text-foreground dark:text-zinc-400 dark:hover:bg-zinc-900`
       }`}
     >
-      {children}
+      <NavIcon section={icon} />
+      <span className={collapsed ? "lg:sr-only" : ""}>{children}</span>
     </button>
   );
 }
 
-/** The editor's page; while the conversation panel is open on a wide screen, the page makes room for it. */
+/**
+ * The editor's page: soft grey, with the menu and screens on white cards. While the conversation
+ * is open on a wide screen, it's docked on the right and the page makes room for it.
+ */
 function Shell({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) {
   const assistant = useOptionalAssistant();
   return (
-    <main className={`mx-auto w-full max-w-6xl flex-1 px-4 pb-24 pt-8 ${assistant?.open ? "xl:max-w-none xl:pr-114" : ""}`}>
-      <Link href="/dashboard" className="text-sm text-zinc-500 hover:underline">
-        ← Your sites
-      </Link>
-      <header className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{title}</h1>
-        <div className="sm:ml-auto">{actions}</div>
-      </header>
-      {children}
-    </main>
+    <div className="flex flex-1 flex-col bg-[#F6F6F3] dark:bg-zinc-950">
+      <main className={`mx-auto w-full flex-1 px-4 pb-24 pt-6 transition-[padding] ${assistant?.open ? "xl:max-w-none xl:pr-[30rem]" : ""}`}>
+        <Link href="/dashboard" className="text-sm text-zinc-500 hover:text-foreground">
+          ← Your sites
+        </Link>
+        <header className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-3">
+          <h1 className="min-w-0 truncate text-2xl font-bold tracking-tight">{title}</h1>
+          <div className="sm:ml-auto">{actions}</div>
+        </header>
+        {children}
+      </main>
+    </div>
   );
 }
 

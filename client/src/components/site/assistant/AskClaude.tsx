@@ -3,19 +3,20 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useSite } from "../site-context";
-import { Button } from "../ui";
 import { useAssistant } from "./AssistantProvider";
 import { AttachButton, PendingChips, useAttachmentUploads, useFileDrop } from "./Attachments";
 import { SUGGESTIONS } from "./suggestions";
 
 /**
- * The one way to ask the AI: a bar pinned to the bottom of every screen (but the technical log).
- * Sending opens the conversation panel; the message carries the screen, so "this page" or "here"
- * means what the owner is looking at. "Conversation" opens and closes the panel without sending.
+ * The one way to ask the AI: a white card pinned to the bottom of every screen (but the technical
+ * log). Sending opens the conversation; the message carries the screen, so "this page" or "here"
+ * means what the owner is looking at. The top bar's "Chat with the AI" shows and hides it without sending.
+ * A suggestion never sends by itself: it opens the conversation with the request in its box, for
+ * the owner to change or send.
  */
 export function AskClaude({ placeholder, suggestions }: { placeholder?: string; suggestions?: string[] }) {
   const { claude } = useSite();
-  const { context, send, turn, open, setOpen } = useAssistant();
+  const { context, send, turn, fillDraft } = useAssistant();
   const [text, setText] = useState("");
   const uploads = useAttachmentUploads();
   const drop = useFileDrop(uploads.add, claude.ready);
@@ -23,27 +24,21 @@ export function AskClaude({ placeholder, suggestions }: { placeholder?: string; 
   const items = suggestions ?? preset.items;
   const running = turn?.status === "running";
 
-  const conversation = (
-    <button
-      type="button"
-      onClick={() => setOpen(!open)}
-      aria-pressed={open}
-      className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-2 text-sm text-zinc-600 hover:bg-zinc-100 hover:text-foreground dark:text-zinc-400 dark:hover:bg-zinc-900"
-    >
-      {open ? "Hide conversation" : "Conversation"}
-      {running && <span className="size-2 animate-pulse rounded-full bg-sky-500 motion-reduce:animate-none" aria-label="The AI is working" />}
-    </button>
+  // The ✦ in its tinted square, at the start of the box.
+  const mark = (
+    <span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-[10px] bg-indigo-50 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-300">
+      ✦
+    </span>
   );
 
   if (!claude.ready) {
     return (
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-zinc-300 bg-background px-4 py-3 text-sm shadow-sm dark:border-zinc-700">
-        <span aria-hidden="true">✦</span>
-        <span className="text-zinc-600 dark:text-zinc-400">The AI can make changes for you: just describe what you want.</span>
-        <Link href={claude.setupHref} className="font-medium underline">
+      <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2.5 rounded-[18px] bg-background p-3 text-sm text-zinc-600 shadow-[0_1px_2px_rgba(0,0,0,.06),0_10px_30px_rgba(21,21,26,.08)] dark:text-zinc-400">
+        {mark}
+        <span>The AI can make changes for you: just describe what you want.</span>
+        <Link href={claude.setupHref} className="font-semibold text-foreground underline">
           {claude.setupLabel}
         </Link>
-        <span className="ml-auto">{conversation}</span>
       </div>
     );
   }
@@ -60,18 +55,16 @@ export function AskClaude({ placeholder, suggestions }: { placeholder?: string; 
   return (
     <div
       {...drop.handlers}
-      className={`rounded-xl border bg-background p-2 shadow-lg shadow-black/5 ${drop.over ? "border-dashed border-foreground" : "border-zinc-200 dark:border-zinc-800"}`}
+      className={`mx-auto w-full max-w-3xl rounded-[18px] bg-background p-3 shadow-[0_1px_2px_rgba(0,0,0,.06),0_10px_30px_rgba(21,21,26,.08)] ${drop.over ? "outline-2 outline-dashed outline-indigo-400" : ""}`}
     >
       <form
         onSubmit={(e) => {
           e.preventDefault();
           void submit(text);
         }}
-        className="flex flex-wrap items-center gap-2"
+        className="flex items-center gap-2.5"
       >
-        <span aria-hidden="true" className="pl-2">
-          ✦
-        </span>
+        {mark}
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -84,31 +77,46 @@ export function AskClaude({ placeholder, suggestions }: { placeholder?: string; 
               if (!e.clipboardData.getData("text")) e.preventDefault();
             }
           }}
-          className="min-w-0 flex-1 basis-48 rounded-md bg-transparent px-2 py-2 text-sm outline-none placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-zinc-300 dark:focus-visible:ring-zinc-700"
+          className="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] text-foreground outline-none placeholder:text-zinc-500"
         />
-        <AttachButton onFiles={uploads.add} disabled={running} label="＋ Add photo or file" />
-        <Button type="submit" variant="primary" disabled={(!text.trim() && !uploads.ready.length) || running || uploads.uploading}>
+        <AttachButton
+          onFiles={uploads.add}
+          disabled={running}
+          className="grid size-9 shrink-0 place-items-center rounded-[10px] text-zinc-500 hover:bg-zinc-100 hover:text-foreground disabled:opacity-50 dark:hover:bg-zinc-900"
+          label={
+            <svg viewBox="0 0 24 24" aria-hidden="true" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          }
+        />
+        <button
+          type="submit"
+          disabled={(!text.trim() && !uploads.ready.length) || running || uploads.uploading}
+          className="h-9 shrink-0 rounded-[10px] bg-zinc-900 px-4 text-[13px] font-semibold text-white hover:bg-zinc-800 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+        >
           {uploads.uploading ? "Uploading…" : "Send"}
-        </Button>
-        {conversation}
+        </button>
       </form>
       {uploads.pending.length > 0 && (
-        <div className="mt-2 px-1">
+        <div className="mt-2 pl-[2.625rem]">
           <PendingChips pending={uploads.pending} onRemove={uploads.remove} />
         </div>
       )}
-      {drop.over && <p className="mt-2 text-center text-xs font-medium">Drop files to attach them</p>}
+      {drop.over && <p className="mt-2 pl-[2.625rem] text-xs font-medium">Drop files to attach them</p>}
       {items.length > 0 && !text && (
-        // One row that scrolls sideways, so the bar stays small.
-        <div className="mt-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none]">
+        // Under the message, lined up with it; one row that scrolls sideways, so the box stays small.
+        <div className="mt-2.5 flex gap-1.5 overflow-x-auto [scrollbar-width:none]">
           {items.map((s) => (
             <button
               key={s}
               type="button"
               disabled={running}
-              onClick={() => void submit(s)}
-              title={uploads.ready.length ? "Sends this with your attached files" : undefined}
-              className="shrink-0 rounded-full border border-zinc-300 bg-background px-2.5 py-1 text-xs text-zinc-600 hover:border-zinc-500 hover:text-foreground disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400"
+              onClick={() => {
+                // Files attached here stay with this bar's box, so the request goes there too.
+                if (uploads.ready.length) setText(s);
+                else fillDraft(s);
+              }}
+              className="shrink-0 rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs text-zinc-700 hover:bg-zinc-200 hover:text-foreground disabled:opacity-50 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               {s}
             </button>

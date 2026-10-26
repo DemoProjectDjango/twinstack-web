@@ -167,7 +167,7 @@ export async function getOverview(key) {
   const seoTemplate = baseTemplate.includes("page.seo.");
 
   return {
-    site: { name: site.name, url: site.url, model: site.automation?.model ?? null },
+    site: { name: site.name, url: site.url, model: site.automation?.model ?? null, description: typeof site.description === "string" ? site.description : "" },
     features: {
       pageEditImages: editScript.includes("--proposal-out"),
       pageGenerate: editScript.includes("--generate"),

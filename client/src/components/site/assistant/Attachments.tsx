@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, assistantApi, attachmentUrl, type Attachment } from "@/lib/assistant-api";
 import { useSite } from "../site-context";
 
@@ -103,7 +103,8 @@ export function useAttachmentUploads() {
 }
 
 /** The paperclip, or a worded button with `label`: picks any number of files of any type. */
-export function AttachButton({ onFiles, disabled, label }: { onFiles: (files: FileList) => void; disabled?: boolean; label?: string }) {
+/** `className` replaces the button's look (the AI bar's round button). */
+export function AttachButton({ onFiles, disabled, label, className }: { onFiles: (files: FileList) => void; disabled?: boolean; label?: ReactNode; className?: string }) {
   const input = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -111,11 +112,14 @@ export function AttachButton({ onFiles, disabled, label }: { onFiles: (files: Fi
         type="button"
         onClick={() => input.current?.click()}
         disabled={disabled}
-        aria-label={label ? undefined : "Attach files"}
+        aria-label={typeof label === "string" ? undefined : "Attach files"}
         title="Attach files: photos, PDFs, Word documents, web pages or anything else"
-        className={`shrink-0 rounded-md border border-zinc-300 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900 ${
-          label ? "px-2.5 py-1.5 text-sm" : "grid size-9 place-items-center text-base"
-        }`}
+        className={
+          className ??
+          `shrink-0 rounded-md border border-zinc-300 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900 ${
+            label ? "px-2.5 py-1.5 text-sm" : "grid size-9 place-items-center text-base"
+          }`
+        }
       >
         {label ?? <span aria-hidden="true">📎</span>}
       </button>

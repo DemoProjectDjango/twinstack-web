@@ -140,7 +140,8 @@ export type CssFile = { file: string; kind: "site" | "global" | "imported"; decl
 export type CssSource = { file: string; exists: boolean; content: string; version: string };
 
 export type Overview = {
-  site: { name: string; url: string; model: string | null };
+  /** `description`: what the business does (site.config.json); older servers don't send it. */
+  site: { name: string; url: string; model: string | null; description?: string };
   /** What the owner called the site when creating it (null for older sites); shown until `site.name` is set (`siteTitle`). */
   displayName?: string | null;
   /**

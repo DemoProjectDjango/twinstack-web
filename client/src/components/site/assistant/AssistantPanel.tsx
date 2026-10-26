@@ -13,8 +13,9 @@ import { OutOfCredits } from "./OutOfCredits";
 import { RichText } from "./RichText";
 import { SUGGESTIONS } from "./suggestions";
 
-// The conversation with Claude, in a panel beside the editor (full screen on a phone). It follows
-// the owner from screen to screen; each message tells Claude which screen they're on.
+// The conversation with Claude, in a card docked on the right of the editor (full screen on a
+// phone), shown and hidden by the top bar's "Chat with the AI". It follows the owner from screen to
+// screen; each message tells Claude which screen they're on.
 
 export function AssistantPanel() {
   const { claude } = useSite();
@@ -79,7 +80,7 @@ export function AssistantPanel() {
     <aside
       aria-label="Ask the AI"
       {...drop.handlers}
-      className="fixed inset-0 z-50 flex flex-col border-zinc-200 bg-background sm:inset-auto sm:bottom-0 sm:right-0 sm:top-14 sm:w-[27rem] sm:border-l sm:shadow-xl dark:border-zinc-800"
+      className="fixed inset-0 z-50 flex flex-col overflow-hidden border-zinc-200 bg-background sm:inset-auto sm:bottom-4 sm:right-4 sm:top-[4.5rem] sm:w-[27rem] sm:rounded-2xl sm:border sm:shadow-2xl dark:border-zinc-800"
     >
       {drop.over && (
         <div className="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-lg border-2 border-dashed border-foreground bg-background/90 text-sm font-medium">
@@ -91,7 +92,7 @@ export function AssistantPanel() {
           ✦
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-semibold leading-5">Ask the AI</h2>
+          <h2 className="truncate text-sm font-semibold leading-5">Chat with the AI</h2>
           <AutoApplySwitch on={autoApply} onChange={setAutoApply} />
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
@@ -101,7 +102,7 @@ export function AssistantPanel() {
               <path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
             </IconButton>
           )}
-          <IconButton label="Close" onClick={() => setOpen(false)}>
+          <IconButton label="Hide chat" onClick={() => setOpen(false)}>
             <path d="M18 6 6 18" />
             <path d="m6 6 12 12" />
           </IconButton>
@@ -128,7 +129,8 @@ export function AssistantPanel() {
                   <button
                     key={s}
                     type="button"
-                    onClick={() => void submit(s)}
+                    // Into the box to change or send, never sent by itself.
+                    onClick={() => fillBox(s)}
                     className="rounded-lg border border-zinc-200 px-3 py-2 text-left text-sm hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
                   >
                     {s}
@@ -388,7 +390,7 @@ function Choices({ part, waiting }: { part: Extract<AssistantPart, { type: "choi
           </button>
         ))}
       </div>
-      {question && <p className="mt-2 text-xs text-zinc-500">Or type your own answer below.</p>}
+      {question && <p className="mt-2 text-xs text-zinc-500">{part.choices.length ? "Or type your own answer below." : "Type your answer below."}</p>}
     </div>
   );
 }

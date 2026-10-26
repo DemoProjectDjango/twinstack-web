@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { claudeAccess } from "@/lib/claude";
 import { formatCredits, useCredits } from "@/lib/credits";
 import { cantManage, nameFromRepo, type Repo } from "@/lib/repos";
+import { markSiteEntry } from "@/lib/site-entry";
 import type { Access } from "@/lib/session";
 import { CreateSite } from "./CreateSite";
 import { DeleteSiteDialog, takeResumedDelete } from "./DeleteSiteDialog";
@@ -463,6 +464,7 @@ function SiteCard({ repo, login, onDelete }: { repo: Repo; login: string; onDele
         ) : (
           <Link
             href={`/sites/${repo.owner}/${repo.name}`}
+            onClick={() => markSiteEntry(repo.owner, repo.name)}
             className="rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background hover:opacity-90"
           >
             Edit site
