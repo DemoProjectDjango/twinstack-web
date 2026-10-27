@@ -50,7 +50,8 @@ type AssistantValue = {
   working: Set<string>;
   apply: (action: AssistantAction) => Promise<void>;
   skip: (action: AssistantAction) => Promise<void>;
-  keep: (action: AssistantAction) => Promise<void>;
+  /** `showIt` rebuilds the preview once it's kept, so the owner can see it while more work follows. */
+  keep: (action: AssistantAction, options?: { showIt?: boolean }) => Promise<void>;
   throwAway: (action: AssistantAction) => Promise<void>;
   /**
    * "Accept all": carries out a message's open proposals in order with no further presses (pages are
@@ -59,7 +60,14 @@ type AssistantValue = {
   applyAll: (entry: DisplayEntry) => Promise<void>;
   /** Skips a message's open proposals. */
   skipAll: (entry: DisplayEntry) => Promise<void>;
+  /**
+   * Runs a change that didn't work (or was cut off) again. With automatic changes on, the rest of
+   * its message's changes follow it through the queue, as they would have, so the work carries on.
+   */
+  retry: (action: AssistantAction) => Promise<void>;
   applyingAll: boolean;
+  /** The proposals being carried out one after another (automatic changes or "Accept all"), in order. */
+  queued: string[];
   /** Claude's changes are carried out (and its pages kept) as soon as its answer ends, with no buttons to press. */
   autoApply: boolean;
   setAutoApply: (on: boolean) => void;
@@ -360,8 +368,13 @@ ${tail(job.output)}`);
           return;
         }
         case "create_page": {
-          let file: string | undefined;
-          if (input.type === "homepage" || input.type === "listing") {
+          // Tried before and the page was made then: only the writing is left (a second try mustn't make it again).
+          const earlier = action.data?.file;
+          const current = earlier ? await api<Overview>(workspacePath(owner, repo, "/overview")) : null;
+          let file: string | undefined = current?.collections.some((c) => c.pages.some((p) => p.file === earlier)) ? earlier : undefined;
+          if (file) {
+            // Made by the earlier try.
+          } else if (input.type === "homepage" || input.type === "listing") {
             // Their address isn't their name, so they're made the site plan's way, not with "new".
             const made = await api<{ file: string; status: WorkspaceStatus }>(workspacePath(owner, repo, input.type === "homepage" ? "/pages/homepage" : "/pages/listing"), {
               method: "POST",
@@ -390,6 +403,8 @@ ${tail(job.output)}`);
             await record(action, "applied", `Created ${file} (empty, ready to write).`, file);
             return;
           }
+          // Kept on the action before the writing starts, which can fail.
+          if (file !== earlier) await record(action, "running", `Created ${file}; writing it.`, file);
           await writePage(file, `This is a new, empty page. Write it from scratch.\n\n${input.brief}`, images, input.taskSize);
           await record(action, "ready", `Created ${file}; its first version is ready to look at.`, file);
           return;
@@ -489,7 +504,11 @@ ${tail(job.output)}`);
           try {
             await runClientAction(action);
           } catch (err) {
-            await record(action, "failed", message(err)).catch(() => {});
+            await record(action, "failed", message(err)).catch(() => {
+              // The server didn't take it (it may be down): fail it here anyway, or the card and the
+              // queue would wait on a change that's no longer running.
+              setConversation((c) => (c ? { ...c, actions: { ...c.actions, [action.id]: { ...(c.actions[action.id] ?? action), status: "failed", result: message(err) } } } : c));
+            });
           }
           await refresh().catch(() => {});
         }
@@ -512,7 +531,7 @@ ${tail(job.output)}`);
 
   /** Keeps the page Claude's writer produced for a proposal. */
   const keep = useCallback(
-    async (action: AssistantAction) => {
+    async (action: AssistantAction, { showIt = false }: { showIt?: boolean } = {}) => {
       setBusy(action.id, true);
       try {
         const { proposal } = await api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal"));
@@ -527,13 +546,16 @@ ${tail(job.output)}`);
         setStatus(result.status);
         await record(action, "applied", `Kept the new version of ${result.file}.`, result.file);
         await refresh();
+        // Still marked as working, so the queue waits: the editor's own rebuild gives way to the next
+        // command, which would hide this page from the preview until that one is done.
+        if (showIt) await runAndWait("preview").catch(() => null);
       } catch (err) {
         setError(err);
       } finally {
         setBusy(action.id, false);
       }
     },
-    [owner, repo, record, refresh, setStatus, setBusy],
+    [owner, repo, record, refresh, setStatus, setBusy, runAndWait],
   );
 
   const throwAway = useCallback(
@@ -586,6 +608,18 @@ ${tail(job.output)}`);
     },
     [actions, openIds, problemsLeft],
   );
+  const retry = useCallback(
+    async (action: AssistantAction) => {
+      if (autoApply) {
+        const entry = conversation?.display.find((e) => e.role === "assistant" && e.parts.some((p) => p.type === "action" && p.id === action.id));
+        const own = entry?.role === "assistant" ? entry.parts.flatMap((p) => (p.type === "action" && actions[p.id] ? [actions[p.id]] : [])) : [];
+        setQueueKind("auto");
+        setQueued([action.id, ...own.filter((a) => a.id !== action.id && isOpenAction(a)).map((a) => a.id)]);
+      }
+      await apply(action, { confirmed: autoApply });
+    },
+    [autoApply, conversation, actions, apply],
+  );
   const skipAll = useCallback(
     async (entry: DisplayEntry) => {
       for (const id of openIds(entry)) await skip(actions[id]);
@@ -625,12 +659,14 @@ ${tail(job.output)}`);
   useEffect(() => {
     if (!queueHead || working.size) return;
     let next: (() => Promise<void>) | null = null;
+    // With more to come, the kept page goes into the preview first, so the owner can look at it meanwhile.
+    const more = queued.some((id) => id !== queueHead.id && actions[id] && actions[id].status !== "applied" && actions[id].status !== "skipped");
     if (queueHead.status === "proposed") next = () => apply(queueHead, { confirmed: unattended });
-    else if (queueHead.status === "ready" && unattended) next = () => keep(queueHead);
+    else if (queueHead.status === "ready" && unattended) next = () => keep(queueHead, { showIt: more });
     if (!next) return;
     const timer = setTimeout(() => void next(), 0);
     return () => clearTimeout(timer);
-  }, [queueHead, unattended, working, apply, keep]);
+  }, [queueHead, queued, actions, unattended, working, apply, keep]);
 
   // When the newest message's proposals are all settled and one of them asked to continue (pages
   // to write once they exist, say), Claude carries on by itself.
@@ -671,7 +707,9 @@ ${tail(job.output)}`);
     throwAway,
     applyAll,
     skipAll,
+    retry,
     applyingAll,
+    queued,
     autoApply,
     setAutoApply,
   };

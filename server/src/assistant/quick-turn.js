@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { getOverview } from "../site-files.js";
+import path from "node:path";
+import { STARTER_TEXT, isDesigned } from "../next-steps.js";
+import { getOverview, readText } from "../site-files.js";
+import { workspaceDir } from "../workspace.js";
 import { clausesOf, scoreClause, taskSize } from "../task-size.js";
 import { runTool, toolInfo } from "./tools.js";
 
@@ -7,8 +10,9 @@ import { runTool, toolInfo } from "./tools.js";
 // planning: the page editor gets the owner's own words. So when the rules in task-size.js call a
 // message small and it names exactly one page (or the open page), the turn becomes an edit_page
 // proposal straight away, with no model request at all, and the page editor's own model writes it.
-// Anything less clear-cut (a question, another part of the site, site details, two possible pages)
-// returns null and the turn goes to Claude as usual.
+// Anything less clear-cut (a question, another part of the site, site details, two possible pages,
+// a page that's still the starter skeleton and needs designing first) returns null and the turn
+// goes to Claude as usual. So does a reply to Claude's question (the route never asks here).
 
 const TOOL = "edit_page";
 
@@ -103,6 +107,9 @@ export async function runQuickTurn({ key, text, openPage, autoApply = true, live
   const file = pageOf(text, pages, openPage);
   if (!file) return null;
   const page = pages.find((p) => p.file === file);
+  // A page still holding the starter skeleton needs a whole design, not one change (next-steps.js's rule).
+  const body = ((await readText(path.join(workspaceDir(key), file))) ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+  if (!body || STARTER_TEXT.test(body) || (page?.url === "/" && !isDesigned(body))) return null;
 
   const summary = summaryOf(text);
   const instruction = `${text.trim()}\n\nChange only what this asks for, and keep everything else on the page exactly as it is. Whatever you change must look right and work on phones, tablets and computers.`;

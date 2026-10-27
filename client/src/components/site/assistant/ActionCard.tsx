@@ -283,7 +283,7 @@ function StatusBadge({ action, busy }: { action: AssistantAction; busy: boolean 
 }
 
 export function ActionCard({ id }: { id: string }) {
-  const { actions, working, apply, skip, keep, throwAway, turn, applyingAll } = useAssistant();
+  const { actions, working, apply, retry, skip, keep, throwAway, turn, applyingAll } = useAssistant();
   const { busy: siteBusy, editFile, showSection } = useSite();
   const action = actions[id];
   if (!action) return null;
@@ -361,7 +361,7 @@ export function ActionCard({ id }: { id: string }) {
         )}
         {(action.status === "failed" || interrupted) && !busy && (
           <>
-            <Button className="text-xs" onClick={() => void apply(action)}>
+            <Button className="text-xs" onClick={() => void retry(action)}>
               Try again
             </Button>
             <Button variant="ghost" className="text-xs" onClick={() => void skip(action)}>

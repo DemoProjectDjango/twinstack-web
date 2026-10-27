@@ -9,10 +9,11 @@ import { clearSiteEntry, readSiteEntry } from "@/lib/site-entry";
 import { useSite } from "./site-context";
 import { Button, ErrorText, inputClass } from "./ui";
 
-// A new site's setup: three questions (the business's name, what it does, a few photos), then
-// straight to the site. The answers go where the owner would otherwise type them (Business info,
-// the header's name, the site's images), and with the AI set up, it's asked to design the homepage
-// from them. Shown when the owner enters the site from the dashboard (lib/site-entry.ts: not on a
+// A new site's setup: a few questions (the business's name, what it does, with the AI set up a brief
+// for the website, a few photos), then straight to the site. The answers go where the owner would
+// otherwise type them (Business info, the header's name, the site's images), and with the AI set up,
+// it's asked to build the site from them: the homepage, a matching header and footer, and the pages
+// the brief calls for. Shown when the owner enters the site from the dashboard (lib/site-entry.ts: not on a
 // reload, and SiteManager mounts it, so moving between screens doesn't bring it back) until the site
 // has a real name and says what the business does (site.config.json `description`, which Business
 // info also sets). Skipping hides it for this visit.
@@ -20,6 +21,10 @@ import { Button, ErrorText, inputClass } from "./ui";
 const MAX_PHOTOS = 6;
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const PHOTO_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
+// The website brief needs at least this many words, so the AI has something to build from.
+const MIN_BRIEF_WORDS = 5;
+
+const wordCount = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
 
 function readAsBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -49,10 +54,11 @@ export function FirstRunSetup() {
   return <SetupDialog onDone={() => setHidden(true)} />;
 }
 
-const STEPS = 3;
+type Step = "name" | "what" | "brief" | "photos";
 
 /**
- * The questions in a centred window, one at a time (name, what the business does, photos), so a
+ * The questions in a centred window, one at a time (name, what the business does, the website brief
+ * when the AI can use it, photos), so a
  * new owner meets one calm question instead of a form among the editor's banners. It opens right
  * after Create a new site's window, in the same style.
  */
@@ -63,6 +69,7 @@ function SetupDialog({ onDone }: { onDone: () => void }) {
   // Starts as the name the site was created with, until the owner types.
   const [typedName, setName] = useState<string | null>(null);
   const [what, setWhat] = useState("");
+  const [brief, setBrief] = useState("");
   const [photos, setPhotos] = useState<File[]>([]);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -70,6 +77,10 @@ function SetupDialog({ onDone }: { onDone: () => void }) {
   const siteName = overview?.site.name ?? null;
   const name = typedName ?? overview?.displayName ?? "";
   const finish = onDone;
+  // The brief is only for the AI, so without it there's nothing to ask.
+  const steps: Step[] = claude.ready ? ["name", "what", "brief", "photos"] : ["name", "what", "photos"];
+  const current = steps[step];
+  const briefWords = wordCount(brief);
 
   useEffect(() => {
     const el = dialog.current;
@@ -90,6 +101,7 @@ function SetupDialog({ onDone }: { onDone: () => void }) {
   async function submit() {
     const business = name.trim();
     const description = what.trim();
+    const websiteBrief = brief.trim();
     if (!business) return;
     setWorking(true);
     setError(null);
@@ -125,17 +137,20 @@ function SetupDialog({ onDone }: { onDone: () => void }) {
       // These answers are the site details the first publish would ask to check.
       markVisited(owner, repo, "details");
       await refresh();
-      // 3. The AI designs the homepage from the answers (and makes it if the site has none).
+      // 3. The AI builds the site from the answers: the homepage (made if the site has none), a
+      // header and footer to match, then the other pages the brief asks for.
       if (claude.ready) {
         const hasHome = overview?.collections.some((c) => c.pages.some(isHomePage)) ?? false;
         await send(
           [
             `Set up my new site for ${business}.`,
             description && `What we do: ${description}`,
-            `${hasHome ? "Design my homepage" : "Create my homepage and design it"} so a first-time visitor understands straight away what we do, why to choose us and what to do next.`,
+            websiteBrief && `My brief for the website: ${websiteBrief}`,
+            `${hasHome ? "Design my homepage" : "Create my homepage and design it"} from this brief, so a first-time visitor understands straight away what we do, why to choose us and what to do next.`,
             // A new site's header and footer are the template's plain ones: designed with the homepage, they match it.
-            overview?.features.chromeDesign && "Then design a header and footer that match it.",
+            overview?.features.chromeDesign && "Then design a header and footer that match it and suit the brief.",
             paths.length && `Use these photos of ours on it: ${paths.join(", ")}.`,
+            websiteBrief && "Then create the other pages the brief calls for, write each one in the homepage's look, and put them in the menu.",
             "Ask me about anything you need to know instead of guessing.",
           ]
             .filter(Boolean)
@@ -150,9 +165,9 @@ function SetupDialog({ onDone }: { onDone: () => void }) {
     }
   }
 
-  // The name and what the business does are needed; photos are optional.
-  const canContinue = step === 0 ? Boolean(name.trim()) : step === 1 ? Boolean(what.trim()) : true;
-  const last = step === STEPS - 1;
+  // The name, what the business does and the brief are needed; photos are optional.
+  const canContinue = current === "name" ? Boolean(name.trim()) : current === "what" ? Boolean(what.trim()) : current === "brief" ? briefWords >= MIN_BRIEF_WORDS : true;
+  const last = step === steps.length - 1;
 
   return (
     <dialog
@@ -160,6 +175,8 @@ function SetupDialog({ onDone }: { onDone: () => void }) {
       aria-labelledby="first-run-heading"
       // Escape skips, like "Skip for now" (never while saving).
       onCancel={(e) => {
+        // A file picker closed without a choice fires `cancel` on its input, and it bubbles here.
+        if (e.target !== e.currentTarget) return;
         e.preventDefault();
         if (!working) finish();
       }}
@@ -184,15 +201,15 @@ function SetupDialog({ onDone }: { onDone: () => void }) {
           className="p-6 sm:p-8"
         >
           <div className="flex items-center gap-1.5" aria-hidden="true">
-            {Array.from({ length: STEPS }, (_, i) => (
+            {steps.map((_, i) => (
               <span key={i} className={`h-1 flex-1 rounded-full transition-colors ${i <= step ? "bg-foreground" : "bg-zinc-200 dark:bg-zinc-800"}`} />
             ))}
           </div>
           <p className="mt-6 text-xs font-medium text-zinc-500">
-            Step {step + 1} of {STEPS}
+            Step {step + 1} of {steps.length}
           </p>
 
-          {step === 0 && (
+          {current === "name" && (
             <>
               <h2 id="first-run-heading" className="mt-1 text-2xl font-semibold tracking-tight">
                 What&apos;s your business called?
@@ -211,7 +228,7 @@ function SetupDialog({ onDone }: { onDone: () => void }) {
             </>
           )}
 
-          {step === 1 && (
+          {current === "what" && (
             <>
               <h2 id="first-run-heading" className="mt-1 text-2xl font-semibold tracking-tight">
                 What does {name.trim() || "your business"} do?
@@ -231,7 +248,33 @@ function SetupDialog({ onDone }: { onDone: () => void }) {
             </>
           )}
 
-          {step === 2 && (
+          {current === "brief" && (
+            <>
+              <h2 id="first-run-heading" className="mt-1 text-2xl font-semibold tracking-tight">
+                Tell us about your website
+              </h2>
+              <p className="mt-2 text-sm text-zinc-500">Who it&apos;s for, the pages you want and the feel you&apos;re after. The AI builds your site from this.</p>
+              <textarea
+                value={brief}
+                onChange={(e) => setBrief(e.target.value)}
+                required
+                rows={4}
+                maxLength={1500}
+                placeholder="For local families and offices ordering cakes. A warm, homely look with lots of photos. Pages for our menu, celebration cakes, about us and how to order."
+                aria-label="A brief for the website"
+                aria-describedby="first-run-brief-count"
+                className={`${inputClass} mt-5 resize-none py-3 text-base`}
+                autoFocus
+              />
+              <p id="first-run-brief-count" className="mt-1.5 text-xs text-zinc-500" aria-live="polite">
+                {briefWords >= MIN_BRIEF_WORDS
+                  ? "Looks good. More detail gives the AI more to go on."
+                  : `At least ${MIN_BRIEF_WORDS} words: ${MIN_BRIEF_WORDS - briefWords} more to go.`}
+              </p>
+            </>
+          )}
+
+          {current === "photos" && (
             <>
               <h2 id="first-run-heading" className="mt-1 text-2xl font-semibold tracking-tight">
                 Add a few photos
@@ -283,7 +326,7 @@ function SetupDialog({ onDone }: { onDone: () => void }) {
             <ErrorText error={error} />
           </div>
 
-          {last && claude.ready && <p className="text-sm text-zinc-500">Then the AI designs your homepage from your answers.</p>}
+          {last && claude.ready && <p className="text-sm text-zinc-500">Then the AI builds your site from your answers.</p>}
 
           <div className="mt-6 flex items-center gap-2">
             {step > 0 ? (
@@ -296,7 +339,7 @@ function SetupDialog({ onDone }: { onDone: () => void }) {
               </Button>
             )}
             <Button type="submit" variant="primary" className="ml-auto px-5 py-2" disabled={!canContinue || busy}>
-              {!last ? "Continue" : claude.ready ? "Design my homepage" : "Finish"}
+              {!last ? "Continue" : claude.ready ? "Build my site" : "Finish"}
             </Button>
           </div>
         </form>

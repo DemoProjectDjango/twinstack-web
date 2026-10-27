@@ -54,8 +54,8 @@ export type AssistantAction = {
   meta: Record<string, unknown>;
   status: "proposed" | "running" | "ready" | "applied" | "skipped" | "failed";
   result: string | null;
-  /** What a server-side change hands back: where add_file_to_site put the file. */
-  data?: { path?: string } | null;
+  /** What a server-side change hands back (`path`: where add_file_to_site put the file), and `file`: the page a create_page made. */
+  data?: { path?: string; file?: string } | null;
   createdAt: string;
 };
 

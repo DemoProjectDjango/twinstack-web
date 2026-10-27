@@ -115,6 +115,10 @@ function readNavCollapsed() {
 }
 
 const POLL_MS = 700;
+// While the API doesn't answer (restarting, a dropped connection), the job is polled again with
+// these waits before it's given up on: a Claude job runs for minutes, and one missed poll isn't its end.
+const POLL_RETRY_MS = [1000, 2000, 3000, 5000];
+const POLL_GIVE_UP_MS = 2 * 60_000;
 const MAX_LOG_CHARS = 500_000;
 // The preview rebuilds this long after the last change, so a burst of saves builds once.
 const AUTO_PREVIEW_DELAY_MS = 1500;
@@ -131,6 +135,8 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const credits = useCredits();
   const [job, setJob] = useState<Job | null>(null);
+  // The job's polls that went unanswered in a row, and since when.
+  const [pollMisses, setPollMisses] = useState<{ count: number; since: number } | null>(null);
   const [runError, setRunError] = useState<unknown>(null);
   const [version, setVersion] = useState(0);
   const [section, setSection] = useState<SiteSection>("home");
@@ -309,10 +315,12 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   useEffect(() => {
     if (!job || job.status !== "running") return;
     let cancelled = false;
+    const delay = pollMisses ? POLL_RETRY_MS[Math.min(pollMisses.count - 1, POLL_RETRY_MS.length - 1)] : POLL_MS;
     const timer = setTimeout(async () => {
       try {
         const { job: update } = await api<{ job: Job }>(`/api/jobs/${job.id}?since=${job.next}`);
         if (cancelled) return;
+        setPollMisses(null);
         setJob((prev) => {
           if (!prev || prev.id !== update.id) return prev;
           const output = prev.output + (update.truncated ? "\n[… earlier output trimmed …]\n" : "") + update.output;
@@ -329,17 +337,30 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
         }
       } catch (err) {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : String(err);
+        // No answer from the API (the proxy's 5xx without the API's own error, or no connection):
+        // the job may well still be running there, so keep asking for a while.
+        const unanswered = err instanceof ApiError && (err.status === 0 || (err.status >= 500 && !err.code));
+        const since = pollMisses?.since ?? Date.now();
+        if (unanswered && Date.now() - since < POLL_GIVE_UP_MS) {
+          setPollMisses({ count: (pollMisses?.count ?? 0) + 1, since });
+          return;
+        }
+        setPollMisses(null);
+        const message = unanswered
+          ? "The server stopped answering for over two minutes (it may have restarted), so this job was lost. Try again."
+          : err instanceof Error
+            ? err.message
+            : String(err);
         setJob((prev) => (prev ? { ...prev, status: "failed", output: `${prev.output}\n${message}\n` } : prev));
         await refresh().catch(() => {});
         finished({ ...job, status: "failed", output: `${job.output}\n${message}\n` });
       }
-    }, POLL_MS);
+    }, delay);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [job, refresh, finished]);
+  }, [job, pollMisses, refresh, finished]);
 
   // Busy with something this page isn't tracking (a sync or save from another
   // tab): re-check until it's free, so the buttons don't stay disabled.

@@ -8,7 +8,7 @@ export async function Navbar() {
   const user = await getUser().catch(() => null);
 
   return (
-    <header className="sticky top-0 z-20 border-b border-zinc-200 bg-background/90 backdrop-blur dark:border-zinc-800">
+    <header className="sticky top-0 z-100 border-b border-zinc-200 bg-background/90 backdrop-blur dark:border-zinc-800">
       <nav aria-label="Main" className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4">
         <Link href={user ? "/dashboard" : "/"} className="flex items-center gap-2 font-semibold tracking-tight">
           <span aria-hidden="true" className="grid size-7 place-items-center rounded-md bg-foreground text-xs text-background">

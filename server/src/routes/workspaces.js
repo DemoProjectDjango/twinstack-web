@@ -24,7 +24,7 @@ import {
 } from "../publishing.js";
 import { requireAuth, requireGithub } from "../session.js";
 import { getNextSteps } from "../next-steps.js";
-import { firstDesign, firstDesignModel } from "../first-design.js";
+import { FIRST_DESIGN_EFFORT, firstDesign, firstDesignModel } from "../first-design.js";
 import { analyticsRouter } from "./analytics.js";
 import { assistantRouter } from "./assistant.js";
 import { handle, keyFor, requireJson } from "./helpers.js";
@@ -218,6 +218,7 @@ workspacesRouter.post(
         } else {
           env = jobEnv(claude.apiKey, model);
         }
+        if (first) env.TWINSTACK_EFFORT = FIRST_DESIGN_EFFORT;
         endActivity = beginClaudeActivity(req.user.id);
       }
       await command.prepare?.(key, input);
@@ -244,7 +245,7 @@ workspacesRouter.post(
       // screen shows why a model ran.
       steps: [
         ...(sized ? [{ display: describeTaskSize(sized), run: () => {} }] : []),
-        ...(first ? [{ display: `The site's first ${first}: written by ${env.TWINSTACK_MODEL ?? "the site's own model"}, never the cheaper model.`, run: () => {} }] : []),
+        ...(first ? [{ display: `The site's first ${first}: written by ${env.TWINSTACK_MODEL ?? "the site's own model"} at ${FIRST_DESIGN_EFFORT} effort, never the cheaper model.`, run: () => {} }] : []),
         ...steps,
       ],
       cwd: workspaceDir(key),

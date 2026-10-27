@@ -180,6 +180,19 @@ function pendingOutcomes(conversation) {
   return { lines, reported };
 }
 
+/**
+ * Whether Claude's latest answer (before the owner's new message) asked the owner something: an
+ * offer_choices question, or text ending in "?" (as the browser's AiActivity reads it).
+ */
+function askedOwner(display) {
+  const entries = display ?? [];
+  const latest = entries.findLast((e, i) => e.role === "assistant" && i < entries.length - 1);
+  if (!latest) return false;
+  if (latest.parts.some((p) => p.type === "choices" && p.kind === "question")) return true;
+  const text = latest.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n\n").trim();
+  return text.endsWith("?");
+}
+
 function friendlyError(err) {
   if (err instanceof Anthropic.APIUserAbortError) return "Stopped.";
   if (err instanceof Anthropic.AuthenticationError) return "Claude didn't accept the API key. If you added your own Anthropic key, check it in Settings.";
@@ -358,8 +371,9 @@ assistantRouter.post(
       const spending = () => beginSpend({ userId, siteId, runId: turn.id, kind: "assistant", charged: claude.charged });
       try {
         // A small change to one page needs no planning: it becomes the page edit straight away, with
-        // no model request (assistant/quick-turn.js); null hands the turn on.
-        if (!continuing && text && !attachments.length) {
+        // no model request (assistant/quick-turn.js); null hands the turn on. Never for a reply to
+        // Claude's own question: "a Demo button" answers it, it isn't an edit on its own.
+        if (!continuing && text && !attachments.length && !askedOwner(conversation.display)) {
           result = await runQuickTurn({ key, text, openPage: page, autoApply, live: turn.live }).catch((err) => {
             console.error("The quick page edit failed, so Claude takes the turn:", err.message);
             return null;
@@ -549,8 +563,16 @@ assistantRouter.post(
     if (["applied", "skipped"].includes(action.status)) throw new WorkspaceError("That change is already finished.", 409);
     const note = typeof result === "string" ? result.slice(0, 1000) : null;
     if (status === "applied") await logApplied(key, action, typeof file === "string" ? file : null);
+    // The page a create_page made, kept on the action, so trying again writes that page instead of
+    // making a second one.
+    const made = typeof file === "string" && /^content\/[\w./-]+\.md$/.test(file) && !file.split("/").includes("..") ? file : null;
     const updated = await updateConversation(conversation.id, req.user.id, {
-      $set: { [`actions.${action.id}.status`]: status, [`actions.${action.id}.result`]: note, [`actions.${action.id}.reported`]: false },
+      $set: {
+        [`actions.${action.id}.status`]: status,
+        [`actions.${action.id}.result`]: note,
+        [`actions.${action.id}.reported`]: false,
+        ...(made && { [`actions.${action.id}.data`]: { ...(action.data ?? {}), file: made } }),
+      },
     });
     res.json({ action: updated.actions[action.id] });
   }),

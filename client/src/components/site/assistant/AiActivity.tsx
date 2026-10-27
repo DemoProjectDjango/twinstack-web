@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { AssistantPart, DisplayEntry } from "@/lib/assistant-api";
+import type { AssistantAction, AssistantPart, DisplayEntry } from "@/lib/assistant-api";
+import { isHomePage, type SitePage } from "@/lib/site-api";
+import { useSite } from "../site-context";
 import { Button, inputClass } from "../ui";
 import { useAssistant } from "./AssistantProvider";
 import { RichText } from "./RichText";
@@ -13,6 +15,10 @@ import { RichText } from "./RichText";
 //   - when an answer from this visit needs something from the owner (its offer_choices question,
 //     or text ending in "?"), the same window turns into the question, with its answer buttons and
 //     a reply box. Answering turns it back into the loader.
+// The loader names what it's on in the owner's words ("Designing your homepage", "Writing the
+// Contact page") and lists the changes of this stretch of work with how far each has got, so a
+// long first build shows its progress. A stretch ends a few seconds after the work stops, which
+// keeps a continuing answer's changes in the same list.
 // While it only works, the conversation panel (z-50) stays above it, so "See what it's doing" just
 // opens the panel; a question covers the whole window, above everything, on a phone too.
 
@@ -32,8 +38,102 @@ function questionOf(entry: DisplayEntry | undefined): Question | null {
   return null;
 }
 
+/** How long a pause in the work ends its stretch (and its list of changes). */
+const STRETCH_GAP_MS = 4000;
+
+/**
+ * What a change is on, for the loader ("Writing the Contact page") and its list ("Contact page"),
+ * and `url`: where the preview shows it once it's done (a page, or the homepage for the header and
+ * footer), or null.
+ */
+function describe(action: AssistantAction, pages: SitePage[]): { doing: string; item: string; url: string | null } {
+  const input = action.input as Record<string, unknown>;
+  const meta = action.meta as Record<string, unknown>;
+  const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
+  // A new page isn't in the action, so it's found by its title (or as the homepage).
+  const page =
+    pages.find((p) => p.file === input.file) ??
+    (action.tool === "create_page" ? (input.type === "homepage" ? pages.find(isHomePage) : pages.find((p) => p.title === input.title)) : undefined);
+  const home = (page ? isHomePage(page) : false) || (action.tool === "create_page" && input.type === "homepage");
+  const title = text(page?.title) ?? text(meta.title) ?? text(input.title) ?? "new";
+  const item = home ? "Homepage" : `${title} page`;
+  const named = home ? "your homepage" : `the ${title} page`;
+  const saving = action.status === "ready";
+  const url = action.tool === "design_header_and_footer" ? "/" : page ? (page.address ?? page.url ?? null) : null;
+  const described = words();
+  // Kept, and still working: the preview is being rebuilt with it (keep's showIt).
+  if (action.status === "applied") described.doing = `Putting ${action.tool === "design_header_and_footer" ? "the header and footer" : named} in the preview`;
+  return { ...described, url };
+
+  function words(): { doing: string; item: string } {
+    switch (action.tool) {
+      case "edit_page":
+        return {
+          doing: saving ? `Saving ${named}` : home ? "Designing your homepage" : `Writing the ${title} page`,
+          item,
+        };
+      case "create_page":
+        if (saving) return { doing: `Saving ${named}`, item };
+        return {
+          doing: home ? "Creating your homepage" : input.brief ? `Writing the ${title} page` : `Adding the ${title} page`,
+          item,
+        };
+      case "convert_page_from_html":
+        return {
+          doing: saving ? `Saving ${named}` : `Bringing in ${named}`,
+          item,
+        };
+      case "design_header_and_footer":
+        return {
+          doing: saving ? "Saving the header and footer" : "Designing the header and footer",
+          item: "Header and footer",
+        };
+      case "update_menu_and_footer":
+        return {
+          doing: "Updating the menu and footer",
+          item: "Menu and footer",
+        };
+      case "update_site_details":
+        return {
+          doing: "Updating your business details",
+          item: "Business details",
+        };
+      case "create_image":
+        return input.prompt ? { doing: "Making a picture", item: "Picture" } : { doing: "Drawing an image", item: "Drawing" };
+      case "add_file_to_site":
+        return {
+          doing: `Adding ${text(meta.file) ?? "a file"} to the site`,
+          item: text(meta.file) ?? "File",
+        };
+      case "delete_page":
+        return { doing: `Removing ${named}`, item: `Remove ${named}` };
+      case "create_missing_pages":
+        return {
+          doing: "Creating the pages in your plan",
+          item: "Pages in the plan",
+        };
+      case "write_search_text_for_all_pages":
+        return {
+          doing: "Writing search text for every page",
+          item: "Search text",
+        };
+      case "publish_changes":
+        return { doing: "Publishing your site", item: "Publish" };
+      default:
+        return { doing: action.title, item: action.title };
+    }
+  }
+}
+
+const sinceStart = (ms: number) => {
+  const m = Math.floor(ms / 60000);
+  return m < 1 ? "Under a minute so far" : `${m} min so far`;
+};
+
 export function AiActivity() {
-  const { turn, conversation, working, applyingAll, actions, stop, send, open, setOpen } = useAssistant();
+  const { turn, conversation, working, applyingAll, queued, actions, stop, send, retry, open, setOpen } = useAssistant();
+  const { overview, showOnSite } = useSite();
+  const pages = overview?.collections.flatMap((c) => c.pages) ?? [];
   // Turns the owner sent to the background, and questions they put off.
   const [background, setBackground] = useState<string | null>(null);
   const [answered, setAnswered] = useState<Set<string>>(new Set());
@@ -42,26 +142,115 @@ export function AiActivity() {
   const applying = working.size > 0 || applyingAll;
   const busy = running || applying;
 
-  // What it's on: the change being made, else the latest step of its answer.
+  // This stretch of work: when it started and the changes carried out in it, in order.
+  const [stretch, setStretch] = useState<{
+    started: number;
+    ids: string[];
+  } | null>(null);
+  const [now, setNow] = useState(0);
+  // A stretch with a change that didn't work stays, as the report of what's missing, until closed.
+  const failedSteps = (stretch?.ids ?? []).map((id) => actions[id]).filter((a) => a?.status === "failed");
+  const hasFailed = failedSteps.length > 0;
+  useEffect(() => {
+    if (!busy) {
+      if (hasFailed) return;
+      const timer = setTimeout(() => setStretch(null), STRETCH_GAP_MS);
+      return () => clearTimeout(timer);
+    }
+    const timer = setTimeout(() => {
+      const at = Date.now();
+      setNow(at);
+      setStretch((s) => {
+        const ids = s?.ids ?? [];
+        const added = [...queued, ...working].filter((id) => !ids.includes(id));
+        return s && !added.length ? s : { started: s?.started ?? at, ids: [...ids, ...added] };
+      });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [busy, hasFailed, queued, working]);
+  useEffect(() => {
+    if (!stretch) return;
+    const timer = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, [stretch]);
+  const steps = (stretch?.ids ?? []).map((id) => actions[id]).filter(Boolean);
+  const stretchKey = stretch ? String(stretch.started) : (turn?.id ?? null);
+  /** Hides the window (the work goes on) and shows the finished change on Edit site. */
+  const seeIt = (url: string) => {
+    setBackground(stretchKey);
+    showOnSite(url);
+  };
+
+  // What it's on: the change being made, else the next one in line, else the latest step of its answer.
   const changing = [...working].map((id) => actions[id]).find(Boolean);
+  const next = steps.find((a) => a.status === "proposed" || a.status === "ready");
   const lastPart = turn?.parts.at(-1);
   const doing = changing
-    ? changing.title
+    ? describe(changing, pages).doing
     : !running
-      ? "Making the changes"
-      : lastPart?.type === "activity"
-        ? lastPart.label
-        : lastPart
-          ? "Writing its answer"
-          : "Thinking about your request";
+      ? next
+        ? describe(next, pages).doing
+        : "Getting the next step ready"
+      : steps.length && !turn?.parts.length
+        ? "Planning the next steps"
+        : lastPart?.type === "activity"
+          ? lastPart.label
+          : lastPart
+            ? "Writing its answer"
+            : "Thinking about your request";
 
   // Only a question from a turn finished in this visit: the provider keeps that turn, never an old one.
   const latest = conversation?.display.at(-1);
   const fresh = turn && turn.status === "done" && latest?.id === turn.id ? latest : undefined;
   const question = !busy && fresh && !answered.has(fresh.id) ? questionOf(fresh) : null;
 
-  const loading = busy && background !== turn?.id;
-  const shown = loading || Boolean(question);
+  const loading = busy && background !== stretchKey;
+  // The work stopped with a change that didn't work: say so, even if it was sent to the background.
+  const report = !busy && !question && hasFailed;
+  const shown = loading || Boolean(question) || report;
+
+  const stepList = steps.length > (report ? 0 : 1) && (
+    <ol className="mx-auto mt-4 max-w-64 space-y-1.5 text-left text-sm" aria-label="The changes">
+      {steps.map((a) => {
+        const current = working.has(a.id);
+        const described = describe(a, pages);
+        // Kept is done, even while the preview catches up; written but not yet kept is still under way.
+        const state =
+          a.status === "applied" ? "done" : current || a.status === "running" || a.status === "ready" ? "working" : a.status === "failed" ? "failed" : a.status === "skipped" ? "skipped" : "waiting";
+        return (
+          <li key={a.id} className={`flex items-center gap-2 ${current ? "font-medium" : state === "done" ? "text-zinc-500" : state === "failed" ? "text-red-600 dark:text-red-400" : "text-zinc-400"}`}>
+            <span aria-hidden="true" className="grid size-4 shrink-0 place-items-center text-xs">
+              {state === "working" ? (
+                <span className="size-3 animate-spin rounded-full border-2 border-zinc-200 border-t-foreground motion-reduce:animate-none dark:border-zinc-800" />
+              ) : state === "done" ? (
+                "✓"
+              ) : state === "failed" ? (
+                "✕"
+              ) : state === "skipped" ? (
+                "–"
+              ) : (
+                <span className="size-2 rounded-full border border-zinc-300 dark:border-zinc-700" />
+              )}
+            </span>
+            <span className="truncate">{described.item}</span>
+            <span className="sr-only">{` (${{ working: "working on it", done: "done", failed: "didn't work", skipped: "skipped", waiting: "waiting" }[state]})`}</span>
+            {/* Once the preview has it (it's rebuilt while the change still counts as working). */}
+            {state === "done" && !current && described.url && (
+              <button
+                type="button"
+                onClick={() => seeIt(described.url!)}
+                tabIndex={shown ? 0 : -1}
+                className="ml-auto shrink-0 rounded px-1.5 text-xs font-medium text-foreground underline-offset-2 hover:underline"
+              >
+                See it
+                <span className="sr-only"> ({described.item})</span>
+              </button>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
 
   return (
     <>
@@ -92,6 +281,27 @@ export function AiActivity() {
               }}
               onLater={() => setAnswered((a) => new Set(a).add(fresh.id))}
             />
+          ) : report ? (
+            <div className="p-8 text-center">
+              <h2 className="font-semibold">The AI couldn&apos;t finish everything</h2>
+              <p className="mt-1 text-sm text-zinc-500">
+                {failedSteps.map((a) => describe(a, pages).item).join(", ")} didn&apos;t work. Everything with a tick is saved.
+              </p>
+              {stepList}
+              <div className="mt-6 flex flex-col gap-2">
+                <Button variant="primary" className="py-2" onClick={() => void retry(failedSteps[0])}>
+                  Try again
+                </Button>
+                <div className="flex justify-center gap-1">
+                  <Button variant="ghost" className="text-zinc-500" onClick={() => setOpen(true)}>
+                    See what happened
+                  </Button>
+                  <Button variant="ghost" className="text-zinc-500" onClick={() => setStretch(null)}>
+                    Close
+                  </Button>
+                </div>
+              </div>
+            </div>
           ) : (
             <div className="p-8 text-center">
               <div className="relative mx-auto size-14">
@@ -102,9 +312,16 @@ export function AiActivity() {
               </div>
               <h2 className="mt-5 font-semibold">The AI is working on your site</h2>
               <p className="mt-1 min-h-5 text-sm text-zinc-500">{doing}…</p>
+              {stepList}
+              {steps.length === 1 && steps[0].status === "applied" && !working.has(steps[0].id) && describe(steps[0], pages).url && (
+                <Button variant="ghost" className="mt-3 text-sm" onClick={() => seeIt(describe(steps[0], pages).url!)} tabIndex={shown ? 0 : -1}>
+                  See {describe(steps[0], pages).item.toLowerCase()}
+                </Button>
+              )}
+              {stretch && now - stretch.started > 60000 && <p className="mt-3 text-xs text-zinc-400">{sinceStart(now - stretch.started)}. Each page can take a few minutes.</p>}
               <p className="mt-4 text-xs text-zinc-400">If it needs anything from you, it asks here. Nothing goes live until you publish.</p>
               <div className="mt-6 flex flex-col gap-2">
-                <Button className="py-2" onClick={() => setBackground(turn?.id ?? null)} tabIndex={shown ? 0 : -1}>
+                <Button className="py-2" onClick={() => setBackground(stretchKey)} tabIndex={shown ? 0 : -1}>
                   Keep working in the background
                 </Button>
                 <div className="flex justify-center gap-1">
@@ -127,10 +344,11 @@ export function AiActivity() {
         <button
           type="button"
           onClick={() => setBackground(null)}
+          aria-label={`The AI: ${doing}. Show progress`}
           className="fixed left-1/2 top-16 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background shadow-lg"
         >
           <span aria-hidden="true" className="size-3.5 animate-spin rounded-full border-2 border-background/30 border-t-background motion-reduce:animate-none" />
-          The AI is working…
+          <span className="max-w-[60vw] truncate">{doing}…</span>
         </button>
       )}
     </>

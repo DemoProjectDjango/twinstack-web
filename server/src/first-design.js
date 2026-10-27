@@ -9,6 +9,10 @@ import { workspaceDir } from "./workspace.js";
 // set the look every later page follows. Once they're written, the usual choice applies again.
 
 export const FIRST_DESIGN_MODEL = "claude-opus-5-5";
+// At high effort Opus spent most of a first design thinking (4 minutes for a homepage, nearly
+// 3 for a header and footer, two thirds of the latter's output tokens unseen); medium keeps the
+// model and roughly halves the wait. Passed as TWINSTACK_EFFORT, which older copies ignore.
+export const FIRST_DESIGN_EFFORT = "medium";
 const STRONGER = new Set(["claude-fable-5-1"]);
 
 /** The model for a first design, given the account's own. */
