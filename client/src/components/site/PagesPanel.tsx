@@ -6,6 +6,7 @@ import { confirmModal } from "@/lib/confirm";
 import { api, isHomePage, workspacePath, type NavigationInfo, type NavItem, type SitePage, type WorkspaceStatus } from "@/lib/site-api";
 import { PageContentEditor } from "./EditPanel";
 import { markVisited } from "./HomePanel";
+import { OriginalPages } from "./OriginalPages";
 import { PageHealth, usePageHealth } from "./PageHealth";
 import { PageSeo } from "./SeoPanel";
 import { useSite, type PageEditMode } from "./site-context";
@@ -116,6 +117,8 @@ function PageList() {
           Add your pages one at a time, or create the starter pages from the site plan in one go.
         </EmptyState>
       )}
+
+      <OriginalPages />
 
       {pageCount > 0 && <PageHealth health={health} onOpen={(file) => void editFile(file, "generate")} />}
 

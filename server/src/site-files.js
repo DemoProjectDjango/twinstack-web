@@ -1097,18 +1097,19 @@ export async function createListingPage(key, collection, { title } = {}) {
  */
 export async function createPageAt(key, { url, title } = {}) {
   checkTitle(title);
-  if (typeof url !== "string" || !/^\/[\w\-./]*$/.test(url) || url.split("/").some((seg) => seg === "." || seg === "..") || url.includes("//")) {
+  // Spaces and .htm: an older site's own pages (original-pages.js) keep the addresses they had.
+  if (typeof url !== "string" || !/^\/[\w\-./ ]*$/.test(url) || /\/ | \/| $/.test(url) || url.split("/").some((seg) => seg === "." || seg === "..") || url.includes("//")) {
     throw new WorkspaceError("That isn't a web address on this site (like /about or /services/design.html).", 400);
   }
   const extension = path.posix.extname(url).toLowerCase();
-  if (extension && extension !== ".html") throw new WorkspaceError("Only a page's address can be made into a page, not a file's.", 400);
+  if (extension && extension !== ".html" && extension !== ".htm") throw new WorkspaceError("Only a page's address can be made into a page, not a file's.", 400);
   const address = addressOf(url);
   if (address === "/") return createHomepage(key, { title });
   const site = await readSiteConfig(key);
   const listing = Object.keys(site.collections ?? {}).map((name) => listingOf(site, name)).find((l) => l && addressOf(l.url) === address);
   if (listing) return createListingPage(key, listing.collection, { title });
 
-  const parts = address.replace(/\.html$/, "").split("/").filter(Boolean);
+  const parts = address.replace(/\.html?$/, "").split("/").filter(Boolean);
   const slug = parts.join("-").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "page";
   const words = (parts.at(-1) ?? "page").replace(/[-_]+/g, " ").trim();
   const name = title?.trim() || words.charAt(0).toUpperCase() + words.slice(1);

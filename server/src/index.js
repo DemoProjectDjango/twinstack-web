@@ -20,6 +20,7 @@ import { ReauthRequiredError, getAccessToken, listRepos } from "./github.js";
 import { DuplicateError, MissingScopeError, duplicateRepo, isValidRepoName } from "./duplicate.js";
 import { setUpNewSite } from "./new-site.js";
 import { enablePages, getSiteSummary } from "./publishing.js";
+import { ImportError, adoptTemplate, importCandidates, inspectRepo } from "./import-site.js";
 import { DeletePermissionError, deleteSite } from "./site-delete.js";
 import { WorkspaceError, assertRepoRef } from "./workspace.js";
 
@@ -125,6 +126,76 @@ app.post("/api/repos/:owner/:repo/duplicate", requireAuth, requireGithub, async 
         ? `${err.message}. The empty repository ${err.partialRepo} was kept; retrying with the same name will reuse it.`
         : "Duplicating failed. Please try again.",
     });
+  }
+});
+
+// Create a new site → "Use a repo I already have" (import-site.js): the owner's repos that could
+// become a site, what one of them is, and making it one.
+app.get("/api/import/candidates", requireAuth, requireGithub, async (req, res) => {
+  try {
+    const accessToken = await getAccessToken(req, res);
+    const repos = importCandidates(await listRepos(accessToken));
+    const copies = await withSiteRoles(repos, req.user);
+    const taken = new Set(copies.filter((repo) => repo.role === "copy").map((repo) => repo.id));
+    res.json({ repos: repos.filter((repo) => !taken.has(repo.id)).map(({ id, fullName, private: isPrivate, updatedAt }) => ({ id, fullName, private: isPrivate, updatedAt })) });
+  } catch (err) {
+    if (err instanceof ReauthRequiredError) return res.status(401).json({ error: "reauth_required" });
+    console.error("Failed to list importable repositories:", err);
+    res.status(502).json({ error: "github_unavailable" });
+  }
+});
+
+app.post("/api/import/inspect", requireAuth, requireGithub, async (req, res) => {
+  if (!req.is("application/json")) return res.status(415).json({ error: "Expected JSON" });
+  try {
+    const accessToken = await getAccessToken(req, res);
+    const { repo, kind, hasPackageJson } = await inspectRepo(accessToken, req.body?.repo);
+    res.json({ repo: repo.fullName, kind, canAdopt: kind === "other" && !hasPackageJson });
+  } catch (err) {
+    if (err instanceof ReauthRequiredError) return res.status(401).json({ error: "reauth_required" });
+    if (err instanceof ImportError) return res.status(err.status).json({ error: err.message });
+    console.error("Failed to inspect repository:", err);
+    res.status(502).json({ error: "github_unavailable" });
+  }
+});
+
+app.post("/api/import", requireAuth, requireGithub, async (req, res) => {
+  if (!req.is("application/json")) return res.status(415).json({ error: "Expected JSON" });
+  // Managing a site runs its scripts on this server, so importing is gated like duplicating.
+  if (!hasTemplateAccess(req.user)) {
+    return res.status(403).json({ error: "access_required", message: "Your account needs to be approved before you can create a site." });
+  }
+  const mode = req.body?.mode;
+  if (mode !== "site" && mode !== "adopt") return res.status(400).json({ error: "Choose how to use the repository." });
+  if (!req.githubAuth.scopes?.includes("workflow")) {
+    return res.status(401).json({ error: "reauth_required", message: "This needs one more GitHub permission (workflow files). Reconnect GitHub." });
+  }
+  try {
+    const accessToken = await getAccessToken(req, res);
+    const { repo, kind } = await inspectRepo(accessToken, req.body?.repo);
+    if (mode === "site" && kind !== "site") {
+      return res.status(409).json({ error: "That repository isn't a Twinstack site yet. Choose to add the site tools to it." });
+    }
+    if (mode === "adopt" && kind === "site") {
+      return res.status(409).json({ error: "That repository is already a Twinstack site. Choose to use it as it is." });
+    }
+    // An adopted repo that Pages already publishes stays as it is until the owner switches (keepLive).
+    const { keepLive = false } = mode === "adopt" ? await adoptTemplate({ user: req.user, accessToken, fullName: repo.fullName }) : {};
+    const displayName = typeof req.body?.displayName === "string" ? req.body.displayName.trim().slice(0, 100) || null : null;
+    await recordSiteCopy({ userId: req.user.id, repo, source: mode === "site" ? "import" : "adopt", displayName });
+    if (!keepLive) {
+      await enablePages(accessToken, repo.fullName).catch((err) =>
+        console.warn(`Couldn't turn on Pages for ${repo.fullName}: ${err.message}`),
+      );
+    }
+    // Only fills in the template's placeholder name and a missing homepage, so a site in use is left alone.
+    await setUpNewSite({ accessToken, fullName: repo.fullName, displayName });
+    res.status(201).json({ repo: { ...repo, role: "copy", createdByYou: true } });
+  } catch (err) {
+    if (err instanceof ReauthRequiredError) return res.status(401).json({ error: "reauth_required" });
+    if (err instanceof ImportError) return res.status(err.status).json({ error: err.message });
+    console.error("Failed to import repository:", err);
+    res.status(502).json({ error: "Making that repository a site didn't work. Please try again." });
   }
 });
 

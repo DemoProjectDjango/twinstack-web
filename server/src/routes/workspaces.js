@@ -4,6 +4,7 @@ import path from "node:path";
 import express, { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
 import { describeTaskSize, taskSize } from "../task-size.js";
+import { listOriginalPages, prepareOriginalPage } from "../original-pages.js";
 import { config } from "../config.js";
 import { getClaudeModel, getSiteDisplayName } from "../db.js";
 import { issueProxyToken } from "../claude-proxy.js";
@@ -376,6 +377,22 @@ workspacesRouter.post(
     const key = keyFor(req);
     const { file } = await createPageAt(key, { url: req.body?.url, title: req.body?.title });
     res.json({ file, status: await getStatus(key) });
+  }),
+);
+
+/* A repo's own .html pages, from before the site tools were added (original-pages.js), and getting one ready for page-convert. */
+
+workspacesRouter.get(
+  "/:owner/:repo/original-pages",
+  handle(async (req, res) => res.json({ pages: await listOriginalPages(keyFor(req)) })),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/original-pages/prepare",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const prepared = await prepareOriginalPage(key, req.body?.file);
+    res.json({ ...prepared, status: await getStatus(key) });
   }),
 );
 
