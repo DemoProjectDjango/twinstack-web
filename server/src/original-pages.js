@@ -45,8 +45,20 @@ async function htmlFiles(dir, rel = "") {
   return found.slice(0, MAX_ORIGINAL_PAGES);
 }
 
+const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "–", mdash: "—", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", hellip: "…" };
+
+/** Entity codes as the characters they stand for ("Pastries &amp; Cakes" → "Pastries & Cakes"). */
+const decodeEntities = (text) =>
+  text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, code) => {
+    if (code[0] === "#") {
+      const point = code[1].toLowerCase() === "x" ? parseInt(code.slice(2), 16) : Number(code.slice(1));
+      return point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : whole;
+    }
+    return ENTITIES[code.toLowerCase()] ?? whole;
+  });
+
 const titleOf = (html) =>
-  html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1].replace(/\s+/g, " ").trim().slice(0, 120) || null;
+  decodeEntities(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || null;
 
 // A page's header and footer as markup, roughly as the conversion finds them: the first <header>
 // or <nav> element and the last <footer>, scripts, styles and spacing aside. Only to group pages

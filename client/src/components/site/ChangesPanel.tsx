@@ -202,7 +202,7 @@ export function ChangesPanel() {
 
       {hasChanges && (
         <Section title={`Your changes (${status.changes.length})`}>
-          <ul className="divide-y divide-zinc-200 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+          <ul className="divide-y overflow-y-auto max-h-[22rem] divide-zinc-200 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
             {status.changes.map((change) => {
               const { what, status: label } = describeChange(change, overview);
               const diff = files?.find((f) => f.path === change.path)?.diff;
@@ -324,7 +324,7 @@ export function ChangesPanel() {
       )}
 
       {publishing.publishing?.enabled && publishing.publishing.canConfigure && (
-        <Section title="Your web address" description="Your site is on a free github.io address. You can use your own domain name instead.">
+        <Section title="Your web address" description="Your site is on a free github.io address. You can use your own domain name instead (also on the menu's Your domain).">
           <DomainSettings publishing={publishing.publishing} onChange={(next) => {
             publishing.setPublishing(next);
             // A domain change starts a redeploy: watch it closely.

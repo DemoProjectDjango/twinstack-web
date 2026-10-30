@@ -131,6 +131,27 @@ export async function markInstalled(key) {
   await fs.writeFile(installStampPath(dir), await lockfileHash(dir));
 }
 
+// What the preview (dist/) was last built from: the working tree's fingerprint after a `preview`
+// build. Without it, reopening the editor showed the build from before the latest changes (a
+// rebuild cancelled or never started before the page was left), which looked like lost work.
+const previewStampPath = (dir) => path.join(dir, ".git", "twinstack-preview-built");
+
+/** Before a build over dist/: until it finishes, the preview counts as out of date. */
+export async function clearPreviewStamp(key) {
+  await fs.rm(previewStampPath(workspaceDir(key)), { force: true });
+}
+
+/** After a successful preview build. */
+export async function markPreviewBuilt(key) {
+  await fs.writeFile(previewStampPath(workspaceDir(key)), await workingTreeFingerprint(key));
+}
+
+/** Whether dist/ is the preview build of the files as they are now. */
+export async function previewIsFresh(key) {
+  const stamp = await fs.readFile(previewStampPath(workspaceDir(key)), "utf8").catch(() => null);
+  return stamp !== null && stamp === (await workingTreeFingerprint(key));
+}
+
 async function needsInstall(dir) {
   if (!existsSync(path.join(dir, "node_modules"))) return true;
   const stamp = await fs.readFile(installStampPath(dir), "utf8").catch(() => null);
@@ -181,7 +202,9 @@ export async function openWorkspace({ accessToken, userId, owner, repo }) {
     syncs.set(key, syncWorkspace(key, info, accessToken).finally(() => syncs.delete(key)));
   }
   await syncs.get(key);
-  return getStatus(key);
+  const status = await getStatus(key);
+  // Only on open, since it stats every changed file: the editor rebuilds a preview that's out of date.
+  return { ...status, previewFresh: status.build !== "none" && !status.activeJob && (await previewIsFresh(key)) };
 }
 
 const syncs = new Map();
@@ -399,6 +422,36 @@ async function ensurePullRequest(meta, branch, title, accessToken) {
  * branch update the same pull request. In "direct" mode the current branch is
  * pushed as-is.
  */
+// A big push (a whole imported site) over HTTPS can fail with "RPC failed" at git's default buffer.
+const PUSH_ARGS = ["-c", "http.postBuffer=524288000", "push", "--quiet", "-u", "origin"];
+const BEHIND = /\[rejected\]|non-fast-forward|fetch first|failed to push some refs|Updates were rejected/i;
+
+/**
+ * Pushes HEAD to `target`. When GitHub has commits the editor's copy doesn't (made on GitHub, by
+ * someone else, or by the app through GitHub's API), the push is refused: the copy then catches up
+ * by putting its own new commits after GitHub's, and pushes again. Publishing used to fail with a
+ * bare 502 there. Changes that clash with GitHub's are left as they were, with a plain explanation.
+ */
+async function pushCatchingUp(dir, target, accessToken) {
+  try {
+    await git(dir, [...PUSH_ARGS, `HEAD:refs/heads/${target}`], { accessToken });
+    return;
+  } catch (err) {
+    if (!(err instanceof WorkspaceError) || !BEHIND.test(err.message)) throw err;
+  }
+  await git(dir, ["fetch", "--quiet", "origin", target], { accessToken });
+  const user = ["-c", "user.name=Twinstack", "-c", "user.email=noreply@twinstack.net"];
+  // Keeps the committers of the commits being moved; the names above are only git's requirement.
+  if ((await tryGit(dir, [...user, "rebase", "--quiet", "--committer-date-is-author-date", `origin/${target}`])) === null) {
+    await tryGit(dir, ["rebase", "--abort"]);
+    throw new WorkspaceError(
+      "Your site on GitHub was changed somewhere else, in the same places as your changes here, so they can't be combined automatically. Nothing was lost: open the site's repository on GitHub to see what changed there, or ask for help.",
+      409,
+    );
+  }
+  await git(dir, [...PUSH_ARGS, `HEAD:refs/heads/${target}`], { accessToken });
+}
+
 export async function commitAndPush({ key, accessToken, user, message, mode, branch }) {
   const release = acquire(key, "committing and pushing");
   try {
@@ -427,7 +480,7 @@ export async function commitAndPush({ key, accessToken, user, message, mode, bra
       await git(dir, ["-c", `user.name=${user.name || user.login}`, "-c", `user.email=${email}`, "commit", "--quiet", "-m", message]);
     }
     // With nothing new to commit this retries a push that failed earlier.
-    await git(dir, ["push", "--quiet", "-u", "origin", `HEAD:refs/heads/${target}`], { accessToken });
+    await pushCatchingUp(dir, target, accessToken);
 
     const commit = (await git(dir, ["rev-parse", "HEAD"])).trim();
     const pullRequest =

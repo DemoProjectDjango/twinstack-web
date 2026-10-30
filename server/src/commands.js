@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
 import {
   CSS_SOURCE_PATH,
@@ -13,7 +14,7 @@ import {
   htmlSourceExists,
   isEditableMarkdown,
 } from "./site-files.js";
-import { WorkspaceError, markInstalled } from "./workspace.js";
+import { WorkspaceError, clearPreviewStamp, markInstalled, markPreviewBuilt } from "./workspace.js";
 import { SEO_REPORT } from "./seo.js";
 import { saveCheckReport } from "./site-check.js";
 import { scanMissingPages } from "./missing-pages.js";
@@ -49,6 +50,51 @@ export function npmCli() {
 function script(name, args = [], timeoutMs = 10 * MINUTE) {
   const file = `scripts/${name}`;
   return { file: NODE, args: [file, ...args], display: ["node", file, ...args.map(quote)].join(" "), timeoutMs };
+}
+
+// The preview is built beside dist/ and swapped in once it's done. build.js empties its folder
+// first, so building into dist/ itself left a big site (an imported one, say) missing pages and
+// styles for as long as the build ran: "Open full size" then showed an error or a bare page, and
+// a failed build left no preview at all. Copies whose build.js predates --out build in place.
+const PREVIEW_NEXT = ".git/twinstack-preview-next";
+const PREVIEW_OLD = ".git/twinstack-preview-old";
+
+/** Renames, tried again for a moment while Windows still has a file in it open (being served). */
+async function renameRetrying(from, to) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fs.rename(from, to);
+    } catch (err) {
+      if (attempt >= 10 || !["EPERM", "EBUSY", "EACCES"].includes(err.code)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+}
+
+function previewBuild() {
+  const inPlace = script("build.js", ["--drafts"]);
+  return {
+    display: "Building the preview",
+    run: async ({ exec, cwd }) => {
+      const source = await fs.readFile(path.join(cwd, "scripts", "build.js"), "utf8").catch(() => "");
+      if (!source.includes("option('out')")) {
+        if ((await exec(inPlace)).code !== 0) throw new Error("The build failed.");
+        return;
+      }
+      const next = path.join(cwd, PREVIEW_NEXT);
+      const old = path.join(cwd, PREVIEW_OLD);
+      const dist = path.join(cwd, "dist");
+      await fs.rm(next, { recursive: true, force: true });
+      if ((await exec(script("build.js", ["--drafts", `--out=${PREVIEW_NEXT}`]))).code !== 0) {
+        await fs.rm(next, { recursive: true, force: true });
+        throw new Error("The build failed, so the preview still shows the site as it was.");
+      }
+      await fs.rm(old, { recursive: true, force: true });
+      if (existsSync(dist)) await renameRetrying(dist, old);
+      await renameRetrying(next, dist);
+      await fs.rm(old, { recursive: true, force: true }).catch(() => {});
+    },
+  };
 }
 
 function quote(arg) {
@@ -211,6 +257,8 @@ export const COMMANDS = {
   check: {
     label: "Build and check",
     steps: () => [script("build.js"), script("check.js")],
+    // It builds over the preview, without the hidden pages.
+    prepare: (key) => clearPreviewStamp(key),
     onEnd: async (key, result) => {
       await saveCheckReport(key, result);
       await scanMissingPages(key).catch(() => {});
@@ -219,10 +267,13 @@ export const COMMANDS = {
 
   preview: {
     label: "Build preview",
-    steps: () => [script("build.js", ["--drafts"])],
+    steps: () => [previewBuild()],
+    prepare: (key) => clearPreviewStamp(key),
     // Links to pages that don't exist yet, which the editor then offers to make (MissingPages).
     onEnd: async (key, { exitCode }) => {
-      if (exitCode === 0) await scanMissingPages(key).catch(() => {});
+      if (exitCode !== 0) return;
+      await markPreviewBuilt(key).catch(() => {});
+      await scanMissingPages(key).catch(() => {});
     },
   },
 

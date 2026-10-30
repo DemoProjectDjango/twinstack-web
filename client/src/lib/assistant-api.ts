@@ -135,7 +135,7 @@ export const attachmentUrl = (owner: string, repo: string, id: string) => base(o
 
 /** The same limits as the server's (assistant/attachments.js, routes/assistant.js). */
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-export const MAX_ATTACHMENTS = 5;
+export const MAX_ATTACHMENTS = 20;
 
 /** Proposals still waiting on the owner or running. */
 export const isOpenAction = (a: AssistantAction) => a.status === "proposed" || a.status === "running" || a.status === "ready";

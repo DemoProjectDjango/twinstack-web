@@ -16,9 +16,17 @@ function certificateText(state: string | null, enforced: boolean) {
 }
 
 /** Connect a custom domain to the copy's GitHub Pages site, with the DNS records to add. */
-export function DomainSettings({ publishing, onChange }: { publishing: Publishing; onChange: (p: Publishing) => void }) {
+export function DomainSettings({
+  publishing,
+  onChange,
+  defaultOpen = false,
+}: {
+  publishing: Publishing;
+  onChange: (p: Publishing) => void;
+  defaultOpen?: boolean;
+}) {
   const { owner, repo, busy } = useSite();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [input, setInput] = useState("");
   const [working, setWorking] = useState<"save" | "remove" | "https" | "check" | null>(null);
   const [error, setError] = useState<unknown>(null);

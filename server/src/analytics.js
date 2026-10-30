@@ -95,7 +95,8 @@ const hostName = (value) => {
 function sitePath(value) {
   const p = text(value, 300);
   if (!p || !p.startsWith("/")) return null;
-  return p.split(/[?#]/)[0] || "/";
+  // "/index.html" is the homepage and "/x/index.html" the page at /x/: one page, counted as one.
+  return p.split(/[?#]/)[0].replace(/(^|\/)index\.html$/i, "$1") || "/";
 }
 
 function device(width) {

@@ -155,6 +155,47 @@ async function countInputTokens(req, request) {
   }
 }
 
+// Answers that mean "not now" rather than "no": rate limited, overloaded (529) or a passing server
+// error. The site's scripts don't retry, so many requests in a row (bringing in 87 pages) failed
+// a third of their pages on these. Nothing has reached the script yet, so the request is simply
+// sent again, within the scripts' 5-minute wait for a reply's first byte.
+const RETRY_STATUSES = new Set([408, 429, 500, 502, 503, 504, 529]);
+const RETRY_DELAYS_MS = [2_000, 6_000, 15_000, 30_000];
+const MAX_RETRY_AFTER_MS = 60_000;
+
+const pause = (ms, signal) =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }, { once: true });
+  });
+
+/** fetch, sent again after a short wait while the provider answers "not now" or can't be reached. */
+async function fetchRetrying(url, init) {
+  for (let attempt = 0; ; attempt++) {
+    let upstream = null;
+    let failure = null;
+    try {
+      upstream = await fetch(url, init);
+    } catch (err) {
+      if (init.signal.aborted) throw err;
+      failure = err;
+    }
+    const retryable = failure || (RETRY_STATUSES.has(upstream.status) && upstream.headers.get("x-should-retry") !== "false");
+    if (!retryable || attempt >= RETRY_DELAYS_MS.length) {
+      if (failure) throw failure;
+      return upstream;
+    }
+    const after = Number(upstream?.headers.get("retry-after"));
+    const wait = Number.isFinite(after) && after > 0 ? Math.min(after * 1000, MAX_RETRY_AFTER_MS) : RETRY_DELAYS_MS[attempt];
+    await upstream?.body?.cancel().catch(() => {});
+    console.warn(`Claude proxy: ${upstream ? `answered ${upstream.status}` : `failed (${failure.message})`}; trying again in ${Math.round(wait / 1000)} s.`);
+    await pause(wait, init.signal);
+  }
+}
+
 async function forward(req, res, body, deepseek, spend) {
   const headers = { "x-api-key": deepseek ? config.deepseekKey : config.platformAnthropicKey };
   for (const name of FORWARD_HEADERS) if (req.headers[name]) headers[name] = req.headers[name];
@@ -164,7 +205,7 @@ async function forward(req, res, body, deepseek, spend) {
     if (!res.writableFinished) controller.abort();
   });
 
-  const upstream = await fetch(`${deepseek ? DEEPSEEK_UPSTREAM : UPSTREAM}/v1/messages`, { method: "POST", headers, body, signal: controller.signal });
+  const upstream = await fetchRetrying(`${deepseek ? DEEPSEEK_UPSTREAM : UPSTREAM}/v1/messages`, { method: "POST", headers, body, signal: controller.signal });
   const replyHeaders = {};
   for (const [name, value] of upstream.headers) if (RETURN_HEADERS.test(name)) replyHeaders[name] = value;
   res.writeHead(upstream.status, replyHeaders);

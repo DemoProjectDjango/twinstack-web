@@ -72,17 +72,24 @@ async function describe(message, { pages, listings, dir }) {
     // A hidden page isn't in the published site. "/" with no page there means no homepage at all,
     // and a collection's listing address (/blog.html) no listing page.
     const hidden = pages.find((p) => p.draft && normalized(p.url) === normalized(href));
+    // "/index.html" is the homepage ("/x/index.html" the page at /x/). A check from before it knew
+    // that reports the link as missing although the page is there: the site update fixes the check.
+    const folder = href.replace(/(^|\/)index\.html$/i, "$1");
+    const indexOf = folder !== href ? byUrl(folder) : null;
     const listing = listings.find((l) => normalized(l.url) === normalized(href));
     const extension = path.posix.extname(href).toLowerCase();
-    const target = hidden
-      ? "hidden"
-      : normalized(href) === "/"
-        ? "home"
-        : listing
-          ? "listing"
-          : !extension || extension === ".html"
-            ? "page"
-            : "file";
+    const target =
+      indexOf && !indexOf.draft
+        ? "index"
+        : hidden
+          ? "hidden"
+          : normalized(href) === "/"
+            ? "home"
+            : listing
+              ? "listing"
+              : !extension || extension === ".html"
+                ? "page"
+                : "file";
     const source = page ? await readText(path.join(dir, page.file)).catch(() => null) : null;
     return {
       kind: "missing-link",

@@ -23,6 +23,8 @@ export type WorkspaceStatus = {
   /** "empty" means the site built but has no homepage yet (no pages). */
   build: "none" | "empty" | "ready";
   previewUrl: string | null;
+  /** Only from POST …/open: whether the preview was built from the files as they are now (false: rebuild it). */
+  previewFresh?: boolean;
 };
 
 export type Job = {
@@ -381,7 +383,8 @@ export type SiteProblem =
        * home: the site has no homepage. listing: a collection has no listing page (`listing`).
        * hidden: the page is hidden (`hiddenPage`). page: no such page. file: no such image or file.
        */
-      target: "home" | "listing" | "hidden" | "page" | "file";
+      /** "index": a link to /index.html (or /x/index.html), whose page exists, that an older check counts as missing. */
+      target: "home" | "listing" | "hidden" | "page" | "file" | "index";
       hiddenPage?: ProblemPage;
       listing?: { collection: string; label: string };
       /** The page the link is on, or null if it couldn't be matched. */
@@ -541,7 +544,13 @@ export async function api<T>(path: string, { method = "GET", body }: { method?: 
     const code = typeof data.error === "string" && /^[a-z_]+$/.test(data.error) ? data.error : undefined;
     const message =
       data.message ??
-      (code === "reauth_required" ? "Your GitHub access has expired." : (data.error ?? `Request failed (${res.status}).`));
+      (code === "reauth_required"
+        ? "Your GitHub access has expired."
+        : (data.error ??
+          // No answer from the API itself: the proxy in front of it (Nginx, Next.js) answered instead.
+          (res.status >= 500
+            ? `The server didn't answer (error ${res.status}). It may be restarting: wait a moment, then try again. Anything already saved is kept.`
+            : `Request failed (${res.status}).`)));
     throw new ApiError(message, res.status, code);
   }
   return data as T;

@@ -39,8 +39,10 @@ async function walk(dist) {
         if (!entry.name.startsWith(".")) await visit(full, `${prefix}/${entry.name}`);
         continue;
       }
+      // A folder's index.html is served at the folder's address and at its own (imported sites
+      // often link to /index.html), so both count as existing.
       if (entry.name === "index.html") served.add(`${prefix}/`);
-      else served.add(`${prefix}/${entry.name}`);
+      served.add(`${prefix}/${entry.name}`);
       if (entry.name.endsWith(".html") && pages.length < MAX_HTML_FILES) pages.push({ full, url: entry.name === "index.html" ? `${prefix}/` : `${prefix}/${entry.name}` });
     }
   }
@@ -82,6 +84,8 @@ export async function scanMissingPages(key) {
       let href = (raw?.[1] ?? raw?.[2] ?? "").trim().split(/[#?]/)[0];
       if (!href.startsWith("/") || href.startsWith("//")) continue;
       if (devPrefix && href.startsWith("/dist/")) href = href.slice(5) || "/";
+      // /x/index.html is the page at /x/, for the unlinked-pages list too.
+      href = href.replace(/(^|\/)index\.html$/i, "$1");
       const extension = path.posix.extname(href).toLowerCase();
       // Only links to pages: files are for the Publish screen's check.
       if (extension && extension !== ".html") continue;

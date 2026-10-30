@@ -14,6 +14,12 @@ function visitedKey(owner: string, repo: string, section: SiteSection) {
   return `twinstack:visited:${owner}/${repo}:${section}`;
 }
 
+/** Whether `path` (sent by the preview's page, whose scripts are the site's) is a page of this preview. */
+function isInPreview(path: string, previewUrl: string) {
+  const root = previewUrl.replace(/\/+$/, "");
+  return (path === root || path.startsWith(`${root}/`)) && !/[\\\s]|\/\.\.?(\/|$)/.test(path.slice(root.length));
+}
+
 export function markVisited(owner: string, repo: string, section: SiteSection) {
   try {
     localStorage.setItem(visitedKey(owner, repo, section), "1");
@@ -388,6 +394,8 @@ function Preview({
 }) {
   const { status, job } = useSite();
   const [width, setWidth] = useState<"desktop" | "phone">("desktop");
+  // The preview address of the page the preview shows, for "Open full size".
+  const [shownPath, setShownPath] = useState<string | null>(null);
   const updating = job?.status === "running" && (job.command === "preview" || job.command === "install");
 
   return (
@@ -410,11 +418,11 @@ function Preview({
         <span className="ml-auto flex items-center gap-3">
           {status.previewUrl && (
             <a
-              href={status.previewUrl}
+              href={shownPath && isInPreview(shownPath, status.previewUrl) ? shownPath : status.previewUrl}
               target="_blank"
               rel="noreferrer"
               className="text-sm text-zinc-500 hover:underline"
-              title="Your latest changes, including pages you've hidden. It updates by itself."
+              title="This page in a tab of its own, with your latest changes (pages you've hidden too). Reload that tab to see later changes."
             >
               Open full size ↗
             </a>
@@ -438,7 +446,7 @@ function Preview({
           Start with the pages the site plan lists (home, about, contact and so on), or add your own one at a time.
         </EmptyState>
       ) : status.previewUrl ? (
-        <EditablePreview dimmed={updating} phone={width === "phone"} />
+        <EditablePreview dimmed={updating} phone={width === "phone"} onPath={setShownPath} />
       ) : (
         <div className="flex h-60 items-center justify-center gap-3 rounded-md border border-dashed border-zinc-300 text-sm text-zinc-500 dark:border-zinc-700">
           {updating ? (

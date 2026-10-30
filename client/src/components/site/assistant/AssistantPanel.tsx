@@ -18,6 +18,9 @@ import { SUGGESTIONS } from "./suggestions";
 // phone), shown and hidden by the top bar's "Chat with the AI". It follows the owner from screen to
 // screen; each message tells Claude which screen they're on.
 
+// How long the panel takes to slide in or out (its duration-300).
+const PANEL_MOTION_MS = 300;
+
 export function AssistantPanel() {
   const { claude } = useSite();
   const { context, conversation, turn, loading, error, open, setOpen, draft, send, stop, startOver, actions, applyAll, skipAll, applyingAll, autoApply, setAutoApply } = useAssistant();
@@ -43,6 +46,26 @@ export function AssistantPanel() {
     });
   }
 
+  // Slides in from the right and fades, and out the same way: it stays mounted until it has gone.
+  const [mounted, setMounted] = useState(open);
+  const [shown, setShown] = useState(open);
+  useEffect(() => {
+    if (open) {
+      const frame = requestAnimationFrame(() => {
+        setMounted(true);
+        // One more frame, so the panel is drawn hidden before it moves in.
+        requestAnimationFrame(() => setShown(true));
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+    const frame = requestAnimationFrame(() => setShown(false));
+    const timer = setTimeout(() => setMounted(false), PANEL_MOTION_MS);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [open]);
+
   const nextSteps = useNextSteps(open, Object.values(actions).filter((a) => a.status === "applied").length);
 
   // Follow the conversation as it grows, like a chat.
@@ -51,21 +74,21 @@ export function AssistantPanel() {
   useEffect(() => {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [size, open]);
+  }, [size, open, mounted]);
 
   useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
+    if (open && mounted) inputRef.current?.focus();
+  }, [open, mounted]);
 
   // Text another screen left for the owner to finish (a "Fill in" step on Home).
   const usedDraft = useRef(0);
   useEffect(() => {
-    if (!open || !draft || draft.id === usedDraft.current) return;
+    if (!open || !mounted || !draft || draft.id === usedDraft.current) return;
     usedDraft.current = draft.id;
     fillBox(draft.text);
-  }, [draft, open]);
+  }, [draft, open, mounted]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   async function submit(value = text) {
     const message = value.trim();
@@ -84,7 +107,10 @@ export function AssistantPanel() {
     <aside
       aria-label="Ask the AI"
       {...drop.handlers}
-      className="fixed inset-0 z-50 flex flex-col overflow-hidden border-zinc-200 bg-background sm:inset-auto sm:bottom-4 sm:right-4 sm:top-[4.5rem] sm:w-[27rem] sm:rounded-2xl sm:border sm:shadow-2xl dark:border-zinc-800"
+      inert={!open}
+      className={`fixed inset-0 z-50 flex flex-col overflow-hidden border-zinc-200 bg-background transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none sm:inset-auto sm:bottom-4 sm:right-4 sm:top-[4.5rem] sm:w-[27rem] sm:rounded-2xl sm:border sm:shadow-2xl dark:border-zinc-800 ${
+        shown ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-8 opacity-0"
+      }`}
     >
       {drop.over && (
         <div className="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-lg border-2 border-dashed border-foreground bg-background/90 text-sm font-medium">

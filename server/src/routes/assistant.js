@@ -64,7 +64,8 @@ const DETAILED_LOG_ENTRIES = 8;
 const MAX_NOTES_CHARS = 20_000;
 const TURN_KEEP_MS = 30 * 60 * 1000;
 const STATUSES = ["running", "ready", "applied", "skipped", "failed"];
-const MAX_ATTACHMENTS = 5;
+// Claude takes 100 images a request; turn.js keeps a long conversation under that.
+const MAX_ATTACHMENTS = 20;
 // How much of a past conversation's first message titles it in the history list.
 const TITLE_CHARS = 80;
 

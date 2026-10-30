@@ -27,7 +27,7 @@ function append(job, text) {
 
 /**
  * A step is a process ({ file, args, display, timeoutMs }, optionally with its own cwd and env) or
- * a function ({ display, run }): `run({ log, exec })` logs with `log(text)` and starts processes,
+ * a function ({ display, run }): `run({ log, exec, cwd })` logs with `log(text)` and starts processes,
  * which stream and cancel like process steps, with `exec(step)` (resolves to `{ code, output }`).
  * A function step fails by throwing; its message is the last line of the output.
  */
@@ -41,7 +41,7 @@ async function runStep(job, step, { cwd, env }) {
     return { code, output: job.text.slice(Math.max(0, start - job.base)) };
   };
   try {
-    await step.run({ log: (text) => append(job, text.endsWith("\n") ? text : `${text}\n`), exec });
+    await step.run({ log: (text) => append(job, text.endsWith("\n") ? text : `${text}\n`), exec, cwd: step.cwd ?? cwd });
     return job.cancelled ? 1 : 0;
   } catch (err) {
     append(job, `\n${err.message}\n`);

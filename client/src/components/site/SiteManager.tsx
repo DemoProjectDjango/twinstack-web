@@ -10,6 +10,7 @@ import { ApiError, api, setBeforeChange, workspacePath, type Job, type Overview,
 import { AiHelpBadge } from "./AiHelpBadge";
 import { AnalyticsPanel } from "./AnalyticsPanel";
 import { AiActivity } from "./assistant/AiActivity";
+import { DomainPanel } from "./DomainPanel";
 import { FirstRunSetup } from "./FirstRunSetup";
 import { AskClaude } from "./assistant/AskClaude";
 import { AssistantPanel } from "./assistant/AssistantPanel";
@@ -39,6 +40,7 @@ const MAIN: { id: SiteSection; label: string; hint: string }[] = [
   { id: "pages", label: "Pages", hint: "Add, open and organise pages" },
   { id: "design", label: "Look & logo", hint: "Logo, colours, menu and footer" },
   { id: "details", label: "Business info", hint: "Name, contact details, reviews and more" },
+  { id: "domain", label: "Your domain", hint: "Use your own web address, like www.yourbusiness.com" },
 ];
 
 // Only for the site's creator (GET …/analytics/access): nobody else sees its visits.
@@ -76,6 +78,14 @@ const NAV_ICONS: Partial<Record<SiteSection, React.ReactNode>> = {
       <path d="M3 9 5 4h14l2 5" />
       <path d="M4 9v11h16V9" />
       <path d="M9 20v-6h6v6" />
+    </>
+  ),
+  domain: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3a14 14 0 0 1 0 18" />
+      <path d="M12 3a14 14 0 0 0 0 18" />
     </>
   ),
   analytics: (
@@ -295,7 +305,9 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
           .catch(() => {});
         if (opened.activeJob) setJob(runningJob(opened.activeJob));
         else if (opened.needsInstall) void run("install");
-        else if (opened.build === "none") setPreviewStale(true);
+        // No preview yet, or one built before the latest changes (the page was left or reloaded
+        // before its rebuild ran): build it again, so the latest work shows.
+        else if (opened.build === "none" || opened.previewFresh === false) setPreviewStale(true);
       } catch (err) {
         if (!cancelled) setOpenError(err);
       }
@@ -665,6 +677,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
                 </div>
               )}
               {section === "details" && <StaticInfoPanel view="business" />}
+              {section === "domain" && <DomainPanel />}
               {section === "publish" && <ChangesPanel />}
               {section === "analytics" && isCreator && <AnalyticsPanel />}
               {section === "more" && <MoreToolsPanel />}
@@ -690,7 +703,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
               // Stays at the bottom of the window as the screen scrolls, with the status strip above it.
               <div className="sticky bottom-3 z-30 space-y-2 pt-2">
                 <StatusStrip inline onShowLog={() => showSection("tools")} />
-                <AskClaude />
+                <AiBar />
               </div>
             )}
           </div>
@@ -708,6 +721,29 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
  * Above every screen: where the site is, whether everything is live (which opens what's changed),
  * how much AI help is left, the conversation's show/hide button, and Publish (PublishNowState).
  */
+/**
+ * The AI bar under the screen, only while the chat on the right is closed: one place to write at a
+ * time. It stays mounted (so what's typed in it is kept) and folds away: it fades and slides down
+ * while its row's height closes (grid rows 1fr → 0fr), and comes back the same way.
+ */
+function AiBar() {
+  const { open } = useAssistant();
+  return (
+    <div
+      inert={open}
+      aria-hidden={open}
+      className={`grid transition-[grid-template-rows,opacity,transform] duration-300 ease-out motion-reduce:transition-none ${
+        open ? "pointer-events-none translate-y-4 grid-rows-[0fr] opacity-0" : "translate-y-0 grid-rows-[1fr] opacity-100"
+      }`}
+    >
+      {/* Clipped only while hidden, so the bar's shadow shows when it's there. */}
+      <div className={`min-h-0 ${open ? "overflow-hidden" : ""}`}>
+        <AskClaude />
+      </div>
+    </div>
+  );
+}
+
 function TopBar() {
   const { status, busy, publishing: state, publishNow, showSection } = useSite();
   const { open: chatOpen, setOpen: setChatOpen, turn } = useAssistant();
@@ -747,7 +783,7 @@ function TopBar() {
       <button type="button" onClick={() => showSection("publish")} title="See what changed" className={`rounded-full px-3 py-1 text-xs font-medium hover:opacity-80 ${pill.tone}`}>
         {pill.text}
       </button>
-      <AiHelpBadge />
+      {/* <AiHelpBadge /> */}
       <button
         type="button"
         onClick={() => setChatOpen(!chatOpen)}

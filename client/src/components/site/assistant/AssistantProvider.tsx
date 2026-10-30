@@ -104,6 +104,33 @@ export function useAutoApply() {
 
 type QueueKind = "auto" | "all" | null;
 
+// The automatic work still to do in this tab, kept for the tab's session so a reload or a visit to
+// another page doesn't drop it: the answers asked for here whose changes haven't been queued yet
+// (they're carried out once they end, even if that's while the page was away), and the queue being
+// worked through. Before, a reload mid-way left the rest of the changes undone.
+type Pending = { turns: string[]; queued: string[]; kind: QueueKind };
+const pendingKey = (owner: string, repo: string) => `twinstack:assistant-pending:${owner}/${repo}`;
+function readPending(owner: string, repo: string): Pending {
+  try {
+    const saved = JSON.parse(window.sessionStorage.getItem(pendingKey(owner, repo)) ?? "null");
+    const ids = (value: unknown) => (Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : []);
+    if (saved && typeof saved === "object") {
+      return { turns: ids(saved.turns), queued: ids(saved.queued), kind: saved.kind === "auto" || saved.kind === "all" ? saved.kind : null };
+    }
+  } catch {
+    // Unreadable or refused: nothing to carry on with.
+  }
+  return { turns: [], queued: [], kind: null };
+}
+function writePending(owner: string, repo: string, pending: Pending) {
+  try {
+    if (!pending.turns.length && !pending.queued.length) window.sessionStorage.removeItem(pendingKey(owner, repo));
+    else window.sessionStorage.setItem(pendingKey(owner, repo), JSON.stringify(pending));
+  } catch {
+    // It just won't carry on after a reload.
+  }
+}
+
 const AssistantCtx = createContext<AssistantValue | null>(null);
 
 export function useAssistant() {
@@ -121,7 +148,7 @@ const tail = (output: string) => output.trim().split("\n").slice(-OUTPUT_TAIL_LI
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export function AssistantProvider({ context, children }: { context: AssistantContext; children: ReactNode }) {
-  const { owner, repo, runAndWait, setStatus, refresh, siteCheck } = useSite();
+  const { owner, repo, runAndWait, setStatus, refresh, siteCheck, busy: siteBusy } = useSite();
   // The latest check found problems that would keep the live site from updating.
   const problemsLeft = siteCheck.fresh && siteCheck.report?.ok === false;
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -135,7 +162,9 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
     setOpen(true);
   }, []);
   const [working, setWorking] = useState<Set<string>>(new Set());
-  const [queued, setQueued] = useState<string[]>([]);
+  // The provider is only mounted in the browser (once the site has opened), so storage can be read here.
+  const [restored] = useState(() => readPending(owner, repo));
+  const [queued, setQueued] = useState<string[]>(restored.queued);
   // queueKind (below) for setAutoApply, which is made before it.
   const queueKindRef = useRef<QueueKind>(null);
   // The assistant messages whose proposals have already led to an automatic "carry on".
@@ -154,8 +183,12 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
   }, []);
   // Answers asked for in this browser tab (a message's entry id is its turn's id): only these are
   // carried out by themselves, never old proposals found when the conversation loads.
-  const startedTurns = useRef(new Set<string>());
+  const startedTurns = useRef(new Set<string>(restored.turns));
   const autoQueued = useRef(new Set<string>());
+  // Interrupted changes the queue has carried out again, each only once.
+  const rerun = useRef(new Set<string>());
+  // The started answers not yet queued, saved with the queue (the effect after queueKind).
+  const [pendingTurns, setPendingTurns] = useState<string[]>(restored.turns);
 
   const load = useCallback(async () => {
     try {
@@ -230,7 +263,10 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
       setOpen(true);
       try {
         const result = await assistantApi.send(owner, repo, { ...body, context: { ...context, autoApply } });
-        if (result.turn?.id) startedTurns.current.add(result.turn.id);
+        if (result.turn?.id) {
+          startedTurns.current.add(result.turn.id);
+          setPendingTurns((ids) => [...ids, result.turn.id]);
+        }
         setConversation(result.conversation);
         setTurn(result.turn);
         return true;
@@ -575,10 +611,11 @@ ${tail(job.output)}`);
 
   // Who started the queue: automatic changes ("auto", which stop when the switch is turned off) or
   // the owner's "Accept all" ("all").
-  const [queueKind, setQueueKind] = useState<QueueKind>(null);
+  const [queueKind, setQueueKind] = useState<QueueKind>(restored.kind);
   useEffect(() => {
     queueKindRef.current = queueKind;
   }, [queueKind]);
+  useEffect(() => writePending(owner, repo, { turns: pendingTurns, queued, kind: queueKind }), [owner, repo, pendingTurns, queued, queueKind]);
   const openIds = useCallback(
     (entry: DisplayEntry) => (entry.role === "assistant" ? entry.parts.flatMap((p) => (p.type === "action" && actions[p.id]?.status === "proposed" ? [p.id] : [])) : []),
     [actions],
@@ -629,14 +666,19 @@ ${tail(job.output)}`);
 
   // With automatic changes on, an answer asked for in this tab is carried out as soon as it ends:
   // its proposals go into the queue in order. A stopped or failed answer's are left for the owner.
+  // One that ended while the page was reloading or away is known only by its saved answer, which
+  // has no error when it ended normally.
   useEffect(() => {
-    if (!autoApply || !conversation || !turn || turn.status !== "done") return;
+    if (!autoApply || !conversation || conversation.runningTurn || turn?.status === "running") return;
     const last = conversation.display.at(-1);
-    if (!last || last.role !== "assistant" || last.id !== turn.id) return;
-    if (!startedTurns.current.has(last.id) || autoQueued.current.has(last.id)) return;
+    if (!last || last.role !== "assistant") return;
+    const ended = turn?.id === last.id ? turn.status === "done" : last.error === null;
+    if (!ended || !startedTurns.current.has(last.id) || autoQueued.current.has(last.id)) return;
     const ids = openIds(last);
     const timer = setTimeout(() => {
       autoQueued.current.add(last.id);
+      // Older answers can't be queued any more: only the newest one is carried out.
+      setPendingTurns([]);
       if (!ids.length) return;
       setQueueKind("auto");
       setQueued(ids);
@@ -657,16 +699,23 @@ ${tail(job.output)}`);
   const unattended = queueKind === "all" || (queueKind === "auto" && autoApply);
   const applyingAll = queueHead !== null && queueHead.status !== "failed" && (queueHead.status !== "ready" || unattended);
   useEffect(() => {
-    if (!queueHead || working.size) return;
+    // Also waits out a command still running from before a reload, which would refuse the next one.
+    if (!queueHead || working.size || siteBusy) return;
     let next: (() => Promise<void>) | null = null;
     // With more to come, the kept page goes into the preview first, so the owner can look at it meanwhile.
     const more = queued.some((id) => id !== queueHead.id && actions[id] && actions[id].status !== "applied" && actions[id].status !== "skipped");
+    // "running" with nothing working on it here: cut off by a reload, so it's carried out again
+    // (as "Try again" would; a page it already made is reused, not made twice).
     if (queueHead.status === "proposed") next = () => apply(queueHead, { confirmed: unattended });
+    else if (queueHead.status === "running" && !rerun.current.has(queueHead.id)) {
+      rerun.current.add(queueHead.id);
+      next = () => apply(queueHead, { confirmed: unattended });
+    }
     else if (queueHead.status === "ready" && unattended) next = () => keep(queueHead, { showIt: more });
     if (!next) return;
     const timer = setTimeout(() => void next(), 0);
     return () => clearTimeout(timer);
-  }, [queueHead, queued, actions, unattended, working, apply, keep]);
+  }, [queueHead, queued, actions, unattended, working, siteBusy, apply, keep]);
 
   // When the newest message's proposals are all settled and one of them asked to continue (pages
   // to write once they exist, say), Claude carries on by itself.

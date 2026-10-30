@@ -80,6 +80,36 @@ function addUsage(total, usage) {
  * The result's `lastPrompt` is the last request's size, for the next turn's `cachedTokens`.
  * `imageModel` is the site's image model (image-model.js) for pictures create_image makes.
  */
+// Claude takes at most 100 images in one request, the history's included. With 20 files a message,
+// a long conversation can pass that: the oldest images are then sent as a line saying they were
+// shown earlier (Claude has already described or used them), so the conversation keeps working.
+const MAX_REQUEST_IMAGES = 90;
+const EARLIER_IMAGE = { type: "text", text: "(An image attached earlier in the conversation, no longer shown.)" };
+
+/** `messages` with only the newest MAX_REQUEST_IMAGES image blocks kept (the same array when under it). */
+export function withinImageLimit(messages) {
+  let images = 0;
+  const count = (blocks) => {
+    for (const block of Array.isArray(blocks) ? blocks : []) {
+      if (block?.type === "image") images++;
+      else if (block?.type === "tool_result") count(block.content);
+    }
+  };
+  for (const message of messages) count(message.content);
+  if (images <= MAX_REQUEST_IMAGES) return messages;
+  let drop = images - MAX_REQUEST_IMAGES;
+  const trim = (blocks) =>
+    blocks.map((block) => {
+      if (drop > 0 && block?.type === "image") {
+        drop--;
+        return EARLIER_IMAGE;
+      }
+      if (drop > 0 && block?.type === "tool_result" && Array.isArray(block.content)) return { ...block, content: trim(block.content) };
+      return block;
+    });
+  return messages.map((message) => (drop > 0 && Array.isArray(message.content) ? { ...message, content: trim(message.content) } : message));
+}
+
 export async function runTurn({ client, key, model: requested, history, live, onUpdate = () => {}, beginSpend, cachedTokens = 0, signal, imageModel = null, userId = null }) {
   const messages = [...history];
   const start = history.length;
@@ -108,7 +138,7 @@ export async function runTurn({ client, key, model: requested, history, live, on
         max_tokens: MAX_TOKENS,
         system: SYSTEM,
         tools: TOOL_DEFINITIONS,
-        messages,
+        messages: withinImageLimit(messages),
         output_config: { effort: "medium" },
         cache_control: CACHE,
         context_management: { edits: CONTEXT_EDITS },

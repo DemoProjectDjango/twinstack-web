@@ -41,7 +41,14 @@ function groupProblems(problems: SiteProblem[]): Group[] {
     switch (problem.kind) {
       case "missing-link": {
         const { page, href } = problem;
-        if (problem.target === "home") {
+        if (problem.target === "index") {
+          // The page is there: the site's own check is older than the rule that /index.html is the
+          // homepage. One problem for them all, fixed by the site update (on the Technical log screen).
+          add("index", () => ({
+            text: "Your site's check counts links to /index.html as broken, though that's your homepage (and /folder/index.html is that folder's page). Update your site's tools to fix the check: nothing on your pages needs changing.",
+            fixes: [{ label: "Update the site's tools", screen: "tools" }],
+          }));
+        } else if (problem.target === "home") {
           add("home", () => ({ text: "Your site has no homepage.", fixes: [{ label: "Add a homepage", add: { path: "/pages/homepage", body: {}, name: "Homepage" } }] }), page);
         } else if (problem.target === "listing" && problem.listing) {
           const { collection, label } = problem.listing;
@@ -185,7 +192,7 @@ export function SiteProblems() {
   }
 
   return (
-    <div role="alert" className="rounded-md border border-red-300 bg-red-50 p-4 text-red-950 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100">
+    <div role="alert" className="rounded-md border overflow-y-auto max-h-[22rem] border-red-300 bg-red-50 p-4 text-red-950 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100">
       <p className="font-medium">
         {report.buildFailed
           ? "Your site can't be built, so your live site can't update."

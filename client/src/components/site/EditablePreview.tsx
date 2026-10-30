@@ -55,10 +55,14 @@ function post(frame: HTMLIFrameElement | null, message: Record<string, unknown>)
   frame?.contentWindow?.postMessage({ source: SOURCE, ...message }, "*");
 }
 
-/** A path without its trailing slash, so "/x/" and "/x" (and the homepage with or without one) match. */
-const bare = (path: string) => path.replace(/\/+$/, "");
+/**
+ * A path without a folder's index.html or its trailing slash, so "/x/", "/x" and "/x/index.html"
+ * (and the homepage: "/" and "/index.html") match.
+ */
+const bare = (path: string) => path.replace(/\/index\.html$/i, "").replace(/\/+$/, "");
 
-export function EditablePreview({ dimmed, phone }: { dimmed: boolean; phone: boolean }) {
+/** `onPath`: the preview address of the page shown, so "Open full size" opens that page. */
+export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; phone: boolean; onPath?: (path: string) => void }) {
   const { owner, repo, status, overview, version, claude, setStatus, previewTarget, setShownPage, showSection } = useSite();
   const { fillDraft } = useAssistant();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -139,6 +143,9 @@ export function EditablePreview({ dimmed, phone }: { dimmed: boolean; phone: boo
 
   // The AI's open page is the one shown here, while Edit site is open.
   const shownFile = shownPage?.file ?? null;
+  useEffect(() => {
+    if (framePath) onPath?.(framePath);
+  }, [framePath, onPath]);
   useEffect(() => {
     setShownPage(shownFile);
   }, [shownFile, setShownPage]);

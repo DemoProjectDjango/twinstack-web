@@ -31,6 +31,34 @@ function readBase64(file: File) {
   });
 }
 
+// With more than 20 images in a request, Claude refuses any over 2000 pixels on a side, and it
+// shrinks bigger ones to about 1600 anyway: photos are scaled down to this before they upload.
+// That also suits a web page, where an attached photo may end up.
+const MAX_IMAGE_SIDE = 2000;
+const SCALABLE = /^image\/(jpeg|png|webp)$/;
+
+/** The file, or a copy scaled to MAX_IMAGE_SIDE when it's a bigger photo (the file as it is if that fails). */
+async function fitImage(file: File): Promise<File> {
+  if (!SCALABLE.test(file.type) || typeof createImageBitmap !== "function") return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height);
+    if (scale >= 1) {
+      bitmap.close();
+      return file;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, file.type, 0.9));
+    return blob ? new File([blob], file.name, { type: blob.type || file.type }) : file;
+  } catch {
+    return file;
+  }
+}
+
 /** The files waiting to go with the next message. */
 export function useAttachmentUploads() {
   const { owner, repo } = useSite();
@@ -50,6 +78,7 @@ export function useAttachmentUploads() {
 
   // How many are attached right now, for the limit (kept current between quick successive picks).
   const count = useRef(0);
+  const queue = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
     count.current = pending.length;
   }, [pending]);
@@ -63,7 +92,8 @@ export function useAttachmentUploads() {
         const key = `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}`;
         const preview = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
         if (preview) previews.current.add(preview);
-        if (file.size > MAX_ATTACHMENT_BYTES) return { key, name: file.name, size: file.size, status: "error", error: "Over 10 MB", preview };
+        // A big photo may fit once it's scaled down (fitImage), so it's measured after that.
+        if (file.size > MAX_ATTACHMENT_BYTES && !SCALABLE.test(file.type)) return { key, name: file.name, size: file.size, status: "error", error: "Over 10 MB", preview };
         if (!file.size) return { key, name: file.name, size: 0, status: "error", error: "Empty file", preview };
         const entry: PendingAttachment = { key, name: file.name, size: file.size, status: "uploading", preview };
         uploads.push([entry, file]);
@@ -75,15 +105,21 @@ export function useAttachmentUploads() {
       }
       count.current += added.length;
       setPending((current) => [...current, ...added]);
+      // One at a time, after any still going: up to 20 files of 10 MB at once would weigh on the server.
       for (const [entry, file] of uploads) {
-        void (async () => {
+        queue.current = queue.current.then(async () => {
           try {
-            const { attachment } = await assistantApi.attach(owner, repo, { name: file.name, data: await readBase64(file) });
-            update(entry.key, { status: "ready", attachment });
+            const fitted = await fitImage(file);
+            if (fitted.size > MAX_ATTACHMENT_BYTES) {
+              update(entry.key, { status: "error", error: "Over 10 MB" });
+              return;
+            }
+            const { attachment } = await assistantApi.attach(owner, repo, { name: file.name, data: await readBase64(fitted) });
+            update(entry.key, { status: "ready", attachment, size: fitted.size });
           } catch (err) {
             update(entry.key, { status: "error", error: err instanceof Error ? err.message : "Upload failed" });
           }
-        })();
+        });
       }
     },
     [owner, repo, update],

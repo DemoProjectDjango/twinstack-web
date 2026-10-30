@@ -131,7 +131,8 @@ export function MissingPages() {
         Visitors who follow {pages.length === 1 ? "that link" : "those links"} get an error page, and they stop your site from going live. Make{" "}
         {pages.length === 1 ? "it" : "them"} now{claude.ready ? ", empty or written by the AI" : ""}.
       </p>
-      <ul className="mt-3 space-y-2">
+      {/* A fixed height that scrolls inside when there are many, so the screen below stays in reach. */}
+      <ul className="mt-3 max-h-[17rem] space-y-2 overflow-y-auto pr-1">
         {pages.map((page) => (
           <li key={page.href} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-amber-200 bg-background p-3 text-sm text-foreground dark:border-amber-900">
             <span className="min-w-0 flex-1">

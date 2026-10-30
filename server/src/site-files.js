@@ -1103,7 +1103,8 @@ export async function createPageAt(key, { url, title } = {}) {
   }
   const extension = path.posix.extname(url).toLowerCase();
   if (extension && extension !== ".html" && extension !== ".htm") throw new WorkspaceError("Only a page's address can be made into a page, not a file's.", 400);
-  const address = addressOf(url);
+  // A folder's index.html is that folder's page: "/index.html" is the homepage.
+  const address = addressOf(url.replace(/(^|\/)index\.html?$/i, "$1"));
   if (address === "/") return createHomepage(key, { title });
   const site = await readSiteConfig(key);
   const listing = Object.keys(site.collections ?? {}).map((name) => listingOf(site, name)).find((l) => l && addressOf(l.url) === address);

@@ -24,6 +24,10 @@ export const SUGGESTIONS: Record<SiteSection | "page", { placeholder: string; it
     placeholder: "Update your business details…",
     items: ["Our phone number is now 020 7946 0000", "Change our tagline to something more welcoming", "Add our Instagram page"],
   },
+  domain: {
+    placeholder: "Ask the AI about connecting your domain…",
+    items: ["How do I connect a domain I bought at GoDaddy?", "Why isn't my domain working yet?"],
+  },
   publish: {
     placeholder: "Ask about your changes, or to publish them…",
     items: ["What have I changed since I last published?", "Publish my changes"],

@@ -127,7 +127,7 @@ function PageList() {
         .map((collection) => (
           <section key={collection.name} aria-label={collection.label}>
             <h3 className="mb-2 text-sm font-medium text-zinc-500">{collection.label}</h3>
-            <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+            <ul className="divide-y overflow-y-auto max-h-[25rem] divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
               {sortPages(collection.pages).map((page) => (
                 <PageRow key={page.file} page={page} unlinked={unlinkedFiles.has(page.file)} nav={nav} onNavChanged={() => setNavTick((t) => t + 1)} />
               ))}
@@ -158,8 +158,9 @@ function pageAddress(page: SitePage) {
   return page.address ?? page.url ?? `/${page.slug}`;
 }
 
-/** Two addresses for one page: "/about.html" and "/about.html/", "/blog/" and "/blog". */
-const sameAddress = (a: string | undefined, b: string) => Boolean(a) && a!.replace(/\/+$/, "") === b.replace(/\/+$/, "");
+/** Two addresses for one page: "/about.html" and "/about.html/", "/blog/", "/blog" and "/blog/index.html", "/" and "/index.html". */
+const sameKey = (url: string) => url.replace(/\/index\.html$/i, "").replace(/\/+$/, "");
+const sameAddress = (a: string | undefined, b: string) => Boolean(a) && sameKey(a!) === sameKey(b);
 
 /** Whether the header menu links to `url`: an entry of its own, or one of a dropdown's. */
 function listedInHeader(items: NavItem[], url: string) {

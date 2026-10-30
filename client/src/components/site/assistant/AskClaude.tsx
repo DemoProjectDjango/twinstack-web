@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSite } from "../site-context";
 import { useAssistant } from "./AssistantProvider";
 import { AttachButton, PendingChips, useAttachmentUploads, useFileDrop } from "./Attachments";
+import { ChatPreview } from "./ChatPreview";
 import { SUGGESTIONS } from "./suggestions";
 
 /**
@@ -16,8 +17,28 @@ import { SUGGESTIONS } from "./suggestions";
  */
 export function AskClaude({ placeholder, suggestions }: { placeholder?: string; suggestions?: string[] }) {
   const { claude } = useSite();
-  const { context, send, turn, fillDraft } = useAssistant();
+  const { context, send, turn, fillDraft, setOpen } = useAssistant();
   const [text, setText] = useState("");
+  // In use (focus inside it): the conversation so far and the past ones open above the box
+  // (ChatPreview). A click elsewhere or Escape folds it again; a dialog it opened doesn't.
+  const [expanded, setExpanded] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!expanded) return;
+    const down = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (target && !boxRef.current?.contains(target) && !target.closest?.('[role="dialog"], [role="alertdialog"]')) setExpanded(false);
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    document.addEventListener("pointerdown", down);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("pointerdown", down);
+      document.removeEventListener("keydown", key);
+    };
+  }, [expanded]);
   const uploads = useAttachmentUploads();
   const drop = useFileDrop(uploads.add, claude.ready);
   const preset = SUGGESTIONS[context.page && context.screen === "pages" ? "page" : (context.screen as keyof typeof SUGGESTIONS)] ?? SUGGESTIONS.home;
@@ -54,9 +75,26 @@ export function AskClaude({ placeholder, suggestions }: { placeholder?: string; 
 
   return (
     <div
+      ref={boxRef}
       {...drop.handlers}
+      onFocus={() => setExpanded(true)}
       className={`mx-auto w-full max-w-3xl rounded-[18px] bg-background p-3 shadow-[0_1px_2px_rgba(0,0,0,.06),0_10px_30px_rgba(21,21,26,.08)] ${drop.over ? "outline-2 outline-dashed outline-indigo-400" : ""}`}
     >
+      {/* Opens upward (the bar sits at the foot of the window) by its row growing from 0 to its height. */}
+      <div
+        inert={!expanded}
+        aria-hidden={!expanded}
+        className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none ${expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <ChatPreview
+            onOpenChat={() => {
+              setExpanded(false);
+              setOpen(true);
+            }}
+          />
+        </div>
+      </div>
       <form
         onSubmit={(e) => {
           e.preventDefault();

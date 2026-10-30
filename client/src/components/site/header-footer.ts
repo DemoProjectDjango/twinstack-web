@@ -23,7 +23,8 @@ const GENERATED = new Set(["/sitemap.xml", "/rss.xml", "/robots.txt", "/search-i
 export function linkStatus(url: string | undefined, index: PageIndex): "ok" | "empty" | "missing" | "draft" {
   if (!url || !url.trim()) return "empty";
   if (!url.startsWith("/") || url.startsWith("//")) return "ok";
-  const bare = url.split(/[?#]/)[0] || "/";
+  // A folder's index.html is that folder's page: "/index.html" is the homepage.
+  const bare = url.split(/[?#]/)[0].replace(/(^|\/)index\.html$/i, "$1") || "/";
   // Files in assets/ and static/ count too; the editor can't see them, so it trusts them.
   if (GENERATED.has(bare) || bare.startsWith("/assets/")) return "ok";
   const trimmed = bare.length > 1 ? bare.replace(/\/$/, "") : bare;
