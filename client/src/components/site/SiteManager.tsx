@@ -429,7 +429,9 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     [section, openPage, shownPage],
   );
   const tools = useSiteTools({ owner, repo, version, overview, publishing: publishing.publishing, setStatus, refresh: refreshAfterChange });
-  const siteUpdate = useSiteUpdate({ owner, repo, version, runJobAt, run, setStatus, watch: publishing.watch });
+  // Free to install an update by itself: nothing running, and the site's tools installed.
+  const canAutoUpdate = Boolean(status) && !busy && !status?.needsInstall;
+  const siteUpdate = useSiteUpdate({ owner, repo, version, runJobAt, run, setStatus, watch: publishing.watch, canAutoUpdate });
 
   // Requests for Edit site to show a page; each one gets the next number, so the same page twice still moves it.
   const previewRequests = useRef(0);

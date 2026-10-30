@@ -1,6 +1,7 @@
 import { config } from "./config.js";
 import { OWNER_PATTERN, isValidRepoName } from "./duplicate.js";
 import { githubFetch, readRepoFile, toRepo } from "./github.js";
+import { TEMPLATE_TRAILER } from "./site-update.js";
 import { appTokenError, isSiteCopy, isTemplate, templateToken } from "./sites.js";
 
 // Making a site from a repo the owner already has, instead of a fresh copy of the template:
@@ -101,10 +102,11 @@ export async function adoptTemplate({ user, accessToken, fullName }) {
   const template = await json(`/repos/${config.siteTemplate}`, sourceToken).catch((err) => {
     throw appTokenError(err, sourceToken);
   });
-  const templateTree = await json(
-    `/repos/${config.siteTemplate}/git/trees/${encodeURIComponent(template.default_branch)}?recursive=1`,
-    sourceToken,
-  );
+  // The files come from one template commit, recorded in the commit below (TEMPLATE_TRAILER): the
+  // repo has none of the template's history, so the site update reads which version it has there.
+  const templateHead = (await json(`/repos/${config.siteTemplate}/git/ref/heads/${encodeURIComponent(template.default_branch)}`, sourceToken)).object.sha;
+  const templateCommit = await json(`/repos/${config.siteTemplate}/git/commits/${templateHead}`, sourceToken);
+  const templateTree = await json(`/repos/${config.siteTemplate}/git/trees/${templateCommit.tree.sha}?recursive=1`, sourceToken);
   if (templateTree.truncated) throw new Error("The template's file list is too long to read.");
 
   const repo = await json(`/repos/${fullName}`, accessToken);
@@ -158,7 +160,9 @@ export async function adoptTemplate({ user, accessToken, fullName }) {
   const tree = await json(`/repos/${fullName}/git/trees`, accessToken, { method: "POST", body: { base_tree: baseTree, tree: entries } });
   const commit = await json(`/repos/${fullName}/git/commits`, accessToken, {
     method: "POST",
-    body: { message: "Add the Twinstack site tools", tree: tree.sha, parents: [head] },
+    body: { message: `Add the Twinstack site tools
+
+${TEMPLATE_TRAILER}: ${templateHead}`, tree: tree.sha, parents: [head] },
   });
   await json(`/repos/${fullName}/git/refs/heads/${branch}`, accessToken, { method: "PATCH", body: { sha: commit.sha } });
   return { added: missing.map((entry) => entry.path), kept, keepLive };

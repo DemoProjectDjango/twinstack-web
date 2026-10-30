@@ -42,6 +42,15 @@ const execFileAsync = promisify(execFile);
 const MANIFEST = "twinstack-update.json";
 const TEMPLATE_REF = "refs/twinstack/template";
 const UPDATE_TRAILER = "Twinstack-Update";
+// A site made from an existing repo (import-site.js, "adopt") got the template's files without its
+// history; its "Add the Twinstack site tools" commit names the template commit they came from.
+export const TEMPLATE_TRAILER = "Twinstack-Template";
+
+/** The template commit `rev`'s history says its tools were added from (TEMPLATE_TRAILER), or null. */
+async function recordedTemplate(dir, rev) {
+  const out = await tryGit(dir, ["log", "-1", "--format=%B", `--grep=^${TEMPLATE_TRAILER}: `, rev]);
+  return new RegExp(`^${TEMPLATE_TRAILER}: ([0-9a-f]{40})\\s*$`, "m").exec(out ?? "")?.[1] ?? null;
+}
 const DESIGNED_MARK = "data-designed=";
 // Claude merges files up to this size; a bigger conflicting file stops the update.
 const MAX_MERGE_CHARS = 300_000;
@@ -118,6 +127,12 @@ export async function getUpdateStatus(key, accessToken, templateToken = accessTo
       have = i;
       break;
     }
+  }
+  // A site made from an existing repo has none of the template's history until its first update:
+  // the template version its tools were added from says how current it is.
+  if (have === -1) {
+    const recorded = await recordedTemplate(dir, published);
+    if (recorded) have = commits.findIndex((c) => c.sha === recorded);
   }
   const newer = have === -1 ? commits : commits.slice(0, have);
   return {
@@ -408,10 +423,14 @@ export function siteUpdateSteps({ key, accessToken, templateToken = accessToken,
         if (s.done) return;
         const manifest = readManifest(await git(work, ["show", `${s.incoming}:${MANIFEST}`]));
         s.mergeBase = (await tryGit(work, ["merge-base", "HEAD", s.incoming]))?.trim() || null;
+        // No shared history (a site made from an existing repo): the template version its tools came
+        // from is the base, so only what changed in the template since is merged, as for any site.
+        const recorded = s.mergeBase ? null : await recordedTemplate(work, "HEAD");
+        const recordedBase = recorded && (await tryGit(work, ["cat-file", "-e", `${recorded}^{commit}`])) !== null ? recorded : null;
         // Records the template commit as the second parent; the files are decided below, one by one.
         await git(work, [...identity(user), "merge", "--quiet", "--no-commit", "--no-ff", "-s", "ours", ...(s.mergeBase ? [] : ["--allow-unrelated-histories"]), s.incoming]);
 
-        const [ours, theirs, base] = await Promise.all([listTree(work, "HEAD"), listTree(work, s.incoming), listTree(work, s.mergeBase)]);
+        const [ours, theirs, base] = await Promise.all([listTree(work, "HEAD"), listTree(work, s.incoming), listTree(work, s.mergeBase ?? recordedBase)]);
         const take = [];
         const write = new Map();
         s.conflicts = [];

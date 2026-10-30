@@ -166,6 +166,7 @@ export function useSiteUpdate({
   run,
   setStatus,
   watch,
+  canAutoUpdate = false,
 }: {
   owner: string;
   repo: string;
@@ -174,6 +175,8 @@ export function useSiteUpdate({
   run: (command: string) => Promise<boolean>;
   setStatus: (status: WorkspaceStatus) => void;
   watch: () => void;
+  /** Nothing else is running, so a waiting update can install by itself. */
+  canAutoUpdate?: boolean;
 }): SiteUpdateState {
   const [info, setInfo] = useState<SiteUpdateInfo | null>(null);
   const [working, setWorking] = useState<"update" | "undo" | null>(null);
@@ -191,14 +194,18 @@ export function useSiteUpdate({
     };
   }, [owner, repo, version]);
 
-  const update = useCallback(async () => {
+  const update = useCallback(async ({ auto = false }: { auto?: boolean } = {}) => {
     setWorking("update");
     setError(null);
     setDone(null);
     try {
       const job = await runJobAt("/site-update");
       if (job.status === "succeeded") {
-        setDone("Your site is updated. It goes live in a minute or two.");
+        setDone(
+          auto
+            ? "Your site was updated to the latest version by itself. It goes live in a minute or two; Undo puts it back."
+            : "Your site is updated. It goes live in a minute or two.",
+        );
         watch();
       } else {
         setError(new Error(job.status === "cancelled" ? "The update was stopped." : jobFailure(job.output)));
@@ -228,7 +235,31 @@ export function useSiteUpdate({
     }
   }, [owner, repo, setStatus, watch, run]);
 
-  return { info, working, error, done, update, undo };
+  // A waiting update installs by itself once the editor is free, as pressing "Update my site" would
+  // (checked first, refused if it would break the site, and undoable). Tried once per template
+  // version in this tab: one that can't install leaves the banner and its reason, and isn't retried
+  // on every reload.
+  const latest = info?.available ? (info.latest?.date ?? "latest") : null;
+  // Without storage (refused), once per page load.
+  const tried = useRef<string | null>(null);
+  useEffect(() => {
+    if (!latest || !canAutoUpdate || working) return;
+    const key = `twinstack:auto-update:${owner}/${repo}`;
+    // Marked when it starts, in the timer, so an effect run twice (development) still starts it once.
+    const timer = setTimeout(() => {
+      try {
+        if (window.sessionStorage.getItem(key) === latest) return;
+        window.sessionStorage.setItem(key, latest);
+      } catch {
+        if (tried.current === latest) return;
+      }
+      tried.current = latest;
+      void update({ auto: true });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [latest, canAutoUpdate, working, owner, repo, update]);
+
+  return { info, working, error, done, update: () => update(), undo };
 }
 
 /**
