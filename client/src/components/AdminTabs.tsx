@@ -8,6 +8,7 @@ const TABS = [
   { href: "/admin/models", label: "AI models" },
   { href: "/admin/purchases", label: "Purchases" },
   { href: "/admin/providers", label: "AI providers" },
+  { href: "/admin/setup", label: "Site setup" },
 ];
 
 /** Moves between the admin pages. */

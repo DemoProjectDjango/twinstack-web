@@ -93,6 +93,7 @@ export async function connectDb() {
     users().createIndex({ email: 1 }, { unique: true, partialFilterExpression: { email: { $type: "string" } } }),
     users().createIndex({ "github.id": 1 }, { unique: true, partialFilterExpression: { "github.id": { $type: "number" } } }),
     siteCopies().createIndex({ userId: 1 }),
+    siteSetups().createIndex({ savedAt: -1 }),
     workLog().createIndex({ siteId: 1, createdAt: -1 }),
     workLogForgotten().createIndex({ siteId: 1, line: 1 }, { unique: true }),
     conversations().createIndex({ userId: 1, siteId: 1, archived: 1, updatedAt: -1 }),
@@ -149,6 +150,7 @@ export async function closeDb() {
 
 const users = () => db.collection("users");
 const siteCopies = () => db.collection("siteCopies");
+const siteSetups = () => db.collection("siteSetups");
 const workLog = () => db.collection("workLog");
 const workLogForgotten = () => db.collection("workLogForgotten");
 const conversations = () => db.collection("assistantConversations");
@@ -492,6 +494,57 @@ export async function getSiteDisplayName(siteId) {
   return typeof doc?.displayName === "string" ? doc.displayName : null;
 }
 
+/* ------------------------------------------------------------ site setups */
+
+// A new site's setup (site-setup.js), one document per site keyed by its repo id: the site type and
+// its skill's version, how the type was picked (`by`), the brief, the answers (`custom` when the
+// owner typed their own rather than picking a button) and skipped questions. Then what happened in
+// the site's first week (`signals`: Ask Claude messages, Claude commands, discarded changes) and its
+// first publish. The admin's Site setup screen and the monthly skill review read these. A deleted
+// site keeps its document without the owner's own words (forgetSiteSetup).
+
+export const SETUP_FIRST_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const SETUP_SIGNALS = ["messages", "commands", "discards"];
+
+/** Records (or replaces, when setup runs again) the site's setup; its signals start again. */
+export async function saveSiteSetup(siteId, setup) {
+  if (typeof siteId !== "number") return;
+  await siteSetups().replaceOne(
+    { _id: siteId },
+    { ...setup, savedAt: new Date(), signals: Object.fromEntries(SETUP_SIGNALS.map((s) => [s, 0])) },
+    { upsert: true },
+  );
+}
+
+/** Counts one `signal` for the site, only during its first week after setup. Never throws. */
+export function noteSetupSignal(siteId, signal) {
+  if (typeof siteId !== "number" || !SETUP_SIGNALS.includes(signal)) return;
+  siteSetups()
+    .updateOne({ _id: siteId, savedAt: { $gte: new Date(Date.now() - SETUP_FIRST_WEEK_MS) } }, { $inc: { [`signals.${signal}`]: 1 } })
+    .catch((err) => console.error(`Couldn't count the setup signal ${signal} for site ${siteId}:`, err.message));
+}
+
+/** Notes the site's first publish after setup. Never throws. */
+export function noteSetupPublished(siteId) {
+  if (typeof siteId !== "number") return;
+  siteSetups()
+    .updateOne({ _id: siteId, publishedAt: { $exists: false } }, { $set: { publishedAt: new Date() } })
+    .catch((err) => console.error(`Couldn't note the first publish of site ${siteId}:`, err.message));
+}
+
+/** Every setup since `since`, newest first, for the admin's numbers. */
+export async function listSiteSetups(since) {
+  return siteSetups().find({ savedAt: { $gte: since } }).sort({ savedAt: -1 }).toArray();
+}
+
+/** A deleted site's setup without the owner's own words: the brief and any answer they typed. */
+async function forgetSiteSetup(siteId) {
+  const doc = await siteSetups().findOne({ _id: siteId }, { projection: { answers: 1 } });
+  if (!doc) return;
+  const answers = (doc.answers ?? []).map((a) => (a.custom ? { ...a, answer: null } : a));
+  await siteSetups().updateOne({ _id: siteId }, { $set: { answers, deletedAt: new Date() }, $unset: { brief: "" } });
+}
+
 // A site's own choice of AI model, shared by everyone who manages it: `fastModel` (fast-model.js)
 // and `imageModel` (image-model.js), each `{ model, updatedAt, updatedBy }` on its siteCopies record.
 // `siteId` is the GitHub repo id (siteIdFor); sites recorded by name only have no choices.
@@ -568,6 +621,7 @@ export async function findSiteCopy({ id, fullName }) {
 /**
  * Forgets a deleted site: its record (and with it its model choices and analytics settings), work
  * log, "Ask Claude" chats and counted visits. claudeUsage stays: it's the account's billing history.
+ * Its setup stays without the owner's own words (forgetSiteSetup), for the setup numbers.
  */
 export async function deleteSiteRecords(siteId) {
   await Promise.all([
@@ -575,6 +629,7 @@ export async function deleteSiteRecords(siteId) {
     workLogForgotten().deleteMany({ siteId }),
     conversations().deleteMany({ siteId }),
     analyticsEvents().deleteMany({ siteId }),
+    forgetSiteSetup(siteId),
   ]);
   await siteCopies().deleteOne({ _id: siteId });
 }

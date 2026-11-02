@@ -191,7 +191,7 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
             ? "Checking your GitHub account…"
             : "Creating sites isn't available right now. Please try again later.",
       done: copies.length > 0,
-      action: githubLogin && approved && !creating ? createAction : null,
+      action: githubLogin && approved ? createAction : null,
     },
     {
       id: "claude",
@@ -252,7 +252,8 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
               />
             ))}
             {/* There's no limit on sites: the card makes another, or says why it can't yet. */}
-            {approved && template && !creating && (
+            {/* Shown behind the create window too, so the list doesn't jump when it opens or closes. */}
+            {approved && template && (
               <li>
                 <button
                   type="button"

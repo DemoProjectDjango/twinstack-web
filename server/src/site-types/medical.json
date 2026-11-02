@@ -1,0 +1,88 @@
+{
+  "id": "medical",
+  "version": 2,
+  "label": "Medical practice",
+  "recognise": "Clinics, GP and family practices, dentists, specialists, physiotherapy, diagnostic labs, pharmacies and other healthcare providers.",
+  "keywords": ["clinic", "doctor", "doctors", "medical", "health", "healthcare", "hospital", "dental", "dentist", "patient", "patients", "physio", "physiotherapy", "therapy", "pediatric", "paediatric", "gp", "nurse", "pharmacy", "diagnostic", "lab"],
+  "research": "What websites of similar practices (same specialty and, if given, the same area) usually show, and what patients look for before they book.",
+  "pages": [
+    { "title": "Home", "address": "/", "purpose": "Who the practice is, the main services, how to book, opening hours and location." },
+    { "title": "About us", "address": "/about.html", "purpose": "The practice's story, its approach to care and what patients can expect." },
+    { "title": "Services", "address": "/services.html", "purpose": "Each treatment or service in plain words: who it's for and how to get it." },
+    { "title": "Our doctors", "address": "/doctors.html", "purpose": "The clinicians with their roles, qualifications and areas of care." },
+    { "title": "Appointments", "address": "/appointments.html", "purpose": "How to book, what to bring, cancellation and first-visit information." },
+    { "title": "Contact", "address": "/contact.html", "purpose": "Phone, address, map directions, opening hours and the emergency notice." },
+    { "title": "Privacy policy", "address": "/privacy.html", "purpose": "How patient information sent through the site is collected, used and protected." }
+  ],
+  "sections": {
+    "header": "The practice's name or logo, the main pages, and a prominent Book an appointment button (phone number on small screens).",
+    "footer": "Address, phone, opening hours, the emergency notice, quick links and the privacy policy.",
+    "homepage": "A calm, trustworthy hero with what the practice offers and a booking button; the main services; why patients choose it; the doctors; opening hours and location; a final call to book."
+  },
+  "rules": [
+    "Never promise outcomes or cures, and don't make medical claims the owner didn't give.",
+    "Say clearly that the site is not for emergencies, with the local emergency number where the owner gives it.",
+    "Use plain, reassuring language a worried patient understands; explain medical terms.",
+    "Qualifications, registrations and prices only as the owner gives them.",
+    "A calm, clean look: plenty of white space, soft colours, readable type, high contrast."
+  ],
+  "demo": {
+    "note": "Where the owner gave no details, write these as clearly marked samples for them to replace.",
+    "items": ["General check-ups", "Children's health", "Vaccinations", "Blood tests and lab work", "Chronic condition care"]
+  },
+  "questions": [
+    {
+      "id": "services", "title": "What care do you offer?", "lead": "The services patients come for most, first.", "why": "The Services page and the homepage lead with them.", "always": true,
+      "fields": [
+        { "id": "specialty", "type": "choice", "label": "Kind of practice", "other": true, "saveTo": "profile", "role": "tags",
+          "choices": ["Family practice", "Dental", "Specialist clinic", "Physiotherapy", "Diagnostic lab"],
+          "hints": { "Dental": ["dental", "dentist", "teeth"], "Physiotherapy": ["physio", "physiotherapy"], "Diagnostic lab": ["lab", "diagnostic", "tests"], "Family practice": ["family", "gp", "general practice"] } },
+        { "id": "services", "type": "items", "label": "Main services", "itemLabel": "Service", "max": 6, "saveTo": "profile", "role": "items", "noPrice": true }
+      ]
+    },
+    {
+      "id": "visit", "title": "Where and when can patients find you?", "lead": "These go in your site details, the footer and the Contact page.", "why": "Only you know your address, phone and opening hours.", "always": true,
+      "fields": [
+        { "id": "address", "type": "text", "label": "Address", "saveTo": "contact.address", "role": "address" },
+        { "id": "phone", "type": "tel", "label": "Phone", "saveTo": "contact.phone", "role": "phone" },
+        { "id": "email", "type": "email", "label": "Email", "saveTo": "contact.email", "role": "email" },
+        { "id": "hours", "type": "hours", "label": "Opening hours", "saveTo": "contact.hours", "role": "hours" }
+      ]
+    },
+    {
+      "id": "booking", "title": "How do patients book?", "lead": "This sets the button in your header.", "why": "It sets the button in your header.", "always": true,
+      "fields": [
+        { "id": "action", "type": "choice", "label": "What should visitors do first?", "saveTo": "contact.bookingLabel", "role": "cta",
+          "choices": ["Book an appointment", "Call us", "Visit us"], "hints": { "Book an appointment": ["book", "appointment"], "Call us": ["call"] } },
+        { "id": "method", "type": "choice", "label": "How do they book?", "saveTo": "profile",
+          "choices": ["By phone", "Booking link", "A form on the site", "Walk in"], "hints": { "By phone": ["by phone", "call"], "Booking link": ["online booking", "book online"], "Walk in": ["walk in", "walk-in"] } },
+        { "id": "bookingUrl", "type": "url", "label": "Booking link", "saveTo": "contact.bookingUrl", "showIf": { "field": "method", "equals": "Booking link" } }
+      ]
+    },
+    {
+      "id": "team", "title": "Should the site show your doctors?", "lead": "Patients like to know who they'll see.", "why": "The Our doctors page needs them.", "always": true,
+      "fields": [
+        { "id": "showTeam", "type": "choice", "label": "Show your doctors", "saveTo": "profile", "choices": ["Yes, with photos and roles", "Names and roles only", "Not yet"] },
+        { "id": "doctors", "type": "items", "label": "Doctors", "itemLabel": "Name", "descLabel": "Role and specialty", "max": 6, "saveTo": "profile", "noPrice": true }
+      ]
+    },
+    {
+      "id": "look", "title": "What should it look and feel like?", "lead": "The feel sets the colours; your logo and photos make it yours.", "why": "Your logo and photos make the site yours.", "always": true,
+      "fields": [
+        { "id": "feel", "type": "choice", "label": "Feel", "saveTo": "profile", "role": "feel",
+          "choices": ["Calm and reassuring", "Modern and clinical", "Warm and friendly"],
+          "themes": { "Calm and reassuring": "calm", "Modern and clinical": "modern", "Warm and friendly": "warm" },
+          "hints": { "Calm and reassuring": ["calm", "reassuring"], "Modern and clinical": ["modern", "clinical"], "Warm and friendly": ["warm", "friendly"] } },
+        { "id": "logo", "type": "logo", "label": "Logo (optional)", "saveTo": "brand.logo" },
+        { "id": "photos", "type": "photos", "label": "Photos (up to 6)", "saveTo": "photos", "role": "photos", "hint": "Your practice, your team, your rooms." }
+      ]
+    },
+    {
+      "id": "emergency", "title": "What should the emergency notice say?", "lead": "Every page says the site isn't for emergencies.", "why": "Medical sites must say where to go in an emergency.", "always": true,
+      "fields": [
+        { "id": "emergency", "type": "choice", "label": "In an emergency, patients should", "other": true, "saveTo": "profile",
+          "choices": ["Call the national emergency number", "Go to the nearest hospital", "Call our out-of-hours line"] }
+      ]
+    }
+  ]
+}

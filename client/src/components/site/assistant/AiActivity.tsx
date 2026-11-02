@@ -130,8 +130,17 @@ const sinceStart = (ms: number) => {
   return m < 1 ? "Under a minute so far" : `${m} min so far`;
 };
 
+/** The time the AI has been working, as a clock: 0:42, 12:05, 1:02:09. */
+const clock = (ms: number) => {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = String(total % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+};
+
 export function AiActivity() {
-  const { turn, conversation, working, applyingAll, queued, actions, stop, send, retry, open, setOpen } = useAssistant();
+  const { turn, conversation, working, applyingAll, queued, sentAt, actions, stop, send, retry, open, setOpen } = useAssistant();
   const { overview, showOnSite } = useSite();
   const pages = overview?.collections.flatMap((c) => c.pages) ?? [];
   // Turns the owner sent to the background, and questions they put off.
@@ -142,9 +151,12 @@ export function AiActivity() {
   const applying = working.size > 0 || applyingAll;
   const busy = running || applying;
 
-  // This stretch of work: when it started and the changes carried out in it, in order.
+  // This stretch of work: when it started, the owner's message it answers (`since`, the provider's
+  // sentAt) and the changes carried out in it, in order. A new message of theirs starts a new one,
+  // so the window never shows an earlier request's steps or time; the AI carrying on keeps it.
   const [stretch, setStretch] = useState<{
     started: number;
+    since: number;
     ids: string[];
   } | null>(null);
   const [now, setNow] = useState(0);
@@ -161,18 +173,21 @@ export function AiActivity() {
       const at = Date.now();
       setNow(at);
       setStretch((s) => {
-        const ids = s?.ids ?? [];
+        const current = s && s.since === sentAt ? s : null;
+        const ids = current?.ids ?? [];
         const added = [...queued, ...working].filter((id) => !ids.includes(id));
-        return s && !added.length ? s : { started: s?.started ?? at, ids: [...ids, ...added] };
+        return current && !added.length ? current : { started: current?.started ?? at, since: sentAt, ids: [...ids, ...added] };
       });
     }, 0);
     return () => clearTimeout(timer);
-  }, [busy, hasFailed, queued, working]);
+  }, [busy, hasFailed, queued, working, sentAt]);
+  // The clock ticks every second while the AI works, and stops when it's done.
   useEffect(() => {
-    if (!stretch) return;
-    const timer = setInterval(() => setNow(Date.now()), 15000);
+    if (!stretch || !busy) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [stretch]);
+  }, [stretch, busy]);
+  const elapsed = stretch ? now - stretch.started : 0;
   const steps = (stretch?.ids ?? []).map((id) => actions[id]).filter(Boolean);
   const stretchKey = stretch ? String(stretch.started) : (turn?.id ?? null);
   /** Hides the window (the work goes on) and shows the finished change on Edit site. */
@@ -312,13 +327,18 @@ export function AiActivity() {
               </div>
               <h2 className="mt-5 font-semibold">The AI is working on your site</h2>
               <p className="mt-1 min-h-5 text-sm text-zinc-500">{doing}…</p>
+              {/* Every second would be read out: screen readers get the minutes below instead. */}
+              <p aria-hidden="true" className="mt-3 font-mono text-2xl font-semibold tabular-nums tracking-tight">
+                {clock(elapsed)}
+              </p>
               {stepList}
               {steps.length === 1 && steps[0].status === "applied" && !working.has(steps[0].id) && describe(steps[0], pages).url && (
                 <Button variant="ghost" className="mt-3 text-sm" onClick={() => seeIt(describe(steps[0], pages).url!)} tabIndex={shown ? 0 : -1}>
                   See {describe(steps[0], pages).item.toLowerCase()}
                 </Button>
               )}
-              {stretch && now - stretch.started > 60000 && <p className="mt-3 text-xs text-zinc-400">{sinceStart(now - stretch.started)}. Each page can take a few minutes.</p>}
+              <span className="sr-only">{sinceStart(Math.floor(elapsed / 60000) * 60000)}.</span>
+              {elapsed > 60000 && <p className="mt-3 text-xs text-zinc-400">Each page can take a few minutes.</p>}
               <p className="mt-4 text-xs text-zinc-400">If it needs anything from you, it asks here. Nothing goes live until you publish.</p>
               <div className="mt-6 flex flex-col gap-2">
                 <Button className="py-2" onClick={() => setBackground(stretchKey)} tabIndex={shown ? 0 : -1}>
@@ -349,6 +369,11 @@ export function AiActivity() {
         >
           <span aria-hidden="true" className="size-3.5 animate-spin rounded-full border-2 border-background/30 border-t-background motion-reduce:animate-none" />
           <span className="max-w-[60vw] truncate">{doing}…</span>
+          {stretch && (
+            <span aria-hidden="true" className="font-mono tabular-nums text-background/70">
+              {clock(elapsed)}
+            </span>
+          )}
         </button>
       )}
     </>

@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { addAttachmentToSite, readAttachmentMeta, saveMadeImage, sitePathFor } from "./attachments.js";
 import { analyticsSummary } from "../analytics.js";
 import { getBrand, saveBrand } from "../brand.js";
+import { normalizeLink, pageForLink } from "../links.js";
 import { getNavigation, saveNavigation } from "../navigation.js";
 import { readSeo } from "../seo.js";
 import { DRAWN_DIR, MAX_SVG_CHARS, checkSvg, drawnName, saveDrawnImage, svgAspect, svgPreview } from "../svg.js";
@@ -25,7 +28,7 @@ import {
 } from "../site-files.js";
 import { readCheckReport } from "../site-check.js";
 import { checkStaticInfo, getStaticInfo, saveStaticInfo } from "../static-info.js";
-import { WorkspaceError, commitAndPush, getStatus, siteIdFor } from "../workspace.js";
+import { WorkspaceError, commitAndPush, getStatus, siteIdFor, workspaceDir } from "../workspace.js";
 import { SYSTEM_PROMPT } from "./prompt.js";
 
 // The assistant's tools. Read tools run on the server as soon as Claude calls them. Change tools
@@ -42,6 +45,15 @@ const PAGE_TYPES = ["page", "post", "service", "product", "case"];
 // "Add a page" types, and the pages only the site plan's rules can make: the homepage and a
 // collection's listing page (createHomepage, createListingPage).
 const CREATE_TYPES = [...PAGE_TYPES, "homepage", "listing"];
+// Each "Add a page" type's collection, and how the site names its file (scripts/new.js's TYPES and slugify).
+const NEW_PAGE_COLLECTIONS = { page: "pages", product: "products", service: "services", post: "blog", case: "caseStudies" };
+const slugify = (text) =>
+  String(text)
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 70);
 const MAX_READ_CHARS = 80_000;
 const SEO_FIELD_NAMES = ["metaTitle", "metaDescription", "focusKeyword", "ogImage", "ogImageAlt", "canonical", "noindex"];
 const LOGO_FIELDS = ["logoText", "logo", "logoDark", "logoMark", "favicon"];
@@ -66,6 +78,14 @@ const summaryField = { summary: { type: "string", description: "The owner's card
 // (task-size.js; the label wins over the app's own rules, since only you know the conversation).
 const TASK_SIZES = ["small", "complex"];
 const taskSizeField = { task_size: { type: "string", enum: TASK_SIZES } };
+const designReferenceField = {
+  design_reference: {
+    type: "array",
+    items: { type: "string" },
+    description:
+      "Up to 2 att_… ids of attached screenshots or mockups of the design the owner wants this page to have. The writer sees them and replicates their layout, colours, type and details exactly; they're never put on the page. Use this, not images, whenever the owner wants a page to look like a picture they attached.",
+  },
+};
 const continueField = { continue_after: { type: "boolean" } };
 
 /** Builds a tool definition; every input streams as it's generated (eager_input_streaming). */
@@ -176,6 +196,7 @@ const TOOLS = [
       file: { type: "string", description: "e.g. content/pages/about.md" },
       instruction: { type: "string", description: "Up to 4000 characters." },
       ...imagesField,
+      ...designReferenceField,
       ...taskSizeField,
       ...summaryField,
       ...continueField,
@@ -195,6 +216,7 @@ const TOOLS = [
       hidden: { type: "boolean", description: "Off the published site until unhidden." },
       brief: { type: "string", description: "Optional, self-contained, up to 4000 characters." },
       ...imagesField,
+      ...designReferenceField,
       ...taskSizeField,
       ...summaryField,
       ...continueField,
@@ -462,6 +484,29 @@ async function imagesOf(input, key) {
   return out;
 }
 
+/**
+ * The attached screenshots of a design to copy ({ references: [att_…] }, or nothing), checked to be
+ * images; refused on a site whose page writer predates edit-page.js --reference.
+ */
+async function referencesOf(input, key) {
+  const list = input?.design_reference;
+  if (list === undefined || list === null || (Array.isArray(list) && !list.length)) return {};
+  if (!Array.isArray(list) || list.length > 2) throw new ToolInputError("design_reference must be a list of at most 2 attachment ids.");
+  const script = await readFile(path.join(workspaceDir(key), "scripts", "edit-page.js"), "utf8").catch(() => "");
+  if (!script.includes("--reference=")) {
+    throw new ToolInputError(
+      "This site's page writer can't look at a design picture yet: it needs the latest site update, which the editor offers. Tell the owner that, and offer to describe the design in words meanwhile.",
+    );
+  }
+  const references = [];
+  for (const raw of list) {
+    const meta = await attachmentOf(typeof raw === "string" ? raw.trim() : raw, key);
+    if (meta.kind !== "image") throw new ToolInputError(`${meta.id} (${meta.name}) isn't an image Claude can look at.`);
+    references.push(meta.id);
+  }
+  return { references };
+}
+
 async function attachmentOf(id, key) {
   if (typeof id !== "string" || !ATTACHMENT_ID.test(id)) throw new ToolInputError(`"${id}" isn't an attachment id (att_…).`);
   try {
@@ -472,6 +517,43 @@ async function attachmentOf(id, key) {
 }
 
 const isPlainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * The header and footer links (menu items, dropdowns, the button, footer columns, legal links, the
+ * footer's call to action) that the proposal adds or changes and that point at a page the site
+ * doesn't have, or at a hidden one, as lines for Claude. Links already there are left alone: the
+ * site leaves menu links to pages it doesn't have out of what it publishes. "/about" counts as
+ * /about.html (links.js's pageForLink); files (/rss.xml, /assets/…) and outside, mail and phone
+ * links aren't checked here.
+ */
+function navigationLinks(navigation) {
+  const links = [];
+  const add = (item, where) => isPlainObject(item) && typeof item.url === "string" && item.url.trim() && links.push([normalizeLink(item.url), `${where} "${item.label ?? ""}"`]);
+  for (const item of Array.isArray(navigation?.header?.items) ? navigation.header.items : []) {
+    add(item, "Menu item");
+    for (const child of Array.isArray(item?.children) ? item.children : []) add(child, "Dropdown link");
+  }
+  add(navigation?.header?.cta, "Header button");
+  for (const column of Array.isArray(navigation?.footer) ? navigation.footer : []) for (const item of Array.isArray(column?.links) ? column.links : []) add(item, "Footer link");
+  for (const item of Array.isArray(navigation?.legal) ? navigation.legal : []) add(item, "Legal link");
+  add(navigation?.appearance?.footer?.cta, "Footer call-to-action button");
+  return links;
+}
+
+function navigationLinkProblems(navigation, pages, before) {
+  const existing = new Set(navigationLinks(before).map(([url]) => url));
+  const problems = [];
+  for (const [url, where] of navigationLinks(navigation)) {
+    if (existing.has(url) || !url.startsWith("/") || url.startsWith("//")) continue;
+    // Pages only: an address with an extension other than .html is a file.
+    const file = url.split(/[#?]/)[0].split("/").pop() ?? "";
+    if (/\.[a-z0-9]+$/i.test(file) && !/\.html$/i.test(file)) continue;
+    const page = pageForLink(url, pages);
+    if (!page) problems.push(`${where} links to ${url}, which isn't a page on the site.`);
+    else if (page.draft) problems.push(`${where} links to ${url}, a hidden page visitors can't open.`);
+  }
+  return problems;
+}
 
 function capped(text) {
   return text.length > MAX_READ_CHARS ? `${text.slice(0, MAX_READ_CHARS)}\n[…cut off: ${text.length - MAX_READ_CHARS} more characters]` : text;
@@ -602,10 +684,12 @@ async function prepareChange(name, input, key, context) {
     }
     case "edit_page": {
       const file = pageFileOf(input);
+      // A design to copy is the hardest page work: it always goes to Claude.
+      const designs = await referencesOf(input, key);
       const page = await readPage(key, file);
       return {
         ...base,
-        input: { file, instruction: str(input, "instruction"), images: await imagesOf(input, key), taskSize },
+        input: { file, instruction: str(input, "instruction"), images: await imagesOf(input, key), ...designs, taskSize: designs.references ? "complex" : taskSize },
         meta: { title: titleOf(page.content) ?? file },
       };
     }
@@ -614,6 +698,8 @@ async function prepareChange(name, input, key, context) {
       const title = str(input, "title", { max: 200 }).trim();
       if (title.startsWith("-") || /[\r\n]/.test(title)) throw new ToolInputError("title must be a single line that doesn't start with \"-\".");
       const brief = str(input, "brief", { optional: true });
+      const designs = await referencesOf(input, key);
+      if (designs.references && !brief) throw new ToolInputError("design_reference needs a brief: the writer writes the page in that design.");
       if (input.type === "homepage" || input.type === "listing") {
         const overview = await getOverview(key);
         let url = "/";
@@ -626,7 +712,7 @@ async function prepareChange(name, input, key, context) {
         }
         const existing = overview.collections.flatMap((c) => c.pages).find((p) => p.url === url);
         if (existing) throw new ToolInputError(`The site already has ${input.type === "homepage" ? "a homepage" : "that listing page"}: ${existing.file}. Use edit_page to change it.`);
-        return { ...base, input: { type: input.type, collection, title, slug: null, hidden: false, brief, images: await imagesOf(input, key), taskSize }, meta: { address: url } };
+        return { ...base, input: { type: input.type, collection, title, slug: null, hidden: false, brief, images: await imagesOf(input, key), ...designs, taskSize: designs.references ? "complex" : taskSize }, meta: { address: url } };
       }
       const address = str(input, "address", { max: 200, optional: true })?.trim();
       if (address) {
@@ -636,11 +722,19 @@ async function prepareChange(name, input, key, context) {
         const folder = (u) => (u.endsWith("/") || path.posix.extname(u) ? u : `${u}/`);
         const existing = overview.collections.flatMap((c) => c.pages).find((p) => p.url && folder(p.url) === folder(address));
         if (existing) throw new ToolInputError(`${existing.file} is already at ${address}. Use edit_page to change it.`);
-        return { ...base, input: { type: "page", title, slug: null, address, hidden: false, brief, images: await imagesOf(input, key), taskSize }, meta: { address } };
+        return { ...base, input: { type: "page", title, slug: null, address, hidden: false, brief, images: await imagesOf(input, key), ...designs, taskSize: designs.references ? "complex" : taskSize }, meta: { address } };
       }
       const slug = str(input, "slug", { max: 70, optional: true });
       if (slug && !/^[a-z0-9-]+$/.test(slug)) throw new ToolInputError("slug may only use lowercase letters, numbers and dashes.");
-      return { ...base, input: { type: input.type, title, slug, hidden: input?.hidden === true, brief, images: await imagesOf(input, key), taskSize }, meta: {} };
+      // The file "Add a page" would make (scripts/new.js: <collection dir>/<slug>.md) is already there,
+      // say from create_missing_pages, whose result was lost: write that page instead of failing later.
+      const collectionDir = (await readSiteConfig(key)).collections?.[NEW_PAGE_COLLECTIONS[input.type]]?.dir;
+      const newSlug = slug || slugify(title);
+      if (input.type !== "post" && typeof collectionDir === "string" && newSlug) {
+        const file = `${collectionDir}/${newSlug}.md`;
+        if (existsSync(path.join(workspaceDir(key), file))) throw new ToolInputError(`${file} already exists. Write it with edit_page (file ${file}) instead of creating it again.`);
+      }
+      return { ...base, input: { type: input.type, title, slug, hidden: input?.hidden === true, brief, images: await imagesOf(input, key), ...designs, taskSize: designs.references ? "complex" : taskSize }, meta: {} };
     }
     case "delete_page": {
       const file = pageFileOf(input);
@@ -716,6 +810,14 @@ async function prepareChange(name, input, key, context) {
         throw new ToolInputError("navigation must be the complete object from read_navigation, with header and footer.");
       }
       const current = await getNavigation(key);
+      // A link to a page the site doesn't have stops publishing: Claude fixes it now, not the owner later.
+      const problems = navigationLinkProblems(navigation, current.pages ?? [], current.navigation);
+      if (problems.length) {
+        const visible = (current.pages ?? []).filter((p) => !p.draft).map((p) => `${p.url} (${p.title})`);
+        throw new ToolInputError(
+          `These links don't reach a page the site has:\n- ${problems.join("\n- ")}\nUse one of the site's addresses: ${visible.join(", ")}. Or create the page first (create_page with address), or leave the link out.`,
+        );
+      }
       return { ...base, input: { navigation }, meta: { before: current.navigation, version: current.version } };
     }
     case "update_site_details": {

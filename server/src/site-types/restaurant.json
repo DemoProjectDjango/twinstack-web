@@ -1,0 +1,139 @@
+{
+  "id": "restaurant",
+  "version": 2,
+  "label": "Restaurant",
+  "recognise": "Restaurants, cafés, bakeries, bars, takeaways, food trucks and caterers.",
+  "keywords": ["restaurant", "cafe", "café", "coffee", "bakery", "bar", "pub", "bistro", "food", "menu", "dining", "dine", "takeaway", "delivery", "catering", "kitchen", "chef", "pizza", "grill", "grilled", "brunch", "seafood", "flatbreads", "burger", "burgers", "biryani", "dishes"],
+  "research": "What websites of similar restaurants (same cuisine and, if given, the same area) usually show, and what guests look for before they book or order.",
+  "pages": [
+    { "title": "Home", "address": "/", "purpose": "The food and atmosphere in pictures, signature dishes, opening hours, location and how to book or order." },
+    { "title": "Menu", "address": "/menu.html", "purpose": "The menu by section, with short descriptions, prices and dietary labels where the owner gives them." },
+    { "title": "About us", "address": "/about.html", "purpose": "The story, the people and what makes the food special." },
+    { "title": "Book a table", "address": "/book.html", "purpose": "How to reserve, group bookings and private events." },
+    { "title": "Contact", "address": "/contact.html", "purpose": "Address with directions, phone, opening hours and ordering links." },
+    { "title": "Privacy policy", "address": "/privacy.html", "purpose": "How booking and contact details are used." }
+  ],
+  "sections": {
+    "header": "The restaurant's name or logo, the menu and main pages, and a Book a table or Order now button.",
+    "footer": "Address, phone, opening hours, social links, quick links and the privacy policy.",
+    "homepage": "A big, appetising hero photo with the name and a booking or ordering button; signature dishes; the story in a few lines; opening hours and location; reviews only if the owner gives real ones; a final call to book."
+  },
+  "rules": [
+    "Let photos lead: large images, short text.",
+    "Prices, allergens and dietary labels only as the owner gives them.",
+    "Opening hours and the address easy to find on every page.",
+    "Never invent reviews, ratings or awards."
+  ],
+  "demo": {
+    "note": "Where the owner gave no menu, write these as clearly marked sample dishes for them to replace.",
+    "items": ["House special", "Seasonal starter", "Chef's main", "Vegetarian choice", "Dessert of the day"]
+  },
+  "questions": [
+    {
+      "id": "menu",
+      "title": "Your menu and signature dishes",
+      "lead": "Your cuisine, dietary options and a few signature dishes. Prices only if you want them shown.",
+      "why": "The Menu page and the homepage's signature dishes need them.",
+      "always": true,
+      "fields": [
+        { "id": "cuisine", "type": "choice", "label": "Cuisine", "other": true, "saveTo": "profile", "role": "tags",
+          "choices": ["Local cuisine", "Mediterranean", "Italian or pizza", "Café and brunch", "Fine dining", "Street food"],
+          "hints": { "Mediterranean": ["mediterranean", "greek", "lebanese", "turkish"], "Italian or pizza": ["pizza", "pasta", "italian"], "Café and brunch": ["café", "cafe", "coffee"], "Fine dining": ["fine dining", "tasting menu"], "Street food": ["street food", "kebab", "fuchka"], "Local cuisine": ["bangladeshi", "bengali", "local food", "biryani"] } },
+        { "id": "dietary", "type": "multi", "label": "Dietary options (pick any)", "saveTo": "profile", "role": "tags",
+          "choices": ["Vegetarian options", "Vegan options", "Halal", "Gluten-free options", "Kids' menu"],
+          "hints": { "Vegetarian options": ["vegetarian"], "Vegan options": ["vegan"], "Halal": ["halal"], "Gluten-free options": ["gluten"], "Kids' menu": ["kids", "children"] } },
+        { "id": "dishes", "type": "items", "label": "Signature dishes", "itemLabel": "Dish", "max": 6, "saveTo": "profile", "role": "items",
+          "hint": "Up to 6 for the homepage. Claude writes the full Menu page from these and asks for the rest." },
+        { "id": "menuStyle", "type": "choice", "label": "How should the menu appear?", "saveTo": "profile",
+          "choices": ["Full menu with prices", "Highlights only", "I'll add it later"] }
+      ]
+    },
+    {
+      "id": "visit",
+      "title": "Where and when can guests find you?",
+      "lead": "These go in your site details, the footer and the Contact page.",
+      "why": "Only you know your address, phone and opening hours.",
+      "always": true,
+      "fields": [
+        { "id": "address", "type": "text", "label": "Address", "saveTo": "contact.address", "role": "address" },
+        { "id": "landmark", "type": "text", "label": "Landmark (optional)", "saveTo": "profile", "role": "address-note" },
+        { "id": "parking", "type": "text", "label": "Parking (optional)", "saveTo": "profile", "role": "address-note" },
+        { "id": "phone", "type": "tel", "label": "Phone for bookings", "saveTo": "contact.phone", "role": "phone" },
+        { "id": "email", "type": "email", "label": "Email", "saveTo": "contact.email", "role": "email" },
+        { "id": "hours", "type": "hours", "label": "Opening hours", "saveTo": "contact.hours", "role": "hours" }
+      ]
+    },
+    {
+      "id": "bookings",
+      "title": "How do guests book a table?",
+      "lead": "This sets the button in your header and on the homepage.",
+      "why": "It sets the button in your header.",
+      "always": true,
+      "fields": [
+        { "id": "action", "type": "choice", "label": "What should visitors do first?", "saveTo": "contact.bookingLabel", "role": "cta",
+          "choices": ["Book a table", "Order for delivery", "See the menu", "Visit us"],
+          "hints": { "Book a table": ["book", "reserve", "reservation"], "Order for delivery": ["order online", "delivery"] } },
+        { "id": "booking", "type": "choice", "label": "How do they book?", "saveTo": "profile",
+          "choices": ["By phone", "Booking link", "A form on the site", "Walk-ins only"],
+          "hints": { "By phone": ["by phone", "whatsapp", "call us"], "Booking link": ["booking link", "book online", "opentable"], "A form on the site": ["booking form"], "Walk-ins only": ["walk-in", "walk in"] } },
+        { "id": "bookingUrl", "type": "url", "label": "Booking link", "saveTo": "contact.bookingUrl", "showIf": { "field": "booking", "equals": "Booking link" } }
+      ]
+    },
+    {
+      "id": "look",
+      "title": "What should it look and feel like?",
+      "lead": "The atmosphere sets the colours and type; your logo and photos make it yours.",
+      "why": "Your logo and photos make the site yours.",
+      "always": true,
+      "fields": [
+        { "id": "feel", "type": "choice", "label": "Atmosphere", "saveTo": "profile", "role": "feel",
+          "choices": ["Cosy and rustic", "Modern and stylish", "Lively and casual", "Elegant"],
+          "themes": { "Cosy and rustic": "warm", "Modern and stylish": "modern", "Lively and casual": "lively", "Elegant": "elegant" },
+          "hints": { "Cosy and rustic": ["warm", "cosy", "cozy", "candle", "rustic"], "Modern and stylish": ["modern", "minimal", "sleek"], "Lively and casual": ["lively", "fun", "casual"], "Elegant": ["elegant", "luxury", "upscale"] } },
+        { "id": "logo", "type": "logo", "label": "Logo (optional)", "saveTo": "brand.logo" },
+        { "id": "photos", "type": "photos", "label": "Photos (up to 6)", "saveTo": "photos", "role": "photos", "hint": "Your food, your room, your team." }
+      ]
+    },
+    {
+      "id": "story",
+      "title": "Your story and where else to find you",
+      "lead": "Real words from you make the About page. Reviews only if they're real: we never invent them.",
+      "why": "Real words for the About page; reviews only if real.",
+      "always": true,
+      "fields": [
+        { "id": "story", "type": "textarea", "label": "Your story in a few sentences", "saveTo": "profile", "role": "story" },
+        { "id": "chef", "type": "text", "label": "Chef or owner (optional)", "saveTo": "profile", "role": "story-note" },
+        { "id": "founded", "type": "text", "label": "Year opened (optional)", "saveTo": "profile" },
+        { "id": "instagram", "type": "url", "label": "Instagram", "saveTo": "social.instagram", "role": "social" },
+        { "id": "facebook", "type": "url", "label": "Facebook", "saveTo": "social.facebook", "role": "social" },
+        { "id": "maps", "type": "url", "label": "Google Maps link", "saveTo": "profile", "role": "social" },
+        { "id": "reviews", "type": "textarea", "label": "Real guest reviews (optional)", "saveTo": "profile", "hint": "Paste up to 3, each with the guest's name. Leave empty and the site shows none until you add some." }
+      ]
+    },
+    {
+      "id": "delivery",
+      "title": "Do you deliver or do takeaway?",
+      "lead": "Delivery-app links sit next to your booking button, so guests can order in one tap.",
+      "why": "Delivery-app links get orders in one tap.",
+      "when": ["deliver", "delivery", "takeaway", "take-away", "foodpanda", "pathao", "order online", "uber eats"],
+      "fields": [
+        { "id": "delivery", "type": "multi", "label": "Where can guests order?", "saveTo": "profile", "role": "order",
+          "choices": ["Foodpanda", "Pathao Food", "Our own delivery", "Takeaway"],
+          "hints": { "Foodpanda": ["foodpanda"], "Pathao Food": ["pathao"], "Our own delivery": ["we deliver", "own delivery"], "Takeaway": ["takeaway", "take-away"] } },
+        { "id": "deliveryUrl", "type": "url", "label": "Link to your delivery page (optional)", "saveTo": "profile" }
+      ]
+    },
+    {
+      "id": "events",
+      "title": "Do you host groups or private events?",
+      "lead": "Restaurants that take groups say so on the Book a table page.",
+      "why": "You mention groups: places that seat them say how many.",
+      "when": ["group", "groups", "private", "event", "events", "party", "parties", "catering", "wedding"],
+      "fields": [
+        { "id": "events", "type": "yesno", "label": "Private events or catering?", "saveTo": "profile",
+          "hints": { "Yes": ["groups", "private", "events", "catering", "party", "parties"] } },
+        { "id": "groupSize", "type": "text", "label": "Largest group you can seat", "saveTo": "profile", "placeholder": "Up to 40 guests" }
+      ]
+    }
+  ]
+}

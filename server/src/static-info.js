@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { WorkspaceError, acquire, workspaceDir } from "./workspace.js";
+import { webLink, whatsappLink } from "./links.js";
 
 // The site's static information: site-wide facts that appear on many pages,
 // kept in site.config.json and content/data/*.json. The UI edits the values;
@@ -164,14 +165,34 @@ export async function checkStaticInfo(key, id, next) {
   if (!section) return "Unknown section.";
   const { data } = await readSection(workspaceDir(key), section);
   if (data === null) return `${section.file} doesn't exist.`;
-  return sectionError(section, data, parsedData(next));
+  return sectionError(section, data, withLinks(id, parsedData(next)));
+}
+
+/**
+ * The site details' links as people write them (links.js): social profiles and the booking page get
+ * https:// ("instagram.com/x" would otherwise be a link relative to the page), and a WhatsApp number
+ * becomes its wa.me chat link. The footer uses them as they are.
+ */
+function withLinks(id, next) {
+  if (id !== "site" || !next || typeof next !== "object" || Array.isArray(next)) return next;
+  const out = { ...next };
+  if (out.social && typeof out.social === "object") {
+    out.social = Object.fromEntries(Object.entries(out.social).map(([k, v]) => [k, typeof v === "string" ? webLink(v) : v]));
+  }
+  if (out.contact && typeof out.contact === "object") {
+    const contact = { ...out.contact };
+    if (typeof contact.bookingUrl === "string") contact.bookingUrl = webLink(contact.bookingUrl);
+    if (typeof contact.whatsappUrl === "string") contact.whatsappUrl = whatsappLink(contact.whatsappUrl);
+    out.contact = contact;
+  }
+  return out;
 }
 
 export async function saveStaticInfo(key, id, value) {
   const section = SECTIONS.find((s) => s.id === id);
   if (!section) throw new WorkspaceError("Unknown section.", 404);
   if (value === undefined) throw new WorkspaceError("Nothing to save.", 400);
-  const next = parsedData(value);
+  const next = withLinks(id, parsedData(value));
 
   const release = acquire(key, `saving ${section.file}`);
   try {

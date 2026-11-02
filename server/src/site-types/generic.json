@@ -1,0 +1,61 @@
+{
+  "id": "generic",
+  "version": 2,
+  "label": "Other business",
+  "recognise": "Any business that fits none of the other site types.",
+  "keywords": [],
+  "research": "What websites of similar businesses usually show, and what their customers look for before they get in touch.",
+  "pages": [
+    { "title": "Home", "address": "/", "purpose": "What the business does, why to choose it and what to do next." },
+    { "title": "About us", "address": "/about.html", "purpose": "The business's story and the people behind it." },
+    { "title": "Services", "address": "/services.html", "purpose": "What the business offers, in plain words." },
+    { "title": "Contact", "address": "/contact.html", "purpose": "How to get in touch and where to find the business." },
+    { "title": "Privacy policy", "address": "/privacy.html", "purpose": "How information sent through the site is used." }
+  ],
+  "sections": {
+    "header": "The business's name or logo, the main pages and one clear call to action.",
+    "footer": "Contact details, quick links, social links and the privacy policy.",
+    "homepage": "A clear hero saying what the business does with one call to action; the main offerings; why choose it; a final call to action."
+  },
+  "rules": ["Never invent facts, prices, reviews or awards."],
+  "demo": { "note": "Where the owner gave no details, write sample offerings, clearly marked for them to replace.", "items": [] },
+  "questions": [
+    {
+      "id": "offer", "title": "What do you offer?", "lead": "Your main products or services, most important first.", "why": "The homepage and Services page lead with them.", "always": true,
+      "fields": [
+        { "id": "offers", "type": "items", "label": "Main offerings", "itemLabel": "Offering", "max": 6, "saveTo": "profile", "role": "items" },
+        { "id": "audience", "type": "choice", "label": "Who are your customers?", "other": true, "saveTo": "profile",
+          "choices": ["Local people", "Businesses", "People anywhere online"] }
+      ]
+    },
+    {
+      "id": "contact", "title": "How can customers reach you?", "lead": "These go in your site details, the footer and the Contact page.", "why": "Only you know your contact details.", "always": true,
+      "fields": [
+        { "id": "action", "type": "choice", "label": "What should visitors do first?", "saveTo": "contact.bookingLabel", "role": "cta",
+          "choices": ["Call us", "Send a message", "Book online", "Visit us"] },
+        { "id": "phone", "type": "tel", "label": "Phone", "saveTo": "contact.phone", "role": "phone" },
+        { "id": "email", "type": "email", "label": "Email", "saveTo": "contact.email", "role": "email" },
+        { "id": "address", "type": "text", "label": "Address (optional)", "saveTo": "contact.address", "role": "address" },
+        { "id": "hours", "type": "hours", "label": "Opening hours (optional)", "saveTo": "contact.hours", "role": "hours" }
+      ]
+    },
+    {
+      "id": "look", "title": "What should it look and feel like?", "lead": "The feel sets the colours; your logo and photos make it yours.", "why": "Your logo and photos make the site yours.", "always": true,
+      "fields": [
+        { "id": "feel", "type": "choice", "label": "Feel", "saveTo": "profile", "role": "feel",
+          "choices": ["Friendly and warm", "Modern and bold", "Professional and calm"],
+          "themes": { "Friendly and warm": "warm", "Modern and bold": "modern", "Professional and calm": "calm" } },
+        { "id": "logo", "type": "logo", "label": "Logo (optional)", "saveTo": "brand.logo" },
+        { "id": "photos", "type": "photos", "label": "Photos (up to 6)", "saveTo": "photos", "role": "photos" }
+      ]
+    },
+    {
+      "id": "story", "title": "Your story and where else to find you", "lead": "Real words from you make the About page.", "why": "Real words for the About page.", "always": true,
+      "fields": [
+        { "id": "story", "type": "textarea", "label": "Your story in a few sentences", "saveTo": "profile", "role": "story" },
+        { "id": "instagram", "type": "url", "label": "Instagram", "saveTo": "social.instagram", "role": "social" },
+        { "id": "facebook", "type": "url", "label": "Facebook", "saveTo": "social.facebook", "role": "social" }
+      ]
+    }
+  ]
+}

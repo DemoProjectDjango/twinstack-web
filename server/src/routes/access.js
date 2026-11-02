@@ -10,6 +10,7 @@ import { INSIGHT_PERIODS, purchaseInsights } from "../purchase-insights.js";
 import { siteModelOverrides, usageByModel } from "../db.js";
 import { PURCHASE_EXPORT_FORMATS, exportPurchases, purchasesFileName } from "../purchases-export.js";
 import { requireAuth } from "../session.js";
+import { setupStats } from "../site-setup.js";
 import { zoneOf } from "../zoned-days.js";
 import { requireJson } from "./helpers.js";
 
@@ -189,6 +190,13 @@ function filtersWords({ status, provider, mode, q }) {
 
 // The app's provider balances, spend, runway, refusals and daily cost checks. `?fresh=1` asks
 // DeepSeek for its balance again; POST /providers/check also runs the cost check now.
+// How new sites' setup questions went, per site type (site-setup.js): `?days=` (7 to 365, default 90).
+adminRouter.get("/setup", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const days = Math.min(Math.max(Number.parseInt(req.query.days, 10) || 90, 7), 365);
+  res.json(await setupStats({ days }));
+});
+
 adminRouter.get("/providers", async (req, res) => {
   res.set("Cache-Control", "no-store");
   res.json(await providerHealth({ fresh: req.query.fresh === "1" }));

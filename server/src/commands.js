@@ -16,6 +16,7 @@ import {
 } from "./site-files.js";
 import { WorkspaceError, clearPreviewStamp, markInstalled, markPreviewBuilt } from "./workspace.js";
 import { SEO_REPORT } from "./seo.js";
+import { copyReference, referencePath } from "./assistant/attachments.js";
 import { saveCheckReport } from "./site-check.js";
 import { scanMissingPages } from "./missing-pages.js";
 
@@ -170,6 +171,16 @@ function jsSources(input) {
 }
 
 /** Images for a Claude edit: https URLs, or image files under assets/img/ in the repo. */
+/** Attached screenshots (att_… ids, at most 2) of a design the page should copy (edit-page.js --reference). */
+function references(input) {
+  const list = input?.references ?? [];
+  if (!Array.isArray(list) || list.length > 2) throw new WorkspaceError("Give at most 2 designs to follow.", 400);
+  return list.map((id) => {
+    if (typeof id !== "string" || !/^att_[0-9a-f]{16}$/.test(id)) throw new WorkspaceError("Attach the design again.", 400);
+    return id;
+  });
+}
+
 function images(input) {
   const list = input?.images ?? [];
   if (!Array.isArray(list) || list.length > MAX_IMAGES) {
@@ -333,11 +344,16 @@ export const COMMANDS = {
     needsKey: () => true,
     steps: (input) => {
       const args = [markdownPage(input), text(input, "instruction", "Instruction", { max: 4000, multiline: true })];
+      // Screenshots of a design to replicate, copied inside .git by prepare.
+      const designs = references(input).map((id) => `--reference=${referencePath(id)}`);
       // A whole page designed at high effort can take several minutes.
-      return [script("edit-page.js", [...args, ...claudeFlags(input)], 20 * MINUTE)];
+      return [script("edit-page.js", [...args, ...designs, ...claudeFlags(input)], 20 * MINUTE)];
     },
     // A stale proposal must never be shown as this preview's result.
-    prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
+    prepare: async (key, input) => {
+      for (const id of references(input)) await copyReference(key, id);
+      if (flag(input, "dryRun")) await clearProposal(key);
+    },
   },
 
   // The user writes the page's draft by hand; Claude turns it into the finished page.

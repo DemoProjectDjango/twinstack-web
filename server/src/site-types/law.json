@@ -1,0 +1,80 @@
+{
+  "id": "law",
+  "version": 2,
+  "label": "Law firm",
+  "recognise": "Law firms, solicitors, barristers, attorneys, notaries, immigration and legal advisers.",
+  "keywords": ["law", "lawyer", "lawyers", "legal", "attorney", "attorneys", "solicitor", "solicitors", "barrister", "advocate", "firm", "litigation", "immigration", "notary", "divorce", "court", "counsel"],
+  "research": "What websites of similar law firms (same practice areas and, if given, the same city) usually show, and what clients look for before they get in touch.",
+  "pages": [
+    { "title": "Home", "address": "/", "purpose": "The firm's practice areas, why clients choose it, and a clear way to book a consultation." },
+    { "title": "About the firm", "address": "/about.html", "purpose": "The firm's history, values and how it works with clients." },
+    { "title": "Practice areas", "address": "/practice-areas.html", "purpose": "Each area of law the firm handles, and the kinds of matters in each." },
+    { "title": "Our team", "address": "/team.html", "purpose": "The lawyers with their roles, admissions and specialisms." },
+    { "title": "Contact", "address": "/contact.html", "purpose": "How to book a consultation, phone, email, office address and hours." },
+    { "title": "Privacy policy", "address": "/privacy.html", "purpose": "How enquiries and personal information are handled and kept confidential." },
+    { "title": "Legal disclaimer", "address": "/disclaimer.html", "purpose": "That the site's content is general information, not legal advice, and contacting the firm doesn't create a client relationship." }
+  ],
+  "sections": {
+    "header": "The firm's name or logo, the main pages and a Book a consultation button.",
+    "footer": "Office address, phone, email, hours, practice areas, the privacy policy and the legal disclaimer.",
+    "homepage": "An assured, professional hero with what the firm does and a consultation button; the practice areas; why clients choose the firm; the team; how a first consultation works; a final call to get in touch."
+  },
+  "rules": [
+    "Never promise results or quote past case outcomes the owner didn't give.",
+    "State that the site's content is general information and not legal advice.",
+    "Admissions, accreditations, fees and awards only as the owner gives them.",
+    "Plain English over legal jargon; explain terms clients may not know.",
+    "A confident, sober look: strong type, restrained colour, generous spacing."
+  ],
+  "demo": {
+    "note": "Where the owner gave no details, write these as clearly marked samples for them to replace.",
+    "items": ["Family law", "Property and conveyancing", "Business and contracts", "Employment law", "Wills and estates"]
+  },
+  "questions": [
+    {
+      "id": "areas", "title": "Which areas of law do you handle?", "lead": "The ones you want most enquiries for, first.", "why": "The Practice areas page and the homepage lead with them.", "always": true,
+      "fields": [
+        { "id": "areas", "type": "multi", "label": "Practice areas", "saveTo": "profile", "role": "tags",
+          "choices": ["Family law", "Business and corporate", "Property", "Criminal defence", "Immigration", "Employment"],
+          "hints": { "Family law": ["family", "divorce", "custody"], "Business and corporate": ["business", "corporate", "contracts"], "Property": ["property", "conveyancing", "real estate"], "Criminal defence": ["criminal"], "Immigration": ["immigration", "visa"], "Employment": ["employment"] } },
+        { "id": "clients", "type": "choice", "label": "Who are your clients mostly?", "saveTo": "profile",
+          "choices": ["Individuals and families", "Small businesses", "Large companies", "A mix"] }
+      ]
+    },
+    {
+      "id": "consultation", "title": "How does a first consultation work?", "lead": "This sets the button in your header.", "why": "It sets the button in your header.", "always": true,
+      "fields": [
+        { "id": "action", "type": "choice", "label": "What should visitors do first?", "saveTo": "contact.bookingLabel", "role": "cta",
+          "choices": ["Book a consultation", "Call us", "Send an enquiry"], "hints": { "Book a consultation": ["consultation", "book"] } },
+        { "id": "consultation", "type": "choice", "label": "First consultation", "saveTo": "profile", "choices": ["Free first call", "Paid consultation", "Book through a form"],
+          "hints": { "Free first call": ["free consultation", "free first"] } },
+        { "id": "bookingUrl", "type": "url", "label": "Booking link (optional)", "saveTo": "contact.bookingUrl" }
+      ]
+    },
+    {
+      "id": "contact", "title": "Where can clients reach you?", "lead": "These go in your site details, the footer and the Contact page.", "why": "Only you know your office address and numbers.", "always": true,
+      "fields": [
+        { "id": "address", "type": "text", "label": "Office address", "saveTo": "contact.address", "role": "address" },
+        { "id": "phone", "type": "tel", "label": "Phone", "saveTo": "contact.phone", "role": "phone" },
+        { "id": "email", "type": "email", "label": "Email for enquiries", "saveTo": "contact.email", "role": "email" },
+        { "id": "hours", "type": "hours", "label": "Office hours", "saveTo": "contact.hours", "role": "hours" }
+      ]
+    },
+    {
+      "id": "team", "title": "Should the site show your lawyers?", "lead": "Clients like to know who they'll work with.", "why": "The Our team page needs them.", "always": true,
+      "fields": [
+        { "id": "lawyers", "type": "items", "label": "Lawyers", "itemLabel": "Name", "descLabel": "Role and specialism", "max": 6, "saveTo": "profile", "role": "items", "noPrice": true }
+      ]
+    },
+    {
+      "id": "look", "title": "What should it look and feel like?", "lead": "The feel sets the colours; your logo makes it yours.", "why": "Your logo and photos make the site yours.", "always": true,
+      "fields": [
+        { "id": "feel", "type": "choice", "label": "Feel", "saveTo": "profile", "role": "feel",
+          "choices": ["Traditional and authoritative", "Modern and approachable", "Premium and minimal"],
+          "themes": { "Traditional and authoritative": "classic", "Modern and approachable": "modern", "Premium and minimal": "elegant" } },
+        { "id": "logo", "type": "logo", "label": "Logo (optional)", "saveTo": "brand.logo" },
+        { "id": "photos", "type": "photos", "label": "Photos (up to 6)", "saveTo": "photos", "role": "photos", "hint": "Your office and your team." }
+      ]
+    }
+  ]
+}

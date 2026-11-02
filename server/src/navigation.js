@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { WorkspaceError, acquire, workspaceDir } from "./workspace.js";
 import { applyUrlPattern, contentVersion, frontmatter, inside, listFiles, readText } from "./site-files.js";
+import { normalizeLink } from "./links.js";
 
 // The site's header and footer, kept in content/data/navigation.json: the header menu (links,
 // dropdowns of links, and collection menus that list a collection's pages themselves), the header
@@ -218,9 +219,10 @@ function text(value, where, what, max) {
 function link(value, where, { optional = false } = {}) {
   if (optional && (value === undefined || value === null || value === "")) return undefined;
   if (typeof value !== "string" || !value.trim()) fail(`${where} needs a link.`);
-  const trimmed = value.trim();
+  // As people write them: "instagram.com/x", an email address, a phone number (links.js).
+  const trimmed = normalizeLink(value);
   if (trimmed.length > 300 || !LINK.test(trimmed)) {
-    fail(`${where}: "${trimmed.slice(0, 80)}" isn't a link the site can use. Start it with /, https://, mailto: or tel:.`);
+    fail(`${where}: "${trimmed.slice(0, 80)}" isn't a link the site can use. Use a page's address (/about.html), a web address (https://…), an email address or a phone number.`);
   }
   return trimmed;
 }

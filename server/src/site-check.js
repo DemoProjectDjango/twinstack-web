@@ -75,9 +75,11 @@ async function describe(message, { pages, listings, dir }) {
     // "/index.html" is the homepage ("/x/index.html" the page at /x/). A check from before it knew
     // that reports the link as missing although the page is there: the site update fixes the check.
     const folder = href.replace(/(^|\/)index\.html$/i, "$1");
-    const indexOf = folder !== href ? byUrl(folder) : null;
-    const listing = listings.find((l) => normalized(l.url) === normalized(href));
     const extension = path.posix.extname(href).toLowerCase();
+    // So is "/about" when the page is /about.html: GitHub Pages serves it, and so does the check
+    // since it learnt that ("served" in check.js).
+    const indexOf = folder !== href ? byUrl(folder) : !extension && !href.endsWith("/") ? byUrl(`${href}.html`) : null;
+    const listing = listings.find((l) => normalized(l.url) === normalized(href));
     const target =
       indexOf && !indexOf.draft
         ? "index"

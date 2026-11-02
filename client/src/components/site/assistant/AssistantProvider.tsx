@@ -68,6 +68,8 @@ type AssistantValue = {
   applyingAll: boolean;
   /** The proposals being carried out one after another (automatic changes or "Accept all"), in order. */
   queued: string[];
+  /** When the owner last sent a message of their own (0 before any): a new piece of work, not the AI carrying on. */
+  sentAt: number;
   /** Claude's changes are carried out (and its pages kept) as soon as its answer ends, with no buttons to press. */
   autoApply: boolean;
   setAutoApply: (on: boolean) => void;
@@ -165,6 +167,7 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
   // The provider is only mounted in the browser (once the site has opened), so storage can be read here.
   const [restored] = useState(() => readPending(owner, repo));
   const [queued, setQueued] = useState<string[]>(restored.queued);
+  const [sentAt, setSentAt] = useState(0);
   // queueKind (below) for setAutoApply, which is made before it.
   const queueKindRef = useRef<QueueKind>(null);
   // The assistant messages whose proposals have already led to an automatic "carry on".
@@ -261,6 +264,7 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
     async (body: { text?: string; continue?: boolean; attachments?: string[] }) => {
       setError(null);
       setOpen(true);
+      if (!body.continue) setSentAt(Date.now());
       try {
         const result = await assistantApi.send(owner, repo, { ...body, context: { ...context, autoApply } });
         if (result.turn?.id) {
@@ -363,9 +367,11 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
 
   /** Has Claude's writer produce a new version of the page, ready to keep: the same preview as the page editor's. */
   const writePage = useCallback(
-    async (file: string, instruction: string, images: string[] = [], taskSize?: unknown) => {
+    async (file: string, instruction: string, images: string[] = [], taskSize?: unknown, references?: unknown) => {
+      // Attached screenshots of a design to copy (design_reference): the server keeps them inside .git for the writer.
+      const designs = Array.isArray(references) && references.length ? { references } : {};
       // Claude's own "small"/"complex" label decides which model writes it (the server's task-size.js).
-      const job = await runAndWait("page-edit", { page: file, instruction, images, dryRun: true, ...(typeof taskSize === "string" && { taskSize }) });
+      const job = await runAndWait("page-edit", { page: file, instruction, images, dryRun: true, ...designs, ...(typeof taskSize === "string" && { taskSize }) });
       if (job.status !== "succeeded") throw new Error(`The AI couldn't write the page.\n${tail(job.output)}`);
       const { proposal } = await api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal"));
       if (!proposal || proposal.file !== file) throw new Error("The AI didn't come back with a new version of the page.");
@@ -388,7 +394,7 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
       await record(action, "running");
       switch (action.tool) {
         case "edit_page":
-          await writePage(input.file, input.instruction, images, input.taskSize);
+          await writePage(input.file, input.instruction, images, input.taskSize, input.references);
           await record(action, "ready", "The new version is ready to look at.");
           return;
         case "design_header_and_footer": {
@@ -441,7 +447,7 @@ ${tail(job.output)}`);
           }
           // Kept on the action before the writing starts, which can fail.
           if (file !== earlier) await record(action, "running", `Created ${file}; writing it.`, file);
-          await writePage(file, `This is a new, empty page. Write it from scratch.\n\n${input.brief}`, images, input.taskSize);
+          await writePage(file, `This is a new, empty page. Write it from scratch.\n\n${input.brief}`, images, input.taskSize, input.references);
           await record(action, "ready", `Created ${file}; its first version is ready to look at.`, file);
           return;
         }
@@ -759,6 +765,7 @@ ${tail(job.output)}`);
     retry,
     applyingAll,
     queued,
+    sentAt,
     autoApply,
     setAutoApply,
   };

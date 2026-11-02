@@ -266,6 +266,21 @@ export function sitePathFor(meta, wanted) {
   return { dir: isImage ? IMAGE_DIR : FILE_DIR, base, extension };
 }
 
+// Design references (edit-page.js --reference): attached screenshots of a design to copy, kept inside
+// .git so they're never a change to the site, and named by the attachment so the command can say
+// where they are before they're copied.
+export const REFERENCE_DIR = ".git/twinstack-references";
+export const referencePath = (id) => `${REFERENCE_DIR}/${id}.img`;
+
+/** Copies an attached image where the page writer reads design references from. */
+export async function copyReference(key, id) {
+  const { meta, bytes } = await readAttachment(key, id);
+  if (meta.kind !== "image") throw new WorkspaceError(`${meta.name} isn't an image, so it can't be a design to follow.`, 400);
+  const target = path.join(workspaceDir(key), REFERENCE_DIR);
+  await fs.mkdir(target, { recursive: true });
+  await fs.writeFile(path.join(workspaceDir(key), referencePath(id)), bytes);
+}
+
 /**
  * Copies an attachment into the site (a change like any other); returns its path in the repo.
  * `folder` puts an image somewhere other than the uploads (made pictures go to assets/img/generated).

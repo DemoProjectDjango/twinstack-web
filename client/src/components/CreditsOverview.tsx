@@ -75,6 +75,7 @@ const COMMAND_LABELS: Record<string, string> = {
 function usageLabel(u: Usage) {
   if (u.kind === "assistant") return "Ask Claude";
   if (u.kind === "site-update") return "Updating your site";
+  if (u.kind === "setup") return "Setting up your site";
   return (u.command && COMMAND_LABELS[u.command]) ?? "Claude command";
 }
 

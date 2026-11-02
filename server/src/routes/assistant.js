@@ -24,6 +24,7 @@ import {
   findConversation,
   getAssistantModel,
   listConversations,
+  noteSetupSignal,
   reopenConversation,
   updateConversation,
 } from "../db.js";
@@ -294,6 +295,8 @@ assistantRouter.post(
 
     let conversation = await findConversation(userId, siteId);
     if (conversation && runningTurnFor(conversation.id)) throw new WorkspaceError("Claude is still answering. Wait for it, or stop it.", 409);
+    // The owner's own messages in a new site's first week (the setup's build request among them), for the setup numbers.
+    if (!continuing) noteSetupSignal(siteId, "messages");
     // A conversation is bound to the tools it started with: when they've changed (Claude learnt
     // something new), it carries on as a fresh one. So does a past one reopened from before past
     // conversations kept their files: its history points at files Claude no longer has.

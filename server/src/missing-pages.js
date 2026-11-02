@@ -86,6 +86,9 @@ export async function scanMissingPages(key) {
       if (devPrefix && href.startsWith("/dist/")) href = href.slice(5) || "/";
       // /x/index.html is the page at /x/, for the unlinked-pages list too.
       href = href.replace(/(^|\/)index\.html$/i, "$1");
+      // "/about" is the page at /about.html when there's no /about/ page: GitHub Pages serves it
+      // (as check.js's `served` and the preview do), so it links to that page.
+      if (!path.posix.extname(href) && !href.endsWith("/") && !served.has(`${href}/`) && served.has(`${href}.html`)) href = `${href}.html`;
       const extension = path.posix.extname(href).toLowerCase();
       // Only links to pages: files are for the Publish screen's check.
       if (extension && extension !== ".html") continue;

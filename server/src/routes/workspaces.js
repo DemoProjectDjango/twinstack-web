@@ -6,7 +6,7 @@ import { COMMANDS, jobEnv } from "../commands.js";
 import { describeTaskSize, taskSize } from "../task-size.js";
 import { listOriginalPages, prepareOriginalPage } from "../original-pages.js";
 import { config } from "../config.js";
-import { getClaudeModel, getSiteDisplayName } from "../db.js";
+import { getClaudeModel, getSiteDisplayName, noteSetupPublished, noteSetupSignal } from "../db.js";
 import { issueProxyToken } from "../claude-proxy.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeKeyFor } from "../credits.js";
 import { FastModelError, chooseSiteFastModel, fastModelForSite, siteFastModelView } from "../fast-model.js";
@@ -65,6 +65,7 @@ import {
 } from "../site-files.js";
 import { getStaticInfo, saveStaticInfo } from "../static-info.js";
 import { getBrand, saveBrand, saveBrandImage } from "../brand.js";
+import { planSetup, saveSetup } from "../site-setup.js";
 import { APPEARANCE_MARKER, HEADER_FOOTER_FILES, HEADER_FOOTER_MARKERS, getNavigation, saveNavigation, setPageMenu } from "../navigation.js";
 import { SEO_FILES, SEO_MARKERS, installSeo, readSeo } from "../seo.js";
 import { readCheckReport } from "../site-check.js";
@@ -131,7 +132,11 @@ workspacesRouter.post(
     if (!Array.isArray(paths) || !paths.length || paths.some((p) => typeof p !== "string")) {
       throw new WorkspaceError("Choose at least one file to discard.", 400);
     }
-    res.json(await discardChanges(keyFor(req), paths));
+    const key = keyFor(req);
+    const result = await discardChanges(key, paths);
+    // Throwing changes away in a new site's first week: a sign its setup missed something.
+    siteIdFor(key).then((siteId) => noteSetupSignal(siteId, "discards"), () => {});
+    res.json(result);
   }),
 );
 
@@ -146,6 +151,7 @@ workspacesRouter.post(
     if (branch !== undefined && typeof branch !== "string") throw new WorkspaceError("Invalid branch name.", 400);
     const accessToken = await getAccessToken(req, res);
     const result = await commitAndPush({ key, accessToken, user: req.user.github, message: message.trim(), mode, branch });
+    siteIdFor(key).then(noteSetupPublished, () => {});
     res.json({ ...result, status: await getStatus(key) });
   }),
 );
@@ -257,6 +263,8 @@ workspacesRouter.post(
       onSuccess: command.onSuccess && (() => command.onSuccess(key)),
       onEnd: command.onEnd && ((result) => command.onEnd(key, result)),
     });
+    // Claude work in a new site's first week, for the setup numbers.
+    if (command.claude) siteIdFor(key).then((siteId) => noteSetupSignal(siteId, "commands"), () => {});
     res.status(202).json({ job });
   }),
 );
@@ -768,6 +776,40 @@ workspacesRouter.post(
   // Logos up to 2 MB, and base64 adds a third.
   express.json({ limit: "3mb" }),
   handle(async (req, res) => res.status(201).json(await saveBrandImage(keyFor(req), req.body ?? {}))),
+);
+
+/*
+ * A new site's setup (site-setup.js): the AI's analysis for a site opened without answers, and
+ * saving the answers. `setup` is what the client's SetupFlow collected; `options` what the site
+ * already has, for the build request it returns.
+ */
+
+workspacesRouter.post(
+  "/:owner/:repo/setup/plan",
+  handle(async (req, res) => {
+    const siteId = await openSiteId(req);
+    const { name, what, brief } = req.body ?? {};
+    // The pages the site has, for the plan to update or keep rather than create again.
+    const overview = await getOverview(keyFor(req));
+    const existing = overview.collections
+      .flatMap((c) => c.pages)
+      .filter((p) => typeof p.url === "string")
+      .slice(0, 40)
+      .map((p) => ({ url: p.url, title: p.title ?? p.url }));
+    res.json(await planSetup({ userId: req.user.id, siteId, name, what, brief, existing: existing.length ? existing : undefined }));
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/setup",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const siteId = await openSiteId(req);
+    const { setup, options } = req.body ?? {};
+    const has = options && typeof options === "object" ? { hasHome: options.hasHome === true, chrome: options.chrome !== false, fresh: options.fresh === true } : {};
+    const saved = await saveSetup({ key, siteId, body: setup, options: has });
+    res.json({ ...saved, status: await getStatus(key) });
+  }),
 );
 
 /* The header and footer (content/data/navigation.json): menus, button, footer columns, legal links and their look. */

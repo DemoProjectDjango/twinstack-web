@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
 import { repoNameFor, type Repo } from "@/lib/repos";
+import { setPendingSetup, type SetupAnswers } from "@/lib/setup";
 import { markSiteEntry } from "@/lib/site-entry";
+import { SetupFlow } from "./setup/SetupFlow";
 import { Button, Details, Spinner, inputClass } from "./site/ui";
 
 // What a copy goes through; the request is one call, so these advance on a timer while it runs.
@@ -24,11 +26,16 @@ type Status =
   | { state: "error"; message: string; reauth?: boolean }
   | { state: "done"; repo: Repo };
 
+// Starting fresh asks the setup questions before the site is made (setup/SetupFlow.tsx): what the
+// business does, a brief, the AI's analysis and the questions it chose, then a review. The editor
+// applies the answers once the site opens (lib/setup.ts, site/FirstRunSetup.tsx).
+
 /**
- * Makes a new site, in a modal: copies the template into the user's GitHub account (POST
- * …/duplicate, which also turns on GitHub Pages), showing the steps while it works, then opens it
- * in the site editor. "Use a repo I already have" instead makes one of the owner's repos a site
- * (POST /api/import): as it is when it's already a Twinstack site, else with the site tools added.
+ * Makes a new site, in a modal: its name, then the setup questions (full screen), then copies the template into the user's
+ * GitHub account (POST …/duplicate, which also turns on GitHub Pages), showing the steps while it
+ * works, then opens it in the site editor. "Use a repo I already have" instead makes one of the
+ * owner's repos a site (POST /api/import): as it is when it's already a Twinstack site, else with
+ * the site tools added.
  */
 export function CreateSite({ template, login, onCreated, onCancel }: { template: Repo; login: string; onCreated: (repo: Repo) => void; onCancel?: () => void }) {
   const [source, setSource] = useState<Source>("template");
@@ -40,10 +47,13 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
   const [picked, setPicked] = useState("");
   const [inspection, setInspection] = useState<Inspection | { error: string } | "checking" | null>(null);
   const [agreed, setAgreed] = useState(false);
+  // The setup questions, full screen, once the name is given (or skipped).
+  const [asking, setAsking] = useState(false);
   const nameId = useId();
   const router = useRouter();
 
-  const name = customName ?? repoNameFor(siteName);
+  // Skipping the name makes the site with the template's placeholder, "My Website".
+  const name = customName ?? repoNameFor(siteName.trim() || "My Website");
   const working = status.state === "working" || status.state === "done";
   const importMode = source === "existing" && inspection && typeof inspection === "object" && "kind" in inspection ? inspection : null;
   const stages = source === "template" ? STAGES : importMode?.kind === "other" ? ADOPT_STAGES : IMPORT_STAGES;
@@ -97,12 +107,18 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
     };
   }, [source, picked]);
 
-  const canSubmit =
-    source === "template" ? Boolean(name) : Boolean(importMode && (importMode.kind === "site" || (importMode.canAdopt && agreed)));
+  const canSubmit = source === "template" ? Boolean(name) : Boolean(importMode && (importMode.kind === "site" || (importMode.canAdopt && agreed)));
 
-  async function submit(e: React.FormEvent) {
+  function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
+    if (source === "template") setAsking(true);
+    else void create(null);
+  }
+
+  /** Makes the site (with the setup's answers when starting fresh) and opens it. */
+  async function create(setup: SetupAnswers | null) {
+    setAsking(false);
     setStage(0);
     setStatus({ state: "working" });
     try {
@@ -132,7 +148,8 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
       }
       setStatus({ state: "done", repo: data.repo });
       onCreated(data.repo);
-      // Straight on to the new site.
+      // Straight on to the new site, which applies the setup answers as it opens.
+      if (setup) setPendingSetup(data.repo.owner, data.repo.name, setup);
       markSiteEntry(data.repo.owner, data.repo.name);
       router.push(`/sites/${encodeURIComponent(data.repo.owner)}/${encodeURIComponent(data.repo.name)}`);
     } catch {
@@ -158,13 +175,16 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
       ref={dialog}
       aria-labelledby={`${nameId}-title`}
       onCancel={(e) => {
+        // A file picker closed without a choice fires `cancel` on its input, and it bubbles here.
+        if (e.target !== e.currentTarget) return;
         e.preventDefault();
-        close();
+        // During the questions, only the close button leaves: the answers aren't lost by accident.
+        if (!asking) close();
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) close();
+        if (e.target === e.currentTarget && !asking) close();
       }}
-      className="m-auto w-[calc(100%-2rem)] max-w-lg overflow-visible rounded-xl border border-zinc-200 bg-background p-0 text-foreground shadow-xl backdrop:bg-black/50 dark:border-zinc-800"
+      className={`m-auto w-[calc(100%-2rem)] max-w-lg ${asking ? "max-h-[calc(100dvh-2rem)] overflow-y-auto" : "overflow-visible"} rounded-xl border border-zinc-200 bg-background p-0 text-foreground shadow-xl backdrop:bg-black/50 dark:border-zinc-800`}
     >
       {working ? (
         <div className="p-6" aria-live="polite">
@@ -201,6 +221,39 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
             })}
           </ol>
         </div>
+      ) : asking ? (
+        // The setup questions, in this same window so its look doesn't change after the name.
+        <div className="p-6">
+          <div className="flex items-start gap-3">
+            <div>
+              <h2 id={`${nameId}-title`} className="text-lg font-semibold">
+                Create a new site
+              </h2>
+              <p className="mt-1 text-sm text-zinc-500">A few questions about your business. Nothing is created until you&apos;ve checked your answers.</p>
+            </div>
+            <button
+              type="button"
+              onClick={close}
+              aria-label="Close"
+              className="-mr-2 -mt-1 ml-auto flex size-8 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-foreground dark:hover:bg-zinc-900"
+            >
+              <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+                <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+          <div className="mt-5">
+            <SetupFlow
+              embedded
+              name={siteName.trim()}
+              finishLabel="Create my site"
+              finishNote="Then your site is made, and Claude builds it from your answers."
+              onBack={() => setAsking(false)}
+              onCancel={close}
+              onDone={(setup) => create(setup)}
+            />
+          </div>
+        </div>
       ) : (
         <form onSubmit={submit} className="space-y-5 p-6">
           <div className="flex items-start gap-3">
@@ -226,103 +279,115 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
             </button>
           </div>
 
-          <div role="radiogroup" aria-label="Start from" className="grid grid-cols-2 gap-1 rounded-lg bg-zinc-100 p-1 text-sm dark:bg-zinc-900">
-            {(
-              [
-                ["template", "Start fresh"],
-                ["existing", "Use a repo I already have"],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                role="radio"
-                aria-checked={source === value}
-                onClick={() => setSource(value)}
-                className={`rounded-md px-3 py-1.5 ${source === value ? "bg-background font-medium shadow-sm" : "text-zinc-600 hover:text-foreground dark:text-zinc-400"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {source === "existing" && (
-            <div className="space-y-3">
-              <RepoPicker candidates={candidates} picked={picked} onPick={pick} />
-              {inspection === "checking" && (
-                <p className="flex items-center gap-2 text-sm text-zinc-500">
-                  <Spinner /> Checking it…
-                </p>
-              )}
-              {inspection && typeof inspection === "object" && "error" in inspection && (
-                <p className="text-sm text-red-700 dark:text-red-300">{inspection.error}</p>
-              )}
-              {importMode?.kind === "site" && (
-                <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
-                  This is already a Twinstack site. It will be added to your sites as it is, and published from it with GitHub Pages.
-                </p>
-              )}
-              {importMode?.kind === "other" && !importMode.canAdopt && (
-                <p className="rounded-md bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200">
-                  This repository has its own package.json, so the site tools can&apos;t be added to it. Start fresh instead, then bring its pages in
-                  with Pages → &quot;Bring in a page from another website&quot;.
-                </p>
-              )}
-              {importMode?.kind === "other" && importMode.canAdopt && (
-                <div className="space-y-2 rounded-md bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
-                  <p>This isn&apos;t a Twinstack site yet. The site tools will be added to it in one change on its main branch:</p>
-                  <ul className="list-disc space-y-1 pl-5">
-                    <li>None of its files are changed or removed.</li>
-                    <li>Its GitHub Pages switches to the new site, which starts with a simple homepage.</li>
-                    <li>Its existing pages stay in the repository. Bring them in with Pages → &quot;Bring in a page from another website&quot;.</li>
-                  </ul>
-                  <label className="flex items-start gap-2 pt-1 font-medium">
-                    <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5" />
-                    Add the site tools to {importMode.repo}
-                  </label>
+          <>
+            {source === "template" && (
+              <div>
+                <div className="flex items-center gap-1.5" aria-hidden="true">
+                  {[0, 1, 2].map((i) => (
+                    <span key={i} className={`h-1 flex-1 rounded-full ${i === 0 ? "bg-foreground" : "bg-zinc-200 dark:bg-zinc-800"}`} />
+                  ))}
                 </div>
+                <p className="mt-3 text-xs font-medium text-zinc-500">Step 1</p>
+              </div>
+            )}
+            <div role="radiogroup" aria-label="Start from" className="grid grid-cols-2 gap-1 rounded-lg bg-zinc-100 p-1 text-sm dark:bg-zinc-900">
+              {(
+                [
+                  ["template", "Start fresh"],
+                  ["existing", "Use a repo I already have"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={source === value}
+                  onClick={() => setSource(value)}
+                  className={`rounded-md px-3 py-1.5 ${source === value ? "bg-background font-medium shadow-sm" : "text-zinc-600 hover:text-foreground dark:text-zinc-400"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {source === "existing" && (
+              <div className="space-y-3">
+                <RepoPicker candidates={candidates} picked={picked} onPick={pick} />
+                {inspection === "checking" && (
+                  <p className="flex items-center gap-2 text-sm text-zinc-500">
+                    <Spinner /> Checking it…
+                  </p>
+                )}
+                {inspection && typeof inspection === "object" && "error" in inspection && (
+                  <p className="text-sm text-red-700 dark:text-red-300">{inspection.error}</p>
+                )}
+                {importMode?.kind === "site" && (
+                  <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+                    This is already a Twinstack site. It will be added to your sites as it is, and published from it with GitHub Pages.
+                  </p>
+                )}
+                {importMode?.kind === "other" && !importMode.canAdopt && (
+                  <p className="rounded-md bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                    This repository has its own package.json, so the site tools can&apos;t be added to it. Start fresh instead, then bring its pages in
+                    with Pages → &quot;Bring in a page from another website&quot;.
+                  </p>
+                )}
+                {importMode?.kind === "other" && importMode.canAdopt && (
+                  <div className="space-y-2 rounded-md bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+                    <p>This isn&apos;t a Twinstack site yet. The site tools will be added to it in one change on its main branch:</p>
+                    <ul className="list-disc space-y-1 pl-5">
+                      <li>None of its files are changed or removed.</li>
+                      <li>Its GitHub Pages switches to the new site, which starts with a simple homepage.</li>
+                      <li>Its existing pages stay in the repository. Bring them in with Pages → &quot;Bring in a page from another website&quot;.</li>
+                    </ul>
+                    <label className="flex items-start gap-2 pt-1 font-medium">
+                      <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5" />
+                      Add the site tools to {importMode.repo}
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div>
+              <label htmlFor={nameId} className="block text-sm font-medium">
+                What&apos;s your site called?
+                {source === "existing" && <span className="font-normal text-zinc-500"> (optional)</span>}
+              </label>
+              <input
+                id={nameId}
+                value={siteName}
+                onChange={(e) => setSiteName(e.target.value)}
+                maxLength={100}
+                placeholder="Bright Bakery"
+                className={`${inputClass} mt-1 py-2`}
+                autoFocus={source === "template"}
+              />
+              {source === "template" && name && (
+                <p className="mt-1.5 text-xs text-zinc-500">
+                  Its web address will be <span className="font-medium text-foreground">{login.toLowerCase()}.github.io/{name}</span>. You
+                  can use your own domain name later.
+                </p>
               )}
             </div>
-          )}
 
-          <div>
-            <label htmlFor={nameId} className="block text-sm font-medium">
-              What&apos;s your site called?
-              {source === "existing" && <span className="font-normal text-zinc-500"> (optional)</span>}
-            </label>
-            <input
-              id={nameId}
-              value={siteName}
-              onChange={(e) => setSiteName(e.target.value)}
-              required={source === "template"}
-              maxLength={100}
-              placeholder="Bright Bakery"
-              className={`${inputClass} mt-1 py-2`}
-              autoFocus={source === "template"}
-            />
-            {source === "template" && name && (
-              <p className="mt-1.5 text-xs text-zinc-500">
-                Its web address will be <span className="font-medium text-foreground">{login.toLowerCase()}.github.io/{name}</span>. You
-                can use your own domain name later.
-              </p>
-            )}
-          </div>
-
-          {source === "template" && <Details summary="More options">
-            <div className="space-y-3">
-              <label className="block text-sm">
-                <span className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">Name on GitHub</span>
-                <input
-                  value={name}
-                  onChange={(e) => setCustomName(e.target.value)}
-                  pattern="[A-Za-z0-9._\-]{1,100}"
-                  title="Letters, numbers, '.', '-' or '_'"
-                  className={`${inputClass} mt-1 font-mono`}
-                />
-                <span className="mt-1 block text-xs text-zinc-500">Also the last part of the web address.</span>
-              </label>
-            </div>
-          </Details>}
+            {source === "template" && <Details summary="More options">
+              <div className="space-y-3">
+                <label className="block text-sm">
+                  <span className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">Name on GitHub</span>
+                  <input
+                    value={name}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    pattern="[A-Za-z0-9._\-]{1,100}"
+                    title="Letters, numbers, '.', '-' or '_'"
+                    className={`${inputClass} mt-1 font-mono`}
+                  />
+                  <span className="mt-1 block text-xs text-zinc-500">Also the last part of the web address.</span>
+                </label>
+              </div>
+            </Details>}
+            {source === "template" && <p className="text-sm text-zinc-500">Next: a few questions about your business, chosen by the AI from what you tell it. Nothing is created until you&apos;ve checked your answers.</p>}
+          </>
 
           {status.state === "error" && (
             <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
@@ -337,12 +402,17 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
 
           <div className="flex flex-wrap justify-end gap-2">
             {onCancel && (
-              <Button onClick={close} className="px-4 py-2">
+              <Button onClick={close} className="mr-auto px-4 py-2">
                 Cancel
               </Button>
             )}
+            {source === "template" && (
+              <Button variant="ghost" onClick={() => setAsking(true)} className="px-4 py-2 text-zinc-500">
+                Skip
+              </Button>
+            )}
             <Button type="submit" variant="primary" className="px-5 py-2" disabled={!canSubmit}>
-              {source === "template" ? "Create my site" : "Use this repository"}
+              {source === "template" ? "Continue" : "Use this repository"}
             </Button>
           </div>
         </form>
