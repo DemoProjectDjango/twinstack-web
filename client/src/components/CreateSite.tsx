@@ -164,7 +164,7 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
       onClick={(e) => {
         if (e.target === e.currentTarget) close();
       }}
-      className="m-auto w-[calc(100%-2rem)] max-w-lg rounded-xl border border-zinc-200 bg-background p-0 text-foreground shadow-xl backdrop:bg-black/50 dark:border-zinc-800"
+      className="m-auto w-[calc(100%-2rem)] max-w-lg overflow-visible rounded-xl border border-zinc-200 bg-background p-0 text-foreground shadow-xl backdrop:bg-black/50 dark:border-zinc-800"
     >
       {working ? (
         <div className="p-6" aria-live="polite">
@@ -248,21 +248,7 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
 
           {source === "existing" && (
             <div className="space-y-3">
-              <label className="block text-sm">
-                <span className="block font-medium">Which repository?</span>
-                <input
-                  value={picked}
-                  onChange={(e) => pick(e.target.value)}
-                  list={`${nameId}-repos`}
-                  placeholder={candidates === null ? "Loading your repositories…" : "owner/repository"}
-                  className={`${inputClass} mt-1 py-2 font-mono`}
-                  autoFocus
-                />
-                <datalist id={`${nameId}-repos`}>
-                  {candidates?.map((repo) => <option key={repo.id} value={repo.fullName} />)}
-                </datalist>
-                <span className="mt-1 block text-xs text-zinc-500">Only repositories you&apos;re an admin of can be used.</span>
-              </label>
+              <RepoPicker candidates={candidates} picked={picked} onPick={pick} />
               {inspection === "checking" && (
                 <p className="flex items-center gap-2 text-sm text-zinc-500">
                   <Spinner /> Checking it…
@@ -362,5 +348,234 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
         </form>
       )}
     </dialog>
+  );
+}
+
+function RepoIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path d="M3.5 2.5h8a1 1 0 0 1 1 1v9.5h-8.5a1.5 1.5 0 0 1 0-3h8.5" strokeLinejoin="round" />
+      <path d="M3.5 2.5v9" />
+    </svg>
+  );
+}
+
+function VisibilityBadge({ isPrivate }: { isPrivate: boolean }) {
+  return (
+    <span
+      className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+        isPrivate
+          ? "border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300"
+          : "border-zinc-300 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
+      }`}
+    >
+      {isPrivate ? "Private" : "Public"}
+    </span>
+  );
+}
+
+function RepoName({ fullName }: { fullName: string }) {
+  const [owner, name] = fullName.split("/");
+  return (
+    <span className="min-w-0 truncate">
+      <span className="text-zinc-500">{owner} / </span>
+      <span className="font-medium text-foreground">{name}</span>
+    </span>
+  );
+}
+
+/**
+ * Picks one of the owner's repositories from a dropdown: a select-style button that opens a
+ * search box over a scrollable list (arrow keys and Enter work; Escape or a click outside closes
+ * it). A typed owner/name that isn't listed can still be used, since the list only has repos
+ * GitHub returned.
+ */
+function RepoPicker({ candidates, picked, onPick }: { candidates: Candidate[] | null; picked: string; onPick: (value: string) => void }) {
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const [open, setOpen] = useState(false);
+  const listId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  const q = query.trim().toLowerCase();
+  const matches = (candidates ?? []).filter((repo) => repo.fullName.toLowerCase().includes(q));
+  const typed = looksLikeRepo(query) && !matches.some((repo) => repo.fullName.toLowerCase() === q) ? query.trim() : null;
+  const options = [...matches.map((repo) => repo.fullName), ...(typed ? [typed] : [])];
+  const activeIndex = Math.min(active, Math.max(options.length - 1, 0));
+  const chosen = candidates?.find((repo) => repo.fullName === picked);
+
+  useEffect(() => {
+    if (open) listRef.current?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [open, activeIndex]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open]);
+
+  function show() {
+    setQuery("");
+    const index = candidates?.findIndex((repo) => repo.fullName === picked) ?? -1;
+    setActive(Math.max(index, 0));
+    setOpen(true);
+  }
+
+  function close() {
+    setOpen(false);
+    buttonRef.current?.focus();
+  }
+
+  function choose(value: string) {
+    onPick(value);
+    close();
+  }
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive(Math.min(activeIndex + 1, options.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive(Math.max(activeIndex - 1, 0));
+    } else if (e.key === "Enter") {
+      // Never submit the form from the search box.
+      e.preventDefault();
+      if (options[activeIndex]) choose(options[activeIndex]);
+    } else if (e.key === "Escape") {
+      // Close the dropdown, not the whole dialog.
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    }
+  }
+
+  return (
+    <div ref={rootRef} className="relative text-sm">
+      <span className="block font-medium">Which repository?</span>
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => (open ? close() : show())}
+        onKeyDown={(e) => {
+          if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+            e.preventDefault();
+            show();
+          }
+        }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        autoFocus
+        className={`mt-1 flex w-full items-center gap-3 rounded-lg border bg-background px-3 py-2.5 text-left hover:border-zinc-400 dark:hover:border-zinc-500 ${
+          open ? "border-zinc-500 ring-2 ring-zinc-200 dark:ring-zinc-800" : "border-zinc-300 dark:border-zinc-700"
+        }`}
+      >
+        <RepoIcon className="size-4 shrink-0 text-zinc-500" />
+        {picked ? (
+          <RepoName fullName={picked} />
+        ) : (
+          <span className="truncate text-zinc-400">{candidates === null ? "Loading your repositories…" : "Choose a repository"}</span>
+        )}
+        <span className="ml-auto flex shrink-0 items-center gap-2">
+          {chosen && <VisibilityBadge isPrivate={chosen.private} />}
+          <svg
+            viewBox="0 0 16 16"
+            className={`size-4 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            aria-hidden="true"
+          >
+            <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+      </button>
+
+      {open && (
+        <div className="absolute inset-x-0 top-full z-20 mt-1 overflow-hidden rounded-lg border border-zinc-200 bg-background shadow-lg dark:border-zinc-800">
+          <div className="flex items-center gap-2 border-b border-zinc-200 px-3 dark:border-zinc-800">
+            <svg viewBox="0 0 16 16" className="size-4 shrink-0 text-zinc-400" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+              <circle cx="7" cy="7" r="4.5" />
+              <path d="M10.5 10.5L14 14" strokeLinecap="round" />
+            </svg>
+            <input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setActive(0);
+              }}
+              onKeyDown={onKeyDown}
+              role="combobox"
+              aria-label="Search your repositories"
+              aria-expanded="true"
+              aria-controls={listId}
+              aria-activedescendant={options.length ? `${listId}-${activeIndex}` : undefined}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Search or type owner/repository"
+              className="w-full bg-transparent py-2.5 text-sm outline-none placeholder:text-zinc-400"
+              autoFocus
+            />
+            {candidates && candidates.length > 0 && (
+              <span className="shrink-0 text-xs text-zinc-400">
+                {matches.length}/{candidates.length}
+              </span>
+            )}
+          </div>
+
+          {candidates === null ? (
+            <div className="flex items-center gap-2 px-3 py-5 text-zinc-500">
+              <Spinner /> Loading your repositories…
+            </div>
+          ) : options.length === 0 ? (
+            <div className="px-3 py-5 text-center text-zinc-500">
+              {candidates.length === 0 ? "No repositories you can use were found." : `No repositories match “${query.trim()}”.`}
+              <span className="mt-1 block text-xs">You can also type one as owner/repository.</span>
+            </div>
+          ) : (
+            <ul ref={listRef} id={listId} role="listbox" aria-label="Your repositories" className="max-h-56 overflow-y-auto py-1">
+              {options.map((fullName, index) => {
+                const repo = index < matches.length ? matches[index] : null;
+                const isPicked = fullName === picked;
+                return (
+                  <li
+                    key={repo ? repo.id : `typed-${fullName}`}
+                    id={`${listId}-${index}`}
+                    data-index={index}
+                    role="option"
+                    aria-selected={isPicked}
+                    onMouseEnter={() => setActive(index)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => choose(fullName)}
+                    className={`mx-1 flex cursor-pointer items-center gap-3 rounded-md px-2.5 py-2 ${index === activeIndex ? "bg-zinc-100 dark:bg-zinc-900" : ""}`}
+                  >
+                    <RepoIcon className="size-4 shrink-0 text-zinc-400" />
+                    {repo ? (
+                      <RepoName fullName={fullName} />
+                    ) : (
+                      <span className="min-w-0 truncate">
+                        Use <span className="font-medium">{fullName}</span>
+                      </span>
+                    )}
+                    <span className="ml-auto flex shrink-0 items-center gap-2">
+                      {repo && <VisibilityBadge isPrivate={repo.private} />}
+                      <span className={`w-4 text-foreground ${isPicked ? "" : "invisible"}`} aria-hidden="true">
+                        ✓
+                      </span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+      <span className="mt-1.5 block text-xs text-zinc-500">Only repositories you&apos;re an admin of are listed.</span>
+    </div>
   );
 }

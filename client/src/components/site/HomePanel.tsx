@@ -343,8 +343,9 @@ export function ToolsNotice({ compact = false }: { compact?: boolean }) {
       </Notice>
     );
   }
-  if (tools.outdated.length === 0) return null;
+  if (tools.outdated.length === 0 || (!compact && tools.skipped && !tools.updating && !tools.error)) return null;
 
+  const replacing = tools.replacesHeaderFooter;
   return (
     <Notice tone="warning">
       {compact ? (
@@ -353,22 +354,40 @@ export function ToolsNotice({ compact = false }: { compact?: boolean }) {
         <>
           <span className="font-medium">Your site&apos;s tools are out of date,</span> so some things are switched off (
           {tools.outdated.join(", ")}).{" "}
+          {replacing && tools.customHeaderFooter && (
+            <span className="block pt-1">Updating replaces your current header and footer with the standard ones.</span>
+          )}
         </>
       )}
-      <Button
-        variant="ghost"
-        className="ml-1 underline"
-        disabled={busy || tools.updating}
-        onClick={async () => {
-          const ok = await confirmModal(
-            "Update your site's tools to the latest version? Any changes made by hand to those tool files are replaced. You'll publish the update like any other change.",
-            { confirmLabel: "Update site tools" },
-          );
-          if (ok) void tools.update();
-        }}
-      >
-        {tools.updating ? "Updating…" : "Update site tools"}
-      </Button>
+      {/* -ml-3 lines the first button's text up with the notice's text (buttons have px-3). */}
+      <span className={compact ? "" : "-ml-3 mt-1 flex flex-wrap items-center gap-x-1"}>
+        <Button
+          variant="ghost"
+          className={compact ? "ml-1 underline" : "underline"}
+          disabled={busy || tools.updating}
+          onClick={async () => {
+            const ok = await confirmModal(
+              replacing
+                ? "Update your site's tools to the latest version? Your header and footer are replaced with the standard ones, which you can then style on Look & logo. Any changes made by hand to those tool files are replaced. You'll publish the update like any other change, and can undo it in See what changed until then."
+                : "Update your site's tools to the latest version? Any changes made by hand to those tool files are replaced. You'll publish the update like any other change.",
+              { confirmLabel: "Update site tools", danger: replacing && tools.customHeaderFooter },
+            );
+            if (ok) void tools.update();
+          }}
+        >
+          {tools.updating ? "Updating…" : "Update site tools"}
+        </Button>
+        {!compact && replacing && (
+          <Button variant="ghost" className="underline" disabled={tools.updating} onClick={tools.keepHeaderFooter}>
+            Keep my current header &amp; footer
+          </Button>
+        )}
+        {!compact && (
+          <Button variant="ghost" className="text-zinc-500 underline" disabled={tools.updating} onClick={tools.skip}>
+            Skip for now
+          </Button>
+        )}
+      </span>
       {tools.error ? (
         <div className="mt-2">
           <ErrorText error={tools.error} />

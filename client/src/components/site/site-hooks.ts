@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { summarizeChanges } from "@/lib/change-labels";
 import { confirmModal } from "@/lib/confirm";
 import { api, workspacePath, type Job, type NavigationInfo, type Overview, type Publishing, type SiteCheck, type SiteUpdateInfo, type WorkspaceStatus } from "@/lib/site-api";
@@ -75,6 +75,30 @@ export function usePublishing(owner: string, repo: string, version: number): Pub
 }
 
 type ToolUpdate = { id: "publishing" | "seo" | "header-footer"; what: string };
+// "Keep my current header & footer", per site and browser; "Skip for now", per site and tab.
+const KEEP_HEADER_FOOTER_KEY = "twinstack:keep-header-footer:";
+const SKIP_TOOLS_KEY = "twinstack:skip-tools-notice:";
+const choiceListeners = new Set<() => void>();
+
+function subscribeChoices(listener: () => void) {
+  choiceListeners.add(listener);
+  return () => choiceListeners.delete(listener);
+}
+
+function readChoice(store: "local" | "session", key: string) {
+  try {
+    return (store === "local" ? localStorage : sessionStorage).getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveChoice(store: "local" | "session", key: string) {
+  try {
+    (store === "local" ? localStorage : sessionStorage).setItem(key, "1");
+  } catch {}
+  choiceListeners.forEach((listener) => listener());
+}
 
 /**
  * Copies made before a template feature lack its files. Each has an installer
@@ -99,14 +123,24 @@ export function useSiteTools({
   refresh: () => Promise<void>;
 }): SiteTools {
   const [appearance, setAppearance] = useState<boolean | null>(null);
+  const [custom, setCustom] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [written, setWritten] = useState<string[] | null>(null);
+  const keptKey = `${KEEP_HEADER_FOOTER_KEY}${owner}/${repo}`;
+  const skipKey = `${SKIP_TOOLS_KEY}${owner}/${repo}`;
+  // False while rendering on the server, where there's no storage.
+  const kept = useSyncExternalStore(subscribeChoices, () => readChoice("local", keptKey), () => false);
+  const skipped = useSyncExternalStore(subscribeChoices, () => readChoice("session", skipKey), () => false);
 
   useEffect(() => {
     let cancelled = false;
     api<NavigationInfo>(workspacePath(owner, repo, "/navigation"))
-      .then((info) => !cancelled && setAppearance(info.supportsAppearance))
+      .then((info) => {
+        if (cancelled) return;
+        setAppearance(info.supportsAppearance);
+        setCustom(Boolean(info.designed?.header || info.designed?.footer || info.copied?.header || info.copied?.footer));
+      })
       .catch(() => {});
     return () => {
       cancelled = true;
@@ -117,7 +151,7 @@ export function useSiteTools({
   // Publishing first: SEO's files include build.js and check.js too, so the newest win.
   if (publishing && !publishing.workflowReady) needed.push({ id: "publishing", what: "publishing on the web" });
   if (overview?.features.seo === false || overview?.features.seoTemplate === false) needed.push({ id: "seo", what: "search settings" });
-  if (appearance === false) needed.push({ id: "header-footer", what: "header and footer colours" });
+  if (appearance === false && !kept) needed.push({ id: "header-footer", what: "header and footer colours" });
   const ids = needed.map((n) => n.id).join(",");
 
   const update = useCallback(async () => {
@@ -144,7 +178,21 @@ export function useSiteTools({
     }
   }, [ids, owner, repo, setStatus, refresh]);
 
-  return { outdated: needed.map((n) => n.what), updating, error, written, update };
+  const keepHeaderFooter = useCallback(() => saveChoice("local", keptKey), [keptKey]);
+  const skip = useCallback(() => saveChoice("session", skipKey), [skipKey]);
+
+  return {
+    outdated: needed.map((n) => n.what),
+    updating,
+    error,
+    written,
+    update,
+    replacesHeaderFooter: needed.some((n) => n.id === "header-footer"),
+    customHeaderFooter: custom,
+    keepHeaderFooter,
+    skipped,
+    skip,
+  };
 }
 
 /** The error a failed job ended with: the output ends "\n\n<error>\n\nEnded: failed (exit 1).\n". */

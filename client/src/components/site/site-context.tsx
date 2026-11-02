@@ -65,6 +65,15 @@ export type SiteTools = {
   /** Files the last update wrote, null before one. */
   written: string[] | null;
   update: () => Promise<void>;
+  /** The update would replace the header and footer partials with the template's standard ones. */
+  replacesHeaderFooter: boolean;
+  /** The current header or footer is the site's own (Claude's design or copied from a page), not the standard one. */
+  customHeaderFooter: boolean;
+  /** Keeps the current header and footer: they leave `outdated` for good on this site, in this browser. */
+  keepHeaderFooter: () => void;
+  /** Hides the notice until the site is opened again in this tab. */
+  skipped: boolean;
+  skip: () => void;
 };
 
 /** One-click updates to the template's newest release (see useSiteUpdate). */
