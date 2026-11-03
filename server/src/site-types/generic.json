@@ -1,7 +1,8 @@
 {
   "id": "generic",
-  "version": 2,
+  "version": 3,
   "label": "Other business",
+  "photoLed": false,
   "recognise": "Any business that fits none of the other site types.",
   "keywords": [],
   "research": "What websites of similar businesses usually show, and what their customers look for before they get in touch.",
@@ -18,7 +19,7 @@
     "homepage": "A clear hero saying what the business does with one call to action; the main offerings; why choose it; a final call to action."
   },
   "rules": ["Never invent facts, prices, reviews or awards."],
-  "demo": { "note": "Where the owner gave no details, write sample offerings, clearly marked for them to replace.", "items": [] },
+  "demo": { "note": "Where the owner gave no details, write sample offerings for them to replace. Samples are only ever offerings like these: never sample people, staff photos, opening hours, prices, addresses or phone numbers.", "items": [] },
   "questions": [
     {
       "id": "offer", "title": "What do you offer?", "lead": "Your main products or services, most important first.", "why": "The homepage and Services page lead with them.", "always": true,

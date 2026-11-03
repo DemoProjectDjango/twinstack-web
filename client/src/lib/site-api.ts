@@ -412,7 +412,9 @@ export type SiteCheckReport = {
 };
 
 /** The latest check and whether it's current: `fresh` is false once a file changed since. */
-export type SiteCheck = { report: SiteCheckReport | null; fresh: boolean };
+/** Sample items the AI put on pages for the owner to replace (data-sample), by page. */
+export type SampleContent = { total: number; pages: { title: string; url: string | null; count: number }[] };
+export type SiteCheck = { report: SiteCheckReport | null; fresh: boolean; samples?: SampleContent | null };
 
 /**
  * A page the site links to but doesn't have, found after the last build (server/src/missing-pages.js).

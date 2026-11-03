@@ -1,7 +1,8 @@
 {
   "id": "medical",
-  "version": 2,
+  "version": 3,
   "label": "Medical practice",
+  "photoLed": false,
   "recognise": "Clinics, GP and family practices, dentists, specialists, physiotherapy, diagnostic labs, pharmacies and other healthcare providers.",
   "keywords": ["clinic", "doctor", "doctors", "medical", "health", "healthcare", "hospital", "dental", "dentist", "patient", "patients", "physio", "physiotherapy", "therapy", "pediatric", "paediatric", "gp", "nurse", "pharmacy", "diagnostic", "lab"],
   "research": "What websites of similar practices (same specialty and, if given, the same area) usually show, and what patients look for before they book.",
@@ -17,7 +18,7 @@
   "sections": {
     "header": "The practice's name or logo, the main pages, and a prominent Book an appointment button (phone number on small screens).",
     "footer": "Address, phone, opening hours, the emergency notice, quick links and the privacy policy.",
-    "homepage": "A calm, trustworthy hero with what the practice offers and a booking button; the main services; why patients choose it; the doctors; opening hours and location; a final call to book."
+    "homepage": "A calm, trustworthy hero with what the practice offers and a booking button; the main services; why patients choose it; the doctors, only when the owner named them; opening hours and location from the site details (left out until given); a final call to book."
   },
   "rules": [
     "Never promise outcomes or cures, and don't make medical claims the owner didn't give.",
@@ -27,7 +28,7 @@
     "A calm, clean look: plenty of white space, soft colours, readable type, high contrast."
   ],
   "demo": {
-    "note": "Where the owner gave no details, write these as clearly marked samples for them to replace.",
+    "note": "Where the owner gave no details, write these as samples for them to replace. Samples are only ever offerings like these: never sample people, staff photos, opening hours, prices, addresses or phone numbers.",
     "items": ["General check-ups", "Children's health", "Vaccinations", "Blood tests and lab work", "Chronic condition care"]
   },
   "questions": [

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { friendlyJobDone, friendlyJobLabel } from "@/lib/job-labels";
+import { friendlyJobDone, friendlyJobLabel, jobProgress } from "@/lib/job-labels";
 import { api } from "@/lib/site-api";
 import { useSite } from "./site-context";
 import { Button, Spinner } from "./ui";
@@ -48,7 +48,10 @@ export function StatusStrip({ onShowLog, inline = false }: { onShowLog: () => vo
     content = (
       <>
         <Spinner />
-        <span className="min-w-0 flex-1 truncate">{friendlyJobLabel(job.command, job.label)}…</span>
+        <span className="min-w-0 flex-1 truncate">
+          {friendlyJobLabel(job.command, job.label)}
+          {jobProgress(job.output) ? `: ${jobProgress(job.output)}` : ""}…
+        </span>
         <Button variant="ghost" className="px-2 py-0.5 text-xs" onClick={cancel} disabled={cancelling}>
           Cancel
         </Button>

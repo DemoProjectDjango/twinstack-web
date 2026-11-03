@@ -184,7 +184,7 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
       onClick={(e) => {
         if (e.target === e.currentTarget && !asking) close();
       }}
-      className={`m-auto w-[calc(100%-2rem)] max-w-lg ${asking ? "max-h-[calc(100dvh-2rem)] overflow-y-auto" : "overflow-visible"} rounded-xl border border-zinc-200 bg-background p-0 text-foreground shadow-xl backdrop:bg-black/50 dark:border-zinc-800`}
+      className={`m-auto w-[calc(100%-2rem)] ${asking ? "max-w-xl" : "max-w-lg"} ${asking ? "max-h-[calc(100dvh-2rem)] overflow-y-auto" : "overflow-visible"} rounded-xl border border-zinc-200 bg-background p-0 text-foreground shadow-xl backdrop:bg-black/50 dark:border-zinc-800`}
     >
       {working ? (
         <div className="p-6" aria-live="polite">

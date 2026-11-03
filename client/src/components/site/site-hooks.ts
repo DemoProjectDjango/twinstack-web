@@ -316,6 +316,20 @@ export function useSiteUpdate({
  * fresh report (the Publish screen runs it by itself while open), asks before publishing with
  * problems, and leaves a first publish and a review branch to the Publish screen.
  */
+/**
+ * Asks before publishing while the AI's sample items are still on the site (they read as real to
+ * visitors). True to go ahead: none are left, or the owner chose to publish anyway.
+ */
+export async function confirmSamples(check: SiteCheck | null) {
+  const samples = check?.samples;
+  if (!samples?.total) return true;
+  const where = samples.pages.map((p) => `“${p.title}”`).join(", ");
+  return confirmModal(
+    `Your site still shows ${samples.total} sample ${samples.total === 1 ? "item" : "items"} the AI put there for you to replace (on ${where}). Visitors will read them as real details. Replace them first with the AI's help ("Replace the sample items" in Next steps), or publish anyway.`,
+    { title: "Publish with sample content?", confirmLabel: "Publish anyway", danger: true },
+  );
+}
+
 export function usePublishNow({
   owner,
   repo,
@@ -368,6 +382,7 @@ export function usePublishNow({
       ) {
         return;
       }
+      if (!(await confirmSamples(check))) return;
       setWorking("publishing");
       const message = summarizeChanges(status.changes, overview) || "Update the site";
       const committed = await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/commit"), {

@@ -6,6 +6,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { ClaudeAccessError, beginSpend, claudeKeyFor } from "./credits.js";
 import { anthropicClient } from "./assistant/turn.js";
 import { saveBrand } from "./brand.js";
+import { normalizeLink } from "./links.js";
+import { prepareBuild } from "./setup-build.js";
 import { SETUP_FIRST_WEEK_MS, listSiteSetups, saveSiteSetup } from "./db.js";
 import { readDataFile, writeDataFile } from "./site-files.js";
 import { getStaticInfo, saveStaticInfo } from "./static-info.js";
@@ -23,7 +25,7 @@ import { WorkspaceError } from "./workspace.js";
 // - The answers are saved once the site exists (saveSetup): Business info (name, contact, social),
 //   the brand, a "## Site profile" section of knowledge/notes.md that Claude reads before every
 //   request, and the siteSetups record the admin's numbers and the monthly skill review read. The
-//   same functions write the build request sent to Ask Claude, and the review's preview of it.
+//   same functions plan the build the server then runs (buildPlan, setup-build.js) and the review's preview of it.
 
 export const MAX_QUESTIONS = 5;
 export const MIN_BRIEF_WORDS = 10;
@@ -62,7 +64,8 @@ const SAVE_TO = [
   "brand.logo",
   "photos",
 ];
-const PAGE_ACTIONS = ["update", "create", "keep"];
+// "later": a page the owner chose not to have made now (each costs credits); Claude offers it afterwards.
+const PAGE_ACTIONS = ["update", "create", "keep", "later"];
 
 const TYPES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "site-types");
 const SITE_TYPES = new Map(
@@ -188,6 +191,8 @@ export function checkPages(raw, existing = null) {
     // A page that's there can't be created again, and one that isn't can't be kept or updated.
     if (existing && exists && action === "create") action = "update";
     if (existing && !exists && action !== "create") action = address === "/" ? "update" : "create";
+    // The homepage is always made.
+    if (address === "/" && action === "later") action = exists ? "update" : "create";
     out.push({ title, address, action, purpose: clean(p.purpose, 240) });
     if (out.length >= MAX_PAGES) break;
   }
@@ -508,8 +513,84 @@ function readBody(body) {
     skipped: (Array.isArray(body?.skipped) ? body.skipped : []).filter((id) => ids.has(id)),
     pages: checkPages(body?.pages),
     chrome: body?.chrome === "keep" ? "keep" : "design",
+    chromeChoice: checkChromeChoice(body?.chromeChoice),
+    logo: typeof body?.logo === "string" && LOGO_PATH.test(body.logo) ? body.logo : null,
+    // The browser-tab icon the owner chose, when it isn't the logo.
+    favicon: typeof body?.favicon === "string" && LOGO_PATH.test(body.favicon) ? body.favicon : null,
     known: checkKnown(body?.known),
     findings: checkFindings(body?.findings),
+  };
+}
+
+const HEADER_BUTTONS = ["book", "call", "contact", "custom", "none"];
+const LOGO_MODES = ["mark", "name", "image"];
+// What navigation.js takes (LINK there): pages, anchors, mail, phone and web links.
+const NAV_LINK = /^(\/(?!\/)|#|mailto:|tel:|https?:\/\/)\S*$/i;
+const MAX_MENU = 12;
+const MAX_COLUMNS = 4;
+const MAX_COLUMN_LINKS = 12;
+const LOGO_PATH = /^\/?assets\/img\/[\w./-]+$/;
+
+/** A link the owner typed, as the menus take it ("instagram.com/x" → https://…), or null when it can't be one. */
+function navLink(raw) {
+  const link = normalizeLink(clean(raw, 300));
+  return link && NAV_LINK.test(link) ? link : null;
+}
+/** The owner's links, kept only with text and a usable address. */
+function navLinks(raw, max) {
+  return (Array.isArray(raw) ? raw : [])
+    .map((l) => ({ label: clean(l?.label, 60), url: navLink(l?.url) }))
+    .filter((l) => l.label && l.url)
+    .slice(0, max);
+}
+// The standard header and footer's looks (navigation.js validates the same values) and the accent.
+const LOOKS = {
+  headerTheme: ["light", "dark", "brand"],
+  headerStyle: ["floating", "bar"],
+  headerLayout: ["right", "center", "left"],
+  footerTheme: ["dark", "light", "brand"],
+  footerLayout: ["columns", "centered", "minimal"],
+};
+const HEX = /^#[0-9a-f]{6}$/i;
+export const DEFAULT_ACCENT = "#0f766e";
+
+/**
+ * The header and footer the owner chose (the client's ChromeChoice): `mode` "standard" (the
+ * template's own, free) or "design" (Claude designs them to match the homepage), the header's
+ * `button`, whether it's `sticky`, what the footer shows, the standard ones' looks (LOOKS: the first
+ * value of each is the default) and the site's `accent` colour. Anything missing takes the default.
+ */
+function checkChromeChoice(raw) {
+  const flag = (key, fallback) => (typeof raw?.[key] === "boolean" ? raw[key] : fallback);
+  return {
+    mode: raw?.mode === "design" ? "design" : "standard",
+    button: HEADER_BUTTONS.includes(raw?.button) ? raw.button : "none",
+    sticky: flag("sticky", true),
+    tagline: flag("tagline", true),
+    contact: flag("contact", true),
+    social: flag("social", true),
+    cta: flag("cta", false),
+    shrink: flag("shrink", true),
+    transparent: flag("transparent", false),
+    logo: LOGO_MODES.includes(raw?.logo) ? raw.logo : "mark",
+    customLabel: clean(raw?.customLabel, 40),
+    customUrl: navLink(raw?.customUrl),
+    copyright: clean(raw?.copyright, 120).replace(/[\r\n]+/g, " "),
+    // The header's menu: the pages being made (by address) and the owner's own links, in order.
+    menu: (Array.isArray(raw?.menu) ? raw.menu : []).slice(0, MAX_MENU).map((m) => ({
+      page: typeof m?.page === "string" ? m.page : undefined,
+      label: clean(m?.label, 60),
+      url: navLink(m?.url),
+      on: m?.on !== false,
+    })),
+    // The footer's link columns; the auto one lists the pages being made before its own links.
+    columns: (Array.isArray(raw?.columns) ? raw.columns : []).slice(0, MAX_COLUMNS).map((c) => ({
+      title: clean(c?.title, 60),
+      auto: c?.auto === true,
+      links: navLinks(c?.links, MAX_COLUMN_LINKS),
+    })),
+    ...Object.fromEntries(Object.entries(LOOKS).map(([key, values]) => [key, values.includes(raw?.[key]) ? raw[key] : values[0]])),
+    accent: typeof raw?.accent === "string" && HEX.test(raw.accent) ? raw.accent.toLowerCase() : DEFAULT_ACCENT,
   };
 }
 
@@ -532,8 +613,6 @@ function configChanges(setup) {
   return { contact, social };
 }
 
-const ACTION_WORDS = { update: "rewrite", create: "create", keep: "keep as it is" };
-
 function profileText(setup) {
   const lines = [PROFILE_HEADING, "", "<!-- Written by the setup questions. Change anything here and Claude follows it from then on. -->", `- Kind of website: ${setup.type.label}`];
   for (const k of setup.known) lines.push(`- ${k.label}: ${k.value}`);
@@ -542,7 +621,10 @@ function profileText(setup) {
     if (value === undefined || field.saveTo !== "profile") continue;
     lines.push(`- ${shortLabel(field.label)}: ${asText(field, value)}`);
   }
-  lines.push(`- Pages: ${setup.pages.map((p) => `${p.title} (${p.address})`).join(", ")}`);
+  const now = setup.pages.filter((p) => p.action !== "later");
+  const notYet = setup.pages.filter((p) => p.action === "later");
+  lines.push(`- Pages: ${now.map((p) => `${p.title} (${p.address})`).join(", ")}`);
+  if (notYet.length) lines.push(`- Pages I may want later: ${notYet.map((p) => `${p.title} (${p.address}): ${p.purpose}`).join("; ")}`);
   const later = laterQuestions(setup);
   if (later.length) lines.push(`- Still to ask me: ${later.map((q) => q.title).join("; ")}`);
   if (setup.findings.length) lines.push(`- Found when planning: ${setup.findings.map((f) => f.text).join(" ")}`);
@@ -550,59 +632,176 @@ function profileText(setup) {
 }
 
 /**
- * The request sent to Ask Claude once the answers are saved. `hasHome` and `chrome` say what the
- * site can do (a homepage to design rather than make; header and footer design), `fresh` that it
- * has only its starter homepage.
+ * What the site's build (setup-build.js) makes from the answers, each step a complete, self-contained
+ * instruction for the site's page writer (it can't see the answers, only the notes' site profile and
+ * the site details): `home` (the homepage, made or rewritten), `chrome` (the header and footer's
+ * direction, or null), `pages` (the ones the owner chose to have made now) and `picture` (a prompt
+ * for one picture, for a photo-led kind of business without photos of its own, or null).
+ * `chrome` says whether the site can have its header and footer designed.
  */
-function buildRequest(setup, { hasHome = false, chrome = true, fresh = true, photos = [] } = {}) {
+export function buildPlan(setup, { chrome = true, photos = [] } = {}) {
   const { type } = setup;
   const name = setup.name || TEMPLATE_SITE_NAME;
-  const later = laterQuestions(setup);
   const home = setup.pages.find((p) => p.address === "/");
-  const create = setup.pages.filter((p) => p.address !== "/" && p.action === "create");
-  const update = setup.pages.filter((p) => p.address !== "/" && p.action === "update");
-  const slug = (address) => address.replace(/^\//, "").replace(/\.html$/, "");
-  // The steps that apply, numbered in order.
-  const steps = [
-    home?.action !== "keep" && `${hasHome ? "Design my homepage with edit_page" : "Create my homepage (create_page, type homepage) and design it"}, so a first-time visitor understands straight away what we do, why to choose us and what to do next.`,
-    setup.chrome === "design" && chrome && "Design the header and footer to match it (design_header_and_footer).",
-    create.length && `Make each new page with create_page, one per page, each with a complete brief (its purpose, my facts, the homepage's look), so it's written as it's made: ${create.map((p) => `${p.title} (slug ${slug(p.address)})`).join(", ")}. If a page's file already exists, write it with edit_page instead. Don't change the site plan or use create_missing_pages.`,
-    update.length && `Rewrite these pages with edit_page: ${update.map((p) => p.title).join(", ")}.`,
-    "Put the pages in the menu.",
-  ]
-    .filter(Boolean)
-    .map((step, i) => `${i + 1}. ${step}`);
-  const lines = [
-    `Set up my new site for ${name}.`,
-    setup.what && `What we do: ${setup.what}`,
-    setup.brief && `My brief for the website: ${setup.brief}`,
-    `Kind of website: ${type.label}.`,
-    "The plan we agreed (follow it, page by page):",
-    ...setup.pages.map((p) => `- ${p.title} (${p.address}), ${ACTION_WORDS[p.action]}: ${p.purpose}`),
-    `- Header and footer: ${setup.chrome === "design" && chrome ? "design new ones that match the homepage" : "keep the current ones"}.`,
-    "Do it in this order:",
-    ...steps,
-    photos.length && `Use these photos of ours: ${photos.join(", ")}.`,
-    fresh && "The site is brand new: the homepage is the starter page and there are no other pages yet, so there's no need to look around before starting.",
-    "Keep the design clean and focused: my real words and facts, clear sections, readable type and plenty of space. No filler text and no heavy decorative patterns; where there are no photos, let typography, colour and simple icons carry it.",
+  const feel = fieldsOfQuestions(setup.questions).find((f) => f.role === "feel");
+  const look = feel && setup.answers[feel.id] !== undefined ? asText(feel, setup.answers[feel.id]) : "";
+  const about = [setup.what && `What the business does: ${setup.what}`, setup.brief && `The owner's brief for the website: ${setup.brief}`, look && `The look the owner chose: ${look}.`];
+  const shared = [
     "Rules:",
     ...type.rules.map((r) => `- ${r}`),
-    type.demo?.note && `Sample content: ${type.demo.note} Anything marked [sample] in my site profile is an example too.`,
-    setup.findings.length && `What you found when planning: ${setup.findings.map((f) => f.text).join(" ")}`,
-    "My setup answers are in the site profile of my notes, and my contact details are in the site details.",
-    later.length ? `Ask me later, one at a time, about: ${later.map((q) => q.title.replace(/\?$/, "").toLowerCase()).join("; ")}. Don't ask anything else I've already answered.` : "Only ask me about something essential that's still missing.",
+    type.demo?.note &&
+      `Sample content: ${type.demo.note} Anything marked [sample] in the site profile is an example too. Show samples like the rest of the page: never the word "sample" or a "replace this" note where visitors see it; put a data-sample attribute on each sample item's element instead, so the owner can find and replace them.`,
+    "Facts: use the owner's answers in the site profile of the notes and the site details (contact details, opening hours, links). Never invent prices, reviews, ratings, awards or statistics.",
+    "People, opening hours and contact details: never sample or invent them. Show opening hours, phone, email and address only from the site details ({{ site.contact.hours }}, {{ site.contact.phone }}, {{ site.contact.email }}, {{ site.contact.address }}), each inside {{# if … }} so it's left out until the owner adds it. Show a team or doctors section only with names the owner gave.",
+    "Everything must look right and be easy to use on phones, tablets and computers.",
   ];
-  return lines.filter(Boolean).join("\n");
+  // The header and footer: new ones (the plan's "design"), set up as the owner chose.
+  const newChrome = setup.chrome === "design";
+  const choice = setup.chromeChoice;
+  const button = headerButton(setup, choice.button);
+  const footerShows = [choice.tagline && "a short description", choice.contact && "contact details and opening hours", choice.social && "social media links", choice.cta && button && "a call-to-action strip above it"].filter(Boolean).join(", ");
+  const lines = (...parts) => parts.flat().filter(Boolean).join("\n");
+  const homeInstruction = lines(
+    `${home?.action === "create" ? "This is a new, empty page. Write it from scratch: the" : "Design the"} homepage of ${name}, a ${type.label.toLowerCase()} website, so a first-time visitor understands straight away what the business does, why to choose it and what to do next.`,
+    about,
+    type.sections?.homepage && `What the homepage should have: ${type.sections.homepage}`,
+    "The look: make it look like a professional designer made it for this business, with the owner's real words and facts. A striking first screen, a different layout for each section, depth and colour, and photos large where there are any. Never a wireframe: no grey placeholder boxes or bars, no mock browser windows, and no plain bulleted lists for what the business offers.",
+    photos.length && "The images given are the owner's own photos: use them, the best one large at the top.",
+    newChrome && `The site's accent colour is ${choice.accent}, which the owner chose: it's the "brand" colour the header and footer use (bg-brand, text-brand, from-brand…), so build the page's colours around it.`,
+    newChrome && choice.cta && button && `The footer already has a call-to-action strip ("${button.label}") right below the page, so don't end the page with another one.`,
+    setup.findings.length && `Found when planning: ${setup.findings.map((f) => f.text).join(" ")}`,
+    shared,
+  );
+  const pageInstruction = (p) =>
+    lines(
+      `${p.action === "create" ? "This is a new, empty page. Write it from scratch:" : "Rewrite"} the ${p.title} page of ${name}, a ${type.label.toLowerCase()} website.`,
+      `Its purpose: ${p.purpose}`,
+      setup.what && `What the business does: ${setup.what}`,
+      "Match the look of the homepage (fonts, colours, buttons, spacing), with a layout that suits this page.",
+      shared,
+    );
+  const photoLed = type.photoLed === true && !photos.length && home && home.action !== "keep";
+  return {
+    name,
+    home: home && home.action !== "keep" ? { title: home.title, address: "/", instruction: homeInstruction, images: photos } : null,
+    chrome:
+      newChrome && chrome && choice.mode === "design"
+        ? lines(
+            "Design the header and footer to match the look of the homepage.",
+            type.sections?.header && `The header: ${type.sections.header}`,
+            type.sections?.footer && `The footer: ${type.sections.footer}`,
+            `The owner chose: ${button ? `a "${button.label}" button in the header` : "no button in the header"}; ${choice.sticky ? "the header stays at the top while scrolling" : "the header scrolls away with the page"}; the footer shows ${footerShows || "only its links"}.`,
+            "Both must work on phones, tablets and computers, with a phone menu that's easy to use.",
+          )
+        : null,
+    // Applied to content/data/navigation.json before the build (setup-build.js), whichever design.
+    navigation: newChrome
+      ? {
+          button,
+          sticky: choice.sticky,
+          header: { theme: choice.headerTheme, style: choice.headerStyle, layout: choice.headerLayout },
+          footerLook: { theme: choice.footerTheme, layout: choice.footerLayout },
+          accent: choice.accent,
+          initial: (name.match(/[\p{L}\p{N}]/u)?.[0] ?? "").toUpperCase(),
+          logo: choice.logo,
+          // A tab icon the owner gave (their own, or their logo): the initial mark isn't made the icon.
+          iconGiven: Boolean(setup.favicon || setup.logo || fieldsOfQuestions(setup.questions).some((f) => f.type === "logo" && setup.answers[f.id])),
+          shrink: choice.shrink,
+          transparent: choice.transparent,
+          copyright: choice.copyright,
+          items: menuItems(setup, choice.menu),
+          columns: footerColumns(setup, choice.columns),
+          footer: {
+            showTagline: choice.tagline,
+            showContact: choice.contact,
+            showSocial: choice.social,
+            cta: choice.cta && button ? { title: name.slice(0, 100), ...(setup.what && { text: setup.what.slice(0, 200) }), label: button.label, url: button.url } : null,
+          },
+        }
+      : null,
+    pages: setup.pages.filter((p) => p.address !== "/" && (p.action === "create" || p.action === "update")).map((p) => ({ title: p.title, address: p.address, action: p.action, instruction: pageInstruction(p) })),
+    picture: photoLed
+      ? `A high-quality, realistic photograph for the top of the website of ${name}${setup.what ? `: ${setup.what}` : ""}.${look ? ` The mood: ${look}.` : ""} Natural light, inviting and true to life, a wide composition with calm space on one side for a heading. No text, no logos, no watermarks, no recognisable faces.`
+      : null,
+  };
 }
 
-/** What the review step shows: the site details, the site profile and the build request. */
+/**
+ * The header's button for `kind` (ChromeChoice's `button`), from the owner's answers: the booking
+ * link, the phone number or the Contact page being made. Null for "none" or when the answer it needs
+ * wasn't given.
+ */
+function headerButton(setup, kind) {
+  const { contact } = configChanges(setup);
+  if (kind === "book" && contact.bookingUrl) return { label: (contact.bookingLabel || "Book now").slice(0, 40), url: contact.bookingUrl };
+  if (kind === "call" && contact.phone) {
+    const number = String(contact.phone).replace(/[^\d+]/g, "");
+    if (number.length >= 5) return { label: "Call us", url: `tel:${number}` };
+  }
+  if (kind === "contact") {
+    const page = setup.pages.find((p) => /^\/contact(-us)?\.html$/.test(p.address) && p.action !== "later");
+    if (page) return { label: "Contact us", url: page.address };
+  }
+  if (kind === "custom" && setup.chromeChoice.customLabel && setup.chromeChoice.customUrl) return { label: setup.chromeChoice.customLabel.slice(0, 40), url: setup.chromeChoice.customUrl };
+  return null;
+}
+
+/** The pages the build makes now (not the homepage), for the menus. */
+const pagesMadeNow = (setup) => setup.pages.filter((p) => p.address !== "/" && (p.action === "create" || p.action === "update" || p.action === "keep"));
+const LEGAL = /privacy|terms|cookie|legal|disclaimer/i;
+
+/**
+ * The header's menu (navigation.json → header.items): the owner's order and names, without hidden
+ * links, pages no longer being made or links without an address. Without a menu from the browser
+ * (an older client), every page being made, as named in the plan.
+ */
+function menuItems(setup, menu) {
+  const pages = pagesMadeNow(setup).filter((p) => !LEGAL.test(p.address));
+  if (!menu.length) return pages.map((p) => ({ label: p.title, url: p.address }));
+  return menu
+    .filter((m) => m.on && m.label)
+    .map((m) => (m.page ? (pages.some((p) => p.address === m.page) ? { label: m.label, url: m.page } : null) : m.url && { label: m.label, url: m.url }))
+    .filter(Boolean);
+}
+
+/**
+ * The footer's link columns (navigation.json → footer): the auto one lists Home and the pages being
+ * made, then its own links, and takes pages added later (it keeps "auto": true, which the template's
+ * lib/content.js reads); a column left without links is dropped. Null without columns from the
+ * browser, which keeps the template's own.
+ */
+function footerColumns(setup, columns) {
+  if (!columns.length) return null;
+  const pages = pagesMadeNow(setup).filter((p) => !LEGAL.test(p.address));
+  return columns
+    .map((c) => ({
+      title: c.title || "Links",
+      ...(c.auto && { auto: true }),
+      links: [...(c.auto ? [{ label: "Home", url: "/" }, ...pages.map((p) => ({ label: p.title, url: p.address }))] : []), ...c.links].slice(0, 20),
+    }))
+    .filter((c) => c.links.length);
+}
+
+/** The plan in words, for the review step's "Build request" tab. */
+export function planText(plan) {
+  const steps = [
+    plan.picture && "Make one picture for the top of the homepage (you gave no photos of your own).",
+    plan.home && `Design the homepage, then look at it on a computer and a phone and fix what's weak.\n\n${plan.home.instruction}`,
+    plan.chrome && `Design the header and footer.\n\n${plan.chrome}`,
+    !plan.chrome && plan.navigation && `Use the standard header and footer: ${plan.navigation.button ? `a "${plan.navigation.button.label}" button` : "no button"} in the header, which ${plan.navigation.sticky ? "stays at the top while scrolling" : "scrolls away"}.`,
+    ...plan.pages.map((p) => `Write the ${p.title} page (${p.address}).`),
+  ].filter(Boolean);
+  return steps.length ? steps.map((s, i) => `${i + 1}. ${s}`).join("\n\n") : "Nothing to build: your answers are saved.";
+}
+
+/** What the review step shows: the site details, the site profile and what the build will do. */
 export function previewSetup(body) {
   const setup = readBody(body);
   const { contact, social } = configChanges(setup);
   return {
     config: { name: setup.name || TEMPLATE_SITE_NAME, description: setup.what, contact, social },
     profile: profileText(setup),
-    request: buildRequest(setup, { hasHome: true, photos: setup.answers.photos ?? [] }),
+    request: planText(buildPlan(setup, { photos: setup.answers.photos ?? [] })),
   };
 }
 
@@ -618,8 +817,10 @@ function withProfile(notes, profile) {
 
 /**
  * Saves a setup into the site: Business info (name, what it does, contact details, social links),
- * the header's name and logo, the notes' site profile and the setup record. Returns the build
- * request for Ask Claude. `options` says what the site already has (buildRequest).
+ * the header's name and logo, the notes' site profile and the setup record, then makes the pages the
+ * build writes and saves its plan (setup-build.js). Returns the plan in words (`request`) and
+ * `build`: whether there's anything for the site-build command to do. `options.chrome` says
+ * whether the site can have its header and footer designed.
  */
 export async function saveSetup({ key, siteId, body, options = {} }) {
   const setup = readBody(body);
@@ -636,6 +837,8 @@ export async function saveSetup({ key, siteId, body, options = {} }) {
     }
     // What makes the setup count as answered (the client's FirstRunSetup), so always written.
     data.description = setup.what || data.description || "";
+    // The footer's short description, which the template leaves empty.
+    if ("footerTagline" in data && !data.footerTagline && setup.what) data.footerTagline = setup.what.slice(0, 160);
     if (data.contact && typeof data.contact === "object") data.contact = { ...data.contact, ...Object.fromEntries(Object.entries(contact).filter(([k]) => k in data.contact)) };
     if (data.social && typeof data.social === "object") data.social = { ...data.social, ...Object.fromEntries(Object.entries(social).filter(([k]) => k in data.social)) };
     await saveStaticInfo(key, "site", data);
@@ -644,7 +847,12 @@ export async function saveSetup({ key, siteId, body, options = {} }) {
   const brand = {};
   if (setup.name) brand.logoText = setup.name;
   const logoField = fieldsOfQuestions(setup.questions).find((f) => f.type === "logo");
-  if (logoField && setup.answers[logoField.id]) brand.logo = setup.answers[logoField.id];
+  const logoPath = (logoField && setup.answers[logoField.id]) || setup.logo;
+  if (logoPath && setup.chromeChoice.logo !== "name") brand.logo = logoPath;
+  // The browser-tab icon: the one the owner chose, else the logo (the build makes the initial mark
+  // the icon only when there's neither).
+  const icon = setup.favicon || logoPath;
+  if (icon) brand.favicon = icon;
   if (Object.keys(brand).length) await saveBrand(key, brand).catch((err) => console.error(`Couldn't save the setup's logo in ${key}:`, err.message));
 
   const { content } = await readDataFile(key, "knowledge-notes");
@@ -670,7 +878,9 @@ export async function saveSetup({ key, siteId, body, options = {} }) {
     }).catch((err) => console.error(`Couldn't record the setup of site ${siteId}:`, err.message));
   }
   const photosField = fieldsOfQuestions(setup.questions).find((f) => f.type === "photos");
-  return { request: buildRequest(setup, { ...options, photos: (photosField && setup.answers[photosField.id]) || [] }) };
+  const plan = buildPlan(setup, { chrome: options.chrome !== false, photos: (photosField && setup.answers[photosField.id]) || [] });
+  const prepared = await prepareBuild(key, plan);
+  return { request: planText(plan), build: Boolean(prepared.home || prepared.chrome || prepared.pages.length) };
 }
 
 /* ------------------------------------------------------------ the admin's numbers */

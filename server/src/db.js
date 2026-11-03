@@ -391,6 +391,13 @@ export async function setAccessStatus(id, status, decidedBy) {
   );
 }
 
+/** Deletes the account's document. Returns it, or null when there's no such account. Its session stops working at once. */
+export async function deleteUser(id) {
+  const _id = objectId(id);
+  if (!_id) return null;
+  return users().findOneAndDelete({ _id });
+}
+
 /* ----------------------------------------------------------------- github */
 
 export class GithubInUseError extends Error {}

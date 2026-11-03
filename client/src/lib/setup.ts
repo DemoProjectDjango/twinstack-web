@@ -34,7 +34,8 @@ export type SetupGroup = { id: string; title: string; lead: string; why: string;
 /** A kind of business, for reading the owner's words as they type: its keywords and its choices' hint words. */
 export type Skill = { id: string; version: number; label: string; keywords: string[]; hints: { label: string; multi: boolean; hints: Record<string, string[]> }[] };
 
-export type PageAction = "update" | "create" | "keep";
+// "later": a planned page the owner chose not to have made now (each costs credits).
+export type PageAction = "update" | "create" | "keep" | "later";
 export type PagePlan = { title: string; address: string; action: PageAction; purpose: string };
 export type Finding = { text: string; changes: string };
 export type Known = { label: string; value: string };
@@ -73,11 +74,133 @@ export type SetupAnswers = {
   skipped: string[];
   pages: PagePlan[];
   chrome: "design" | "keep";
+  /** How the header and footer are set up, when the plan gives the site new ones (`chrome: "design"`). */
+  chromeChoice: ChromeChoice;
   known: Known[];
   findings: Finding[];
   logo: File | null;
+  /** The browser-tab icon, when it isn't the logo (or, without one, the initial mark). */
+  favicon: File | null;
   photos: File[];
 };
+
+/** The header's button: the booking link, the phone number, the Contact page, the owner's own, or none. */
+export type HeaderButton = "book" | "call" | "contact" | "custom" | "none";
+/** A link in the header's menu: one of the pages being made (`page`, its address) or the owner's own. */
+export type MenuEntry = { id: string; label: string; url: string; on: boolean; page?: string };
+export type FooterLink = { label: string; url: string };
+/** A footer link column. The `auto` one lists the site's pages by itself, before its own links. */
+export type FooterColumn = { id: string; title: string; auto?: boolean; links: FooterLink[] };
+/**
+ * The header and footer the owner chose: the standard design (free; everything here changes later
+ * on Look & logo) or one the AI designs to match the homepage, and for either:
+ * - the accent colour, the logo (the initial mark and name, the name alone, or their own logo);
+ * - the header's colour, style, menu position, menu links, button, and how it behaves on scroll;
+ * - the footer's colour, layout, what its first column shows, its link columns and copyright line.
+ * `menu` and `columns` start empty: the setup fills them from the pages and answers until edited.
+ */
+export type ChromeChoice = {
+  mode: "standard" | "design";
+  button: HeaderButton;
+  customLabel: string;
+  customUrl: string;
+  logo: "mark" | "name" | "image";
+  sticky: boolean;
+  shrink: boolean;
+  transparent: boolean;
+  tagline: boolean;
+  contact: boolean;
+  social: boolean;
+  cta: boolean;
+  copyright: string;
+  /** The standard header's colour, style and menu position, and the footer's colour and layout (the template's navigation.json → appearance). */
+  headerTheme: "light" | "dark" | "brand";
+  headerStyle: "floating" | "bar";
+  headerLayout: "right" | "center" | "left";
+  footerTheme: "dark" | "light" | "brand";
+  footerLayout: "columns" | "centered" | "minimal";
+  /** The site's accent colour (styles/main.css → --color-brand), as #rrggbb. */
+  accent: string;
+  menu: MenuEntry[];
+  columns: FooterColumn[];
+};
+export const DEFAULT_CHROME: ChromeChoice = {
+  mode: "standard",
+  button: "none",
+  customLabel: "",
+  customUrl: "",
+  logo: "mark",
+  sticky: true,
+  shrink: true,
+  transparent: false,
+  tagline: true,
+  contact: true,
+  social: true,
+  cta: false,
+  copyright: "",
+  headerTheme: "light",
+  headerStyle: "floating",
+  headerLayout: "right",
+  footerTheme: "dark",
+  footerLayout: "columns",
+  accent: "#0f766e",
+  menu: [],
+  columns: [],
+};
+/** The most link columns a footer holds neatly, beside the business's own block. */
+export const MAX_FOOTER_COLUMNS = 4;
+export const MAX_MENU_ITEMS = 12;
+
+let nextId = 1;
+export const newId = (prefix: string) => `${prefix}${Date.now().toString(36)}${nextId++}`;
+
+/** Pages in the footer's legal line rather than the menus. */
+export const isLegalPage = (address: string) => /privacy|terms|cookie|legal|disclaimer/i.test(address);
+
+/**
+ * The header menu for the pages being made: an entry per page (kept, with any new name, visibility
+ * and place, while the page is still being made), then the owner's own links.
+ */
+export function syncMenu(menu: MenuEntry[], pages: { title: string; address: string }[]): MenuEntry[] {
+  const listed = pages.filter((p) => !isLegalPage(p.address));
+  const kept = menu.filter((m) => !m.page || listed.some((p) => p.address === m.page));
+  const added = listed.filter((p) => !kept.some((m) => m.page === p.address)).map((p) => ({ id: `page:${p.address}`, page: p.address, label: p.title, url: p.address, on: true }));
+  return [...kept, ...added];
+}
+
+/**
+ * The footer's link columns until the owner edits them: "Explore" (the site's pages, by itself) and
+ * "Visit us" from the answers (the booking link, directions to the address, a call link).
+ */
+export function defaultColumns({ bookingUrl, bookingLabel, address, phone }: { bookingUrl: string; bookingLabel: string; address: string; phone: string }): FooterColumn[] {
+  const visit: FooterLink[] = [
+    ...(bookingUrl ? [{ label: bookingLabel || "Book now", url: bookingUrl }] : []),
+    ...(address ? [{ label: "Get directions", url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}` }] : []),
+    ...(phone ? [{ label: "Call us", url: `tel:${phone.replace(/[^\d+]/g, "")}` }] : []),
+  ];
+  return [{ id: "explore", title: "Explore", auto: true, links: [] }, ...(visit.length ? [{ id: "visit", title: "Visit us", links: visit }] : [])];
+}
+
+/** White text's contrast on a #rrggbb colour (WCAG): 4.5 or more reads well on buttons. */
+export function contrastWithWhite(hex: string) {
+  const channel = (i: number) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+  return 1.05 / (luminance + 0.05);
+}
+/** Accent colours to pick from: each takes white text (WCAG AA) on its buttons. The first is the template's. */
+export const ACCENTS = [
+  { name: "Teal", hex: "#0f766e" },
+  { name: "Green", hex: "#15803d" },
+  { name: "Blue", hex: "#1d4ed8" },
+  { name: "Indigo", hex: "#4338ca" },
+  { name: "Purple", hex: "#7e22ce" },
+  { name: "Rose", hex: "#be123c" },
+  { name: "Orange", hex: "#c2410c" },
+  { name: "Charcoal", hex: "#27272a" },
+];
 
 export const MAX_PHOTOS = 6;
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
@@ -156,8 +279,8 @@ export function clearPendingSetup(owner: string, repo: string) {
  * The setup as the server takes it (POST /api/setup/preview, POST …/setup): the logo and photos as
  * the paths they were saved at, under their questions' fields.
  */
-export function setupBody(setup: Omit<SetupAnswers, "logo" | "photos">, files: { logo?: string; photos?: string[] } = {}) {
-  const { name, what, brief, type, by, questions, answers, skipped, pages, chrome, known, findings } = setup;
+export function setupBody(setup: Omit<SetupAnswers, "logo" | "favicon" | "photos">, files: { logo?: string; favicon?: string; photos?: string[] } = {}) {
+  const { name, what, brief, type, by, questions, answers, skipped, pages, chrome, chromeChoice, known, findings } = setup;
   const fields = questions.flatMap((q) => q.fields);
   const logoField = fields.find((f) => f.type === "logo");
   const photosField = fields.find((f) => f.type === "photos");
@@ -171,8 +294,12 @@ export function setupBody(setup: Omit<SetupAnswers, "logo" | "photos">, files: {
     skipped,
     pages,
     chrome,
+    chromeChoice,
     known,
     findings,
+    // A logo given on the header and footer step, when no question asked for one.
+    ...(!logoField && files.logo && { logo: files.logo }),
+    ...(files.favicon && { favicon: files.favicon }),
     answers: {
       ...answers,
       ...(logoField && files.logo && { [logoField.id]: files.logo }),

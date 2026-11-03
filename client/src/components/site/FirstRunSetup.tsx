@@ -7,7 +7,6 @@ import { TEMPLATE_SITE_NAME as TEMPLATE_NAME } from "@/lib/repos";
 import { clearPendingSetup, peekPendingSetup, readAsBase64, setupBody, type SetupAnswers } from "@/lib/setup";
 import { clearSiteEntry, readSiteEntry } from "@/lib/site-entry";
 import { SetupFlow } from "../setup/SetupFlow";
-import { useAssistant } from "./assistant/AssistantProvider";
 import { markVisited } from "./HomePanel";
 import { useSite } from "./site-context";
 import { Button, ErrorText } from "./ui";
@@ -16,8 +15,9 @@ import { Button, ErrorText } from "./ui";
 // what the business does, a brief, the AI's analysis and the questions it chose, then a review), and
 // lib/setup.ts hands the answers over. Here they're applied as soon as the site is ready (AutoSetup):
 // the logo and photos are uploaded, the server saves the rest (POST …/setup: Business info, the
-// header's name and logo, the notes' site profile) and returns the build request, which goes to Ask
-// Claude: the homepage, a matching header and footer, and the skill's other pages.
+// header's name and logo, the notes' site profile), makes the pages to write and saves the build's
+// plan; then the server builds the site as one job (site-build, server/src/setup-build.js): the
+// homepage, a matching header and footer, and the pages the owner chose to have made now.
 // A site entered from the dashboard without those answers (a repo brought in, or the editor reloaded
 // after creating) gets the same questions here instead, with its name first, until it has a real
 // name and says what the business does (site.config.json `description`, which Business info also
@@ -47,10 +47,9 @@ export function FirstRunSetup() {
   return <AskSetup onDone={() => setHidden(true)} />;
 }
 
-/** Saves the setup's answers into the site, then asks Claude to build it. Throws when a save fails. */
+/** Saves the setup's answers into the site, then starts its build. Throws when a save fails. */
 function useApplySetup() {
-  const { owner, repo, overview, claude, refresh, setStatus } = useSite();
-  const { send } = useAssistant();
+  const { owner, repo, overview, claude, refresh, setStatus, run } = useSite();
 
   return async function apply(setup: SetupAnswers) {
     // 1. The files, where the editor's uploads go.
@@ -59,17 +58,22 @@ function useApplySetup() {
       const saved = await api<{ path: string }>(workspacePath(owner, repo, "/brand/image"), { method: "POST", body: { name: setup.logo.name, data: await readAsBase64(setup.logo) } });
       logo = saved.path;
     }
+    let favicon: string | undefined;
+    if (setup.favicon) {
+      const saved = await api<{ path: string }>(workspacePath(owner, repo, "/brand/image"), { method: "POST", body: { name: setup.favicon.name, data: await readAsBase64(setup.favicon) } });
+      favicon = saved.path;
+    }
     const photos: string[] = [];
     for (const photo of setup.photos) {
       const saved = await api<{ path: string }>(workspacePath(owner, repo, "/uploads"), { method: "POST", body: { name: photo.name, data: await readAsBase64(photo) } });
       photos.push(saved.path);
     }
-    // 2. The answers, saved by the server, which returns the build request.
+    // 2. The answers, saved by the server, which makes the pages and plans the build.
     const hasHome = overview?.collections.some((c) => c.pages.some(isHomePage)) ?? false;
-    const saved = await api<{ request: string; status: WorkspaceStatus }>(workspacePath(owner, repo, "/setup"), {
+    const saved = await api<{ request: string; build?: boolean; status: WorkspaceStatus }>(workspacePath(owner, repo, "/setup"), {
       method: "POST",
       body: {
-        setup: setupBody(setup, { logo, photos }),
+        setup: setupBody(setup, { logo, favicon, photos }),
         // A new site has only its starter homepage: Claude needn't look around first.
         options: { hasHome, chrome: Boolean(overview?.features.chromeDesign), fresh: (overview?.collections.flatMap((c) => c.pages).length ?? 0) <= 1 },
       },
@@ -78,8 +82,8 @@ function useApplySetup() {
     // These answers are the site details the first publish would ask to check.
     markVisited(owner, repo, "details");
     await refresh();
-    // 3. Claude builds the site from them.
-    if (claude.ready) await send(saved.request);
+    // 3. The server builds the site from them, as one job the status strip follows.
+    if (claude.ready && saved.build) await run("site-build");
   };
 }
 

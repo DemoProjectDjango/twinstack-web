@@ -1,7 +1,8 @@
 {
   "id": "law",
-  "version": 2,
+  "version": 3,
   "label": "Law firm",
+  "photoLed": false,
   "recognise": "Law firms, solicitors, barristers, attorneys, notaries, immigration and legal advisers.",
   "keywords": ["law", "lawyer", "lawyers", "legal", "attorney", "attorneys", "solicitor", "solicitors", "barrister", "advocate", "firm", "litigation", "immigration", "notary", "divorce", "court", "counsel"],
   "research": "What websites of similar law firms (same practice areas and, if given, the same city) usually show, and what clients look for before they get in touch.",
@@ -17,7 +18,7 @@
   "sections": {
     "header": "The firm's name or logo, the main pages and a Book a consultation button.",
     "footer": "Office address, phone, email, hours, practice areas, the privacy policy and the legal disclaimer.",
-    "homepage": "An assured, professional hero with what the firm does and a consultation button; the practice areas; why clients choose the firm; the team; how a first consultation works; a final call to get in touch."
+    "homepage": "An assured, professional hero with what the firm does and a consultation button; the practice areas; why clients choose the firm; the team, only when the owner named them; how a first consultation works; a final call to get in touch."
   },
   "rules": [
     "Never promise results or quote past case outcomes the owner didn't give.",
@@ -27,7 +28,7 @@
     "A confident, sober look: strong type, restrained colour, generous spacing."
   ],
   "demo": {
-    "note": "Where the owner gave no details, write these as clearly marked samples for them to replace.",
+    "note": "Where the owner gave no details, write these as samples for them to replace. Samples are only ever offerings like these: never sample people, staff photos, opening hours, prices, addresses or phone numbers.",
     "items": ["Family law", "Property and conveyancing", "Business and contracts", "Employment law", "Wills and estates"]
   },
   "questions": [

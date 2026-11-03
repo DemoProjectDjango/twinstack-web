@@ -21,6 +21,7 @@ const RUNNING: Record<string, string> = {
   schedule: "Running scheduled pages",
   changelog: "Updating the change history",
   "site-update": "Updating your site to the latest version",
+  "site-build": "The AI is building your site",
 };
 
 const DONE: Record<string, string> = {
@@ -43,10 +44,20 @@ const DONE: Record<string, string> = {
   schedule: "Planned posts run",
   changelog: "Change history updated",
   "site-update": "Your site is up to date",
+  "site-build": "Your site is built",
 };
 
 export function friendlyJobLabel(command: string, fallback: string) {
   return RUNNING[command] ?? fallback;
+}
+
+/**
+ * What a running job is on now, when it says so: its latest "▸ " line (the site build's steps,
+ * server/src/setup-build.js), e.g. "2/4 Designing your homepage". Null when it doesn't.
+ */
+export function jobProgress(output: string) {
+  const lines = output.match(/^▸ .+$/gm);
+  return lines ? lines[lines.length - 1].slice(2) : null;
 }
 
 /** What a command that finished successfully did, for the "Done" message. */

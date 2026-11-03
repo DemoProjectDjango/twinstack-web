@@ -10,6 +10,7 @@ import { ApiError, api, setBeforeChange, workspacePath, type Job, type Overview,
 import { AiHelpBadge } from "./AiHelpBadge";
 import { AnalyticsPanel } from "./AnalyticsPanel";
 import { AiActivity } from "./assistant/AiActivity";
+import { SiteBuildActivity } from "./assistant/SiteBuildActivity";
 import { DomainPanel } from "./DomainPanel";
 import { FirstRunSetup } from "./FirstRunSetup";
 import { AskClaude } from "./assistant/AskClaude";
@@ -699,6 +700,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
               {section === "tools" && <BuildPanel />}
             </div>
             <AiActivity />
+            <SiteBuildActivity />
             </div>
 
             {withAiBar && (

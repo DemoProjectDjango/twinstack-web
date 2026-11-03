@@ -18,6 +18,7 @@ import { WorkspaceError, clearPreviewStamp, markInstalled, markPreviewBuilt } fr
 import { SEO_REPORT } from "./seo.js";
 import { copyReference, referencePath } from "./assistant/attachments.js";
 import { saveCheckReport } from "./site-check.js";
+import { buildSteps } from "./setup-build.js";
 import { scanMissingPages } from "./missing-pages.js";
 
 // Every command the site manager can run, mapped to the same scripts the
@@ -346,8 +347,8 @@ export const COMMANDS = {
       const args = [markdownPage(input), text(input, "instruction", "Instruction", { max: 4000, multiline: true })];
       // Screenshots of a design to replicate, copied inside .git by prepare.
       const designs = references(input).map((id) => `--reference=${referencePath(id)}`);
-      // A whole page designed at high effort can take several minutes.
-      return [script("edit-page.js", [...args, ...designs, ...claudeFlags(input)], 20 * MINUTE)];
+      // A whole page designed at high effort, then looked at and improved, can take a while.
+      return [script("edit-page.js", [...args, ...designs, ...claudeFlags(input)], 30 * MINUTE)];
     },
     // A stale proposal must never be shown as this preview's result.
     prepare: async (key, input) => {
@@ -366,14 +367,24 @@ export const COMMANDS = {
       const args = [markdownPage(input), "--generate"];
       const direction = text(input, "instruction", "Direction", { max: 4000, multiline: true, optional: true });
       if (direction) args.push(direction);
-      // A whole page designed at high effort can take several minutes.
-      return [script("edit-page.js", [...args, ...claudeFlags(input)], 20 * MINUTE)];
+      // A whole page designed at high effort, then looked at and improved, can take a while.
+      return [script("edit-page.js", [...args, ...claudeFlags(input)], 30 * MINUTE)];
     },
     prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
   },
 
   // Claude designs the header and footer as a pair (edit-page.js --chrome): one design shown on
   // every page. The menu, button, logo and copyright still come from the site's settings.
+  // A new site built from its setup answers (setup-build.js), from the plan saving them wrote. Its
+  // steps need the job's env and who pays for its picture, so the route builds them (`withContext`).
+  "site-build": {
+    label: "Build the site from its setup answers",
+    claude: true,
+    needsKey: () => true,
+    steps: () => [],
+    withContext: buildSteps,
+  },
+
   "chrome-design": {
     label: "Design the header and footer with Claude",
     claude: true,

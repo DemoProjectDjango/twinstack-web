@@ -151,7 +151,8 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
       onSelect={onSelect}
       title={linkStatus(cta.url, pageIndex) !== "ok" ? "Left out of the built site: no page at this address yet. Click to edit." : undefined}
       className={`rounded-full px-4 py-2 text-sm font-semibold ${mobile ? "mt-4 w-full text-center" : ""} ${linkStatus(cta.url, pageIndex) !== "ok" ? "line-through opacity-40" : ""}`}
-      style={headerDark ? { background: "#ffffff", color: C.ink } : { background: C.ink, color: "#ffffff" }}
+      // As the template's header.html: the brand colour on a light header, white on a dark one.
+      style={headerDark ? { background: "#ffffff", color: C.ink } : { background: C.brand, color: "#ffffff" }}
     >
       {cta.label || "Button"}
     </Hit>
@@ -323,7 +324,7 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
                 className={`self-start ${empty ? "opacity-40" : ""}`}
                 title={empty ? "Left out of the built site: none of its links lead to a page yet. Click to edit." : undefined}
               >
-                <span className="mb-2 block text-[0.65rem] font-semibold uppercase tracking-widest" style={{ color: footer.heading }}>
+                <span className="mb-2 block text-xs font-semibold tracking-tight" style={{ color: footer.heading }}>
                   {column.title || "Untitled column"}
                 </span>
                 <span className="grid gap-1">

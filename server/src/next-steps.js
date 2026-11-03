@@ -42,17 +42,40 @@ async function readJson(dir, file) {
 }
 
 /** Pages whose body is still empty or the starter skeleton. */
+// Sample content the page writer put on a page for the owner to replace (a data-sample attribute on
+// each item: site-setup.js's build instructions), counted per page.
+const SAMPLE = /\bdata-sample\b/g;
+
 async function unwrittenPages(dir, overview) {
   const pages = overview.collections.flatMap((c) => c.pages.map((p) => ({ ...p, collection: c.name }))).filter((p) => !p.draft);
   const unwritten = [];
+  const samples = [];
   for (const page of pages.slice(0, MAX_PAGES_READ)) {
     const text = (await readText(path.join(dir, page.file))) ?? "";
     const body = bodyOf(text);
+    const count = (body.match(SAMPLE) ?? []).length;
+    if (count) samples.push({ ...page, count });
     // A converted page (imported HTML and CSS) is written, whatever its markup looks like.
     const converted = /^stylesheet:\s*\/assets\/css\/imported\//m.test(text);
     if (!converted && (!body || STARTER_TEXT.test(body) || (isHome(page) && !isDesigned(body)))) unwritten.push(page);
   }
-  return { pages, unwritten };
+  return { pages, unwritten, samples };
+}
+
+/** The sample items still on the site's visible pages: { total, pages: [{ title, url, count }] }. */
+export async function sampleContent(key) {
+  const { samples } = await unwrittenPages(workspaceDir(key), await getOverview(key));
+  return { total: samples.reduce((n, p) => n + p.count, 0), pages: samples.map((p) => ({ title: p.title, url: p.address ?? p.url ?? null, count: p.count })) };
+}
+
+/**
+ * The pages the setup left for later, from the notes' site profile line "- Pages I may want later:
+ * Title (/address): purpose; …" (profileText in site-setup.js): [{ title, address, purpose }].
+ */
+function laterPages(notes) {
+  const line = notes.match(/^- Pages I may want later: (.+)$/m)?.[1] ?? "";
+  const entry = /([^;]+?) \((\/[\w-]+\.html)\)(?:: (.*?))?(?=; [^;]+? \(\/[\w-]+\.html\)|$)/g;
+  return [...line.matchAll(entry)].map(([, title, address, purpose]) => ({ title: title.trim(), address, purpose: (purpose ?? "").trim() }));
 }
 
 export async function getNextSteps(key) {
@@ -77,7 +100,7 @@ export async function getNextSteps(key) {
 
   // 1. The homepage: the first thing every visitor sees. Written for the first time, it comes with
   // a header and footer to match (both by Claude Opus: first-design.js).
-  const { pages, unwritten } = await unwrittenPages(dir, overview);
+  const { pages, unwritten, samples } = await unwrittenPages(dir, overview);
   const home = pages.find(isHome);
   if (home) {
     add({
@@ -123,6 +146,35 @@ export async function getNextSteps(key) {
   }
   if (!others.length && pages.length > 1) {
     add({ counts: false, id: "write", title: "Write every page", why: "No page still has placeholder text.", done: true, action: null });
+  }
+
+  // 2a. Sample content the build put on pages, until the owner replaces it.
+  const sampleTotal = samples.reduce((n, p) => n + p.count, 0);
+  if (sampleTotal) {
+    add({
+      id: "samples",
+      title: `Replace ${sampleTotal} sample ${sampleTotal === 1 ? "item" : "items"} with your own`,
+      why: `They show visitors what could go there, but they aren't your real details yet (${samples.map((p) => quoted(p.title)).join(", ")}).`,
+      done: false,
+      action: { type: "send", prompt: "Which parts of my site are still sample content? Go through them with me one page at a time, and replace each with my real details or take it out." },
+    });
+  }
+
+  // 2b. Pages the owner left for later in the setup (site-setup.js's profile), until they exist.
+  const addresses = new Set(overview.collections.flatMap((c) => c.pages.map((p) => p.address)));
+  const planned = laterPages((await readText(path.join(dir, "knowledge/notes.md"))) ?? "").filter((p) => !addresses.has(p.address));
+  for (const page of planned.slice(0, MAX_EACH)) {
+    add({
+      counts: false,
+      id: `later:${page.address}`,
+      title: `Add the ${quoted(page.title)} page`,
+      why: "You planned it when setting up your site.",
+      done: false,
+      action: {
+        type: "send",
+        prompt: `Create my ${quoted(page.title)} page at ${page.address}${page.purpose ? ` (${page.purpose.replace(/\.$/, "")})` : ""}, with real content for ${name}, matching the look of my homepage. Ask me about anything you need to know.`,
+      },
+    });
   }
 
   // 3. Links to pages that don't exist yet, and pages nothing links to (from the last build's scan).

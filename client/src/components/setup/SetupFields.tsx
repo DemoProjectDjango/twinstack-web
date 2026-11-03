@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
+import { useFileUrl } from "./use-file-url";
 import {
   DEFAULT_HOURS,
   LOGO_ACCEPT,
@@ -28,6 +29,12 @@ export type FieldsProps = {
   fromBrief: Set<string>;
   logo: File | null;
   onLogo: (file: File | null) => void;
+  /** The browser-tab icon, when the owner chose one other than the logo. */
+  favicon: File | null;
+  onFavicon: (file: File | null) => void;
+  /** For the tab icon's preview: the business's name and colour. */
+  siteName: string;
+  accent: string;
   photos: File[];
   onPhotos: (files: File[]) => void;
   onError: (error: Error | null) => void;
@@ -55,7 +62,103 @@ export function SetupFields(props: FieldsProps) {
   );
 }
 
-function Field({ field, answers, onAnswer, fromBrief, logo, onLogo, photos, onPhotos, onError }: FieldsProps & { field: SetupField }) {
+
+/** Reads one image from a file input, refusing one over `max` bytes. */
+function pickImage(e: React.ChangeEvent<HTMLInputElement>, max: number, onError: (error: Error | null) => void, onFile: (file: File) => void) {
+  const file = e.target.files?.[0] ?? null;
+  e.target.value = "";
+  if (!file) return;
+  if (file.size > max) return onError(new Error(`${file.name} is over ${Math.round(max / 1024 / 1024)} MB.`));
+  onError(null);
+  onFile(file);
+}
+
+/**
+ * The logo, shown once chosen, and the browser-tab icon (favicon): the logo by default, or without
+ * one the business's initial on its colour (the mark the build makes), or an image of its own.
+ */
+export function LogoAndIcon({
+  name,
+  accent,
+  logo,
+  onLogo,
+  favicon,
+  onFavicon,
+  onError,
+}: {
+  name: string;
+  accent: string;
+  logo: File | null;
+  onLogo: (file: File | null) => void;
+  favicon: File | null;
+  onFavicon: (file: File | null) => void;
+  onError: (error: Error | null) => void;
+}) {
+  const logoUrl = useFileUrl(logo);
+  const faviconUrl = useFileUrl(favicon);
+  const iconUrl = faviconUrl ?? logoUrl;
+  const initial = (name.match(/[\p{L}\p{N}]/u)?.[0] ?? "Y").toUpperCase();
+  return (
+    <div className="grid gap-3">
+      {logo && logoUrl ? (
+        <div className="flex items-center gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+          <span className="grid h-16 w-28 shrink-0 place-items-center rounded-lg bg-[repeating-conic-gradient(#f4f4f5_0_25%,#fff_0_50%)] bg-size-[12px_12px] p-1.5 dark:bg-[repeating-conic-gradient(#27272a_0_25%,#18181b_0_50%)]">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={logoUrl} alt="Your logo" className="max-h-full max-w-full object-contain" />
+          </span>
+          <span className="min-w-0 flex-1 text-sm">
+            <b className="block truncate font-medium">{logo.name}</b>
+            <span className="text-xs text-zinc-500">Shown in your header and footer</span>
+          </span>
+          <label className="cursor-pointer text-xs underline">
+            Change
+            <input type="file" accept={LOGO_ACCEPT} className="sr-only" onChange={(e) => pickImage(e, MAX_LOGO_BYTES, onError, onLogo)} />
+          </label>
+          <button type="button" onClick={() => onLogo(null)} className="text-xs text-zinc-500 underline">
+            Remove
+          </button>
+        </div>
+      ) : (
+        <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-zinc-200 px-4 py-6 text-center text-sm hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600">
+          <span className="font-medium">Choose your logo</span>
+          <span className="mt-0.5 text-xs text-zinc-500">PNG, SVG or WebP, up to 2 MB. Without one, the header shows your name.</span>
+          <input type="file" accept={LOGO_ACCEPT} className="sr-only" onChange={(e) => pickImage(e, MAX_LOGO_BYTES, onError, onLogo)} />
+        </label>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3 rounded-xl bg-zinc-50 p-3 dark:bg-zinc-900/60">
+        {/* A browser tab, as visitors see the icon. */}
+        <span aria-hidden="true" className="flex min-w-0 max-w-56 items-center gap-2 rounded-t-lg border border-b-0 border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+          {iconUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={iconUrl} alt="" className="size-4 shrink-0 rounded-sm object-contain" />
+          ) : (
+            <span className="grid size-4 shrink-0 place-items-center rounded-[4px] text-[9px] font-bold text-white" style={{ background: accent }}>
+              {initial}
+            </span>
+          )}
+          <span className="truncate">{name || "Your site"}</span>
+        </span>
+        <span className="min-w-0 flex-1 text-sm">
+          <b className="block font-medium">Browser tab icon</b>
+          <span className="text-xs text-zinc-500">{favicon ? favicon.name : logo ? "Your logo, by default" : "Your initial in your colour, until you add a logo"}</span>
+        </span>
+        <label className="cursor-pointer text-xs underline">
+          {favicon ? "Change" : "Choose a different icon"}
+          <input type="file" accept={`${LOGO_ACCEPT},image/x-icon,image/vnd.microsoft.icon`} className="sr-only" onChange={(e) => pickImage(e, MAX_LOGO_BYTES, onError, onFavicon)} />
+        </label>
+        {favicon && (
+          <button type="button" onClick={() => onFavicon(null)} className="text-xs text-zinc-500 underline">
+            {logo ? "Use my logo" : "Use my initial"}
+          </button>
+        )}
+        <span className="basis-full text-xs text-zinc-500">A square image works best: browsers show it very small.</span>
+      </div>
+    </div>
+  );
+}
+
+function Field({ field, answers, onAnswer, fromBrief, logo, onLogo, favicon, onFavicon, siteName, accent, photos, onPhotos, onError }: FieldsProps & { field: SetupField }) {
   const id = `setup-${field.id}`;
   const value = answers[field.id];
   const label = (
@@ -166,27 +269,7 @@ function Field({ field, answers, onAnswer, fromBrief, logo, onLogo, photos, onPh
       return (
         <div>
           {label}
-          <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-zinc-200 px-4 py-6 text-center text-sm hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600">
-            <span className="font-medium">{logo ? logo.name : "Choose your logo"}</span>
-            <span className="mt-0.5 text-xs text-zinc-500">{logo ? "Click to choose another" : "PNG, SVG or WebP, up to 2 MB. Without one, the header shows your name."}</span>
-            <input
-              type="file"
-              accept={LOGO_ACCEPT}
-              className="sr-only"
-              onChange={(e) => {
-                const file = e.target.files?.[0] ?? null;
-                e.target.value = "";
-                if (file && file.size > MAX_LOGO_BYTES) return onError(new Error(`${file.name} is over 2 MB.`));
-                onError(null);
-                onLogo(file);
-              }}
-            />
-          </label>
-          {logo && (
-            <button type="button" onClick={() => onLogo(null)} className="mt-1.5 text-xs text-zinc-500 underline">
-              Remove the logo
-            </button>
-          )}
+          <LogoAndIcon name={siteName} accent={accent} logo={logo} onLogo={onLogo} favicon={favicon} onFavicon={onFavicon} onError={onError} />
         </div>
       );
     case "photos":

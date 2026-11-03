@@ -41,6 +41,29 @@ export function AccessRequests() {
     };
   }, []);
 
+  async function remove(request: Request) {
+    const ok = await confirmModal(
+      `${request.email}'s account will be deleted from the database. They'll be signed out and will have to register again. Sites they already made stay in their GitHub account.`,
+      { title: "Delete this user?", confirmLabel: "Delete user", danger: true },
+    );
+    if (!ok) return;
+    setBusy(request.id);
+    try {
+      const res = await fetch(`/api/admin/access/${encodeURIComponent(request.id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return void toast.error(data.error ?? "That didn't work. Try again.");
+      setState({ status: "ready", requests: data.requests });
+      toast.success(`${request.email} was deleted.`);
+    } catch {
+      toast.error("Network error. Refresh to see whether it was saved.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function decide(request: Request, status: "approved" | "denied") {
     const ok =
       status === "approved"
@@ -139,6 +162,10 @@ export function AccessRequests() {
                 Remove access
               </Button>
             )}
+            <Button className="cursor-pointer" variant="danger" disabled={busy !== null} onClick={() => void remove(request)}>
+              Delete user
+            </Button>
+
           </div>
         </li>
       ))}

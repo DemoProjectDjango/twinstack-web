@@ -24,8 +24,8 @@ import {
   startDeploy,
 } from "../publishing.js";
 import { requireAuth, requireGithub } from "../session.js";
-import { getNextSteps } from "../next-steps.js";
-import { FIRST_DESIGN_EFFORT, firstDesign, firstDesignModel } from "../first-design.js";
+import { getNextSteps, sampleContent } from "../next-steps.js";
+import { FIRST_DESIGN_EFFORT, REVIEW_MODEL, designReviews, firstDesign, firstDesignModel } from "../first-design.js";
 import { analyticsRouter } from "./analytics.js";
 import { assistantRouter } from "./assistant.js";
 import { handle, keyFor, requireJson } from "./helpers.js";
@@ -66,6 +66,7 @@ import {
 import { getStaticInfo, saveStaticInfo } from "../static-info.js";
 import { getBrand, saveBrand, saveBrandImage } from "../brand.js";
 import { planSetup, saveSetup } from "../site-setup.js";
+import { pendingBuild } from "../setup-build.js";
 import { APPEARANCE_MARKER, HEADER_FOOTER_FILES, HEADER_FOOTER_MARKERS, getNavigation, saveNavigation, setPageMenu } from "../navigation.js";
 import { SEO_FILES, SEO_MARKERS, installSeo, readSeo } from "../seo.js";
 import { readCheckReport } from "../site-check.js";
@@ -205,11 +206,13 @@ workspacesRouter.post(
     let sized = null;
     // The site's first homepage or header and footer (first-design.js), and the model that writes it.
     let first = null;
+    // How many times the page writer looks at screenshots of its page and improves it.
+    let reviews = 0;
     try {
       if (claude) {
         let model = await getClaudeModel(req.user.id);
         first = command.claude ? await firstDesign(key, name, input).catch(() => null) : null;
-        if (first) model = firstDesignModel(model);
+        if (first) model = firstDesignModel(model, first);
         if (claude.charged) {
           const siteId = await siteIdFor(key).catch(() => null);
           proxy = issueProxyToken({ userId: req.user.id, siteId, command: name });
@@ -226,6 +229,11 @@ workspacesRouter.post(
           env = jobEnv(claude.apiKey, model);
         }
         if (first) env.TWINSTACK_EFFORT = FIRST_DESIGN_EFFORT;
+        reviews = designReviews(name, first);
+        if (reviews) {
+          env.TWINSTACK_DESIGN_REVIEW = String(reviews);
+          env.TWINSTACK_REVIEW_MODEL = REVIEW_MODEL;
+        }
         endActivity = beginClaudeActivity(req.user.id);
       }
       await command.prepare?.(key, input);
@@ -243,6 +251,10 @@ workspacesRouter.post(
       endActivity();
       release();
     };
+    // A command whose steps need the job's env and who's paying (site-build's picture).
+    const commandSteps = command.withContext
+      ? command.withContext({ env, userId: req.user.id, siteId: await siteIdFor(key).catch(() => null), charged: Boolean(claude?.charged) })
+      : steps;
     const job = startJob({
       key,
       userId: req.user.id,
@@ -253,7 +265,8 @@ workspacesRouter.post(
       steps: [
         ...(sized ? [{ display: describeTaskSize(sized), run: () => {} }] : []),
         ...(first ? [{ display: `The site's first ${first}: written by ${env.TWINSTACK_MODEL ?? "the site's own model"} at ${FIRST_DESIGN_EFFORT} effort, never the cheaper model.`, run: () => {} }] : []),
-        ...steps,
+        ...(reviews ? [{ display: `Then looked at in a browser and improved by ${REVIEW_MODEL}, up to ${reviews} time${reviews === 1 ? "" : "s"}.`, run: () => {} }] : []),
+        ...commandSteps,
       ],
       cwd: workspaceDir(key),
       env,
@@ -433,7 +446,12 @@ workspacesRouter.get(
 
 workspacesRouter.get(
   "/:owner/:repo/check",
-  handle(async (req, res) => res.json(await readCheckReport(keyFor(req)))),
+  // With the sample items still on the site, which publishing warns about (next-steps.js).
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const [check, samples] = await Promise.all([readCheckReport(key), sampleContent(key).catch(() => null)]);
+    res.json({ ...check, samples });
+  }),
 );
 
 /* Stylesheets: the Tailwind source, the site tree's global stylesheets, converted pages' own. */
@@ -810,6 +828,12 @@ workspacesRouter.post(
     const saved = await saveSetup({ key, siteId, body: setup, options: has });
     res.json({ ...saved, status: await getStatus(key) });
   }),
+);
+
+/* Whether the site's build from its setup answers stopped before it finished (setup-build.js), so the editor can offer to carry on. */
+workspacesRouter.get(
+  "/:owner/:repo/setup/build",
+  handle(async (req, res) => res.json({ pending: await pendingBuild(keyFor(req)) })),
 );
 
 /* The header and footer (content/data/navigation.json): menus, button, footer columns, legal links and their look. */

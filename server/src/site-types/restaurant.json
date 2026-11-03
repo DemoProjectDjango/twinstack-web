@@ -1,7 +1,8 @@
 {
   "id": "restaurant",
-  "version": 2,
+  "version": 3,
   "label": "Restaurant",
+  "photoLed": true,
   "recognise": "Restaurants, cafés, bakeries, bars, takeaways, food trucks and caterers.",
   "keywords": ["restaurant", "cafe", "café", "coffee", "bakery", "bar", "pub", "bistro", "food", "menu", "dining", "dine", "takeaway", "delivery", "catering", "kitchen", "chef", "pizza", "grill", "grilled", "brunch", "seafood", "flatbreads", "burger", "burgers", "biryani", "dishes"],
   "research": "What websites of similar restaurants (same cuisine and, if given, the same area) usually show, and what guests look for before they book or order.",
@@ -16,7 +17,7 @@
   "sections": {
     "header": "The restaurant's name or logo, the menu and main pages, and a Book a table or Order now button.",
     "footer": "Address, phone, opening hours, social links, quick links and the privacy policy.",
-    "homepage": "A big, appetising hero photo with the name and a booking or ordering button; signature dishes; the story in a few lines; opening hours and location; reviews only if the owner gives real ones; a final call to book."
+    "homepage": "A big, appetising hero photo with the name and a booking or ordering button; signature dishes; the story in a few lines; opening hours and location from the site details (left out until given); reviews only if the owner gives real ones; a final call to book."
   },
   "rules": [
     "Let photos lead: large images, short text.",
@@ -25,7 +26,7 @@
     "Never invent reviews, ratings or awards."
   ],
   "demo": {
-    "note": "Where the owner gave no menu, write these as clearly marked sample dishes for them to replace.",
+    "note": "Where the owner gave no menu, write these as sample dishes for them to replace. Samples are only ever offerings like these: never sample people, staff photos, opening hours, prices, addresses or phone numbers.",
     "items": ["House special", "Seasonal starter", "Chef's main", "Vegetarian choice", "Dessert of the day"]
   },
   "questions": [

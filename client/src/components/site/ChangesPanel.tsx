@@ -6,6 +6,7 @@ import { confirmModal } from "@/lib/confirm";
 import { api, workspacePath, type FileDiff, type WorkspaceStatus } from "@/lib/site-api";
 import { DomainSettings } from "./DomainSettings";
 import { markVisited, wasVisited } from "./HomePanel";
+import { confirmSamples } from "./site-hooks";
 import { SiteDetailsStep } from "./SiteDetailsStep";
 import { useSite } from "./site-context";
 import { SiteProblems } from "./SiteProblems";
@@ -95,6 +96,7 @@ export function ChangesPanel() {
     ) {
       return;
     }
+    if (!(await confirmSamples(siteCheck))) return;
     setWorking("commit");
     setError(null);
     setResult(null);
