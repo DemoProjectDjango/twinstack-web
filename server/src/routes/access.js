@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { config } from "../config.js";
 import { CREDITS_PER_PAID_USD, CREDITS_PER_USD, PLATFORM_SHARE, purchaseMoney, totalsMoney } from "../credits.js";
-import { PURCHASE_STATUSES, deleteUser, listAccessRequests, listAllPurchases, publicUser, purchaseTotals, requestAccess, setAccessStatus } from "../db.js";
+import { PURCHASE_STATUSES, listAccessRequests, listAllPurchases, publicUser, purchaseTotals, removeGithubAccess, requestAccess, setAccessStatus } from "../db.js";
 import { sendEmail } from "../email.js";
 import { FastModelError, fastModelView, setFastModel } from "../fast-model.js";
 import { ImageModelError, imageModelView, setImageModel } from "../image-model.js";
@@ -103,9 +103,8 @@ adminRouter.post("/access/:id", async (req, res) => {
   res.json({ requests: await listAccessRequests(), emailed });
 });
 
-adminRouter.delete("/access/:id", async (req, res) => {
-  if (req.params.id === req.user.id) return res.status(400).json({ error: "You can't remove your own account." });
-  const account = await deleteUser(req.params.id);
+adminRouter.delete("/access/:id/github", async (req, res) => {
+  const account = await removeGithubAccess(req.params.id);
   if (!account) return res.status(404).json({ error: "There's no such account." });
   res.json({ requests: await listAccessRequests() });
 });

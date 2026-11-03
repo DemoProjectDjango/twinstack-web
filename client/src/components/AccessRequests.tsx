@@ -43,20 +43,20 @@ export function AccessRequests() {
 
   async function remove(request: Request) {
     const ok = await confirmModal(
-      `${request.email}'s account will be deleted from the database. They'll be signed out and will have to register again. Sites they already made stay in their GitHub account.`,
-      { title: "Delete this user?", confirmLabel: "Delete user", danger: true },
+      `@${request.githubLogin} will be disconnected from ${request.email}'s account. They keep their account, and when they connect GitHub again they get the free credits again. Sites they already made stay in their GitHub account.`,
+      { title: "Remove GitHub access?", confirmLabel: "Remove GitHub", danger: true },
     );
     if (!ok) return;
     setBusy(request.id);
     try {
-      const res = await fetch(`/api/admin/access/${encodeURIComponent(request.id)}`, {
+      const res = await fetch(`/api/admin/access/${encodeURIComponent(request.id)}/github`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return void toast.error(data.error ?? "That didn't work. Try again.");
       setState({ status: "ready", requests: data.requests });
-      toast.success(`${request.email} was deleted.`);
+      toast.success(`GitHub was removed from ${request.email}'s account.`);
     } catch {
       toast.error("Network error. Refresh to see whether it was saved.");
     } finally {
@@ -162,9 +162,11 @@ export function AccessRequests() {
                 Remove access
               </Button>
             )}
-            <Button className="cursor-pointer" variant="danger" disabled={busy !== null} onClick={() => void remove(request)}>
-              Delete user
-            </Button>
+            {request.githubLogin && (
+              <Button className="cursor-pointer" variant="danger" disabled={busy !== null} onClick={() => void remove(request)}>
+                Remove GitHub
+              </Button>
+            )}
 
           </div>
         </li>

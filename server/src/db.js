@@ -391,13 +391,6 @@ export async function setAccessStatus(id, status, decidedBy) {
   );
 }
 
-/** Deletes the account's document. Returns it, or null when there's no such account. Its session stops working at once. */
-export async function deleteUser(id) {
-  const _id = objectId(id);
-  if (!_id) return null;
-  return users().findOneAndDelete({ _id });
-}
-
 /* ----------------------------------------------------------------- github */
 
 export class GithubInUseError extends Error {}
@@ -423,6 +416,24 @@ export async function saveGithubToken(id, token) {
 
 export async function unlinkGithub(id) {
   await users().updateOne({ _id: objectId(id) }, { $unset: { github: "" } });
+}
+
+/**
+ * Admin removal of an account's GitHub connection. Unlike the user unlinking it themselves, this
+ * frees the GitHub account's one-time free-credit grant and makes the account wait for it again,
+ * so whoever connects GitHub next gets the free credits. Returns the account's document as it was,
+ * or null when there's no such account.
+ */
+export async function removeGithubAccess(id) {
+  const _id = objectId(id);
+  if (!_id) return null;
+  const account = await users().findOneAndUpdate(
+    { _id },
+    { $unset: { github: "" }, $set: { "credits.freePending": true } },
+    { returnDocument: "before" },
+  );
+  if (account?.github?.id != null) await freeCreditGrants().deleteMany({ _id: account.github.id });
+  return account;
 }
 
 /** `{ accessToken, refreshToken, expiresAt, scopes }` for an account document, or null. */
