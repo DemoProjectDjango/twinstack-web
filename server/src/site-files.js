@@ -185,6 +185,8 @@ export async function getOverview(key) {
       seoTemplate,
       // Copies whose page shell loads the visit counter (assets/js/analytics.js) when the site has a key.
       analytics: baseTemplate.includes(ANALYTICS_MARKER),
+      // Copies whose page shell shows the code content/data/scripts.json gives a page.
+      customScripts: baseTemplate.includes("customHead"),
       proposalPreview: buildScript.includes("--proposal="),
       // Copies made before Claude could design the header and footer (edit-page.js --chrome).
       chromeDesign: editScript.includes("--chrome"),
@@ -1203,6 +1205,84 @@ export async function saveCss(key, file, content, version) {
     release();
   }
   return readCss(key, file);
+}
+
+/* ---------------------------------------------------------- scripts on pages */
+
+// Code from other services (Google Analytics, a chat widget…) on every published page or chosen
+// ones: content/data/scripts.json, which the template's build.js puts through base.html
+// (pageScripts in its lib/content.js). The file is the site's, so site updates leave it alone.
+const SCRIPTS_FILE = "content/data/scripts.json";
+const MAX_SCRIPTS = 20;
+const MAX_SCRIPT_BYTES = 50 * 1024;
+const MAX_SCRIPT_PAGES = 200;
+const RAW_TAG = /<!--|<(script|style|textarea|title)\b/gi;
+
+/** A tag that would hide the rest of the page, as the template's unclosedRawText finds them. */
+function unclosedTag(code) {
+  const lower = code.toLowerCase();
+  RAW_TAG.lastIndex = 0;
+  for (let match = RAW_TAG.exec(code); match; match = RAW_TAG.exec(code)) {
+    const end = match[0] === "<!--" ? "-->" : `</${match[1].toLowerCase()}`;
+    const close = lower.indexOf(end, match.index + match[0].length);
+    if (close === -1) return match[0] === "<!--" ? "a comment (<!--)" : `<${match[1].toLowerCase()}>`;
+    RAW_TAG.lastIndex = close + end.length;
+  }
+  return null;
+}
+
+/** The list as it's saved; refuses anything that would break the pages it's on. */
+export function checkScripts(raw) {
+  if (!Array.isArray(raw)) throw new WorkspaceError("The scripts must be a list.", 400);
+  if (raw.length > MAX_SCRIPTS) throw new WorkspaceError(`A site can have at most ${MAX_SCRIPTS} scripts.`, 400);
+  return raw.map((item) => {
+    const name = typeof item?.name === "string" ? item.name.trim() : "";
+    if (!name || name.length > 80) throw new WorkspaceError("Give each script a name of up to 80 characters.", 400);
+    const not = (why) => new WorkspaceError(`Not saved: "${name}" ${why}.`, 400);
+    const code = typeof item.code === "string" ? item.code.replace(/\r\n/g, "\n").trim() : "";
+    if (!code) throw not("has no code");
+    if (Buffer.byteLength(code) > MAX_SCRIPT_BYTES) throw not("is over 50 KB");
+    // Anything else would show as text on the page: JavaScript pasted without its <script> tag, say.
+    if (!code.startsWith("<") || !code.endsWith(">")) throw not("should start and end with a tag, such as <script> and </script>");
+    if (/<\/?(html|head|body)\b/i.test(code)) throw not("has <html>, <head> or <body> tags: paste only what goes inside them");
+    const unclosed = unclosedTag(code);
+    if (unclosed) throw not(`has ${unclosed} that's never closed, which would hide the rest of the page`);
+    if (item.place !== "head" && item.place !== "body") throw not("needs a place on the page");
+    const pages = item.pages === "all" ? "all" : Array.isArray(item.pages) ? [...new Set(item.pages)] : null;
+    if (!pages || (pages !== "all" && (!pages.length || pages.length > MAX_SCRIPT_PAGES))) throw not("needs at least one page");
+    if (pages !== "all" && pages.some((page) => typeof page !== "string" || !page.startsWith("/") || page.length > 300)) throw not("names a page that isn't an address on this site");
+    return { name, code, place: item.place, pages, on: item.on === true };
+  });
+}
+
+/** The site's scripts; a copy from before the file existed has none. */
+export async function readScripts(key) {
+  const text = (await readText(inside(workspaceDir(key), SCRIPTS_FILE))) ?? "";
+  let items = [];
+  try {
+    if (text) items = checkScripts(JSON.parse(text).items ?? []);
+  } catch {
+    throw new WorkspaceError(`${SCRIPTS_FILE} can't be read. Fix or remove it, then try again.`, 422);
+  }
+  return { items, version: contentVersion(text) };
+}
+
+export async function saveScripts(key, raw, version) {
+  const items = checkScripts(raw);
+  if (typeof version !== "string") throw new WorkspaceError("Reload the scripts, then save again.", 400);
+  const target = inside(workspaceDir(key), SCRIPTS_FILE);
+  const release = acquire(key, "saving the site's scripts");
+  try {
+    const text = (await readText(target)) ?? "";
+    if (contentVersion(text) !== version) throw new WorkspaceError("The scripts changed since you opened them. Reload and try again.", 409);
+    // The file's other keys (its _comment) stay.
+    const doc = text ? JSON.parse(text) : {};
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, `${JSON.stringify({ ...doc, items }, null, 2)}\n`);
+  } finally {
+    release();
+  }
+  return readScripts(key);
 }
 
 /* ----------------------------------------------------------------- images */

@@ -141,6 +141,10 @@ export type NavigationInfo = {
 export type CssFile = { file: string; kind: "site" | "global" | "imported"; declared: boolean; exists: boolean };
 export type CssSource = { file: string; exists: boolean; content: string; version: string };
 
+/** Code from another service on the published site (content/data/scripts.json). `place` body is the end of the page. */
+export type SiteScript = { name: string; code: string; place: "head" | "body"; pages: "all" | string[]; on: boolean };
+export type SiteScripts = { items: SiteScript[]; version: string };
+
 export type Overview = {
   /** `description`: what the business does (site.config.json); older servers don't send it. */
   site: { name: string; url: string; model: string | null; description?: string };
@@ -179,6 +183,8 @@ export type Overview = {
     pageMenus?: boolean;
     /** Its base.html loads the visit counter (assets/js/analytics.js) when site.config.json → analytics has a key. */
     analytics?: boolean;
+    /** Its base.html shows the code content/data/scripts.json gives a page. */
+    customScripts?: boolean;
   };
   /** Markdown files outside content/ that the "md-edit" command may change. Empty without mdEdit. */
   markdownFiles: string[];

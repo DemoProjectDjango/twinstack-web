@@ -13,7 +13,7 @@ export const MORE_TOOLS: { id: SiteSection; label: string; text: string }[] = [
   { id: "tree", label: "Page plan", text: "A list of the pages your site should have" },
   { id: "schedule", label: "Planned posts", text: "Pages and posts the AI writes on the dates you choose" },
   { id: "memory", label: "AI notes about your site", text: "What the AI remembers from earlier work, and your standing notes" },
-  { id: "styles", label: "Custom code", text: "Extra styling (CSS) for people who know it" },
+  { id: "styles", label: "Custom code", text: "Google Analytics and other services' scripts, and extra styling (CSS)" },
   { id: "models", label: "AI settings", text: "Which AI models write your pages and pictures" },
   { id: "tools", label: "Technical log", text: "What happened when something didn't work, and site updates" },
 ];

@@ -45,6 +45,7 @@ import {
   listCss,
   listImages,
   readCss,
+  readScripts,
   readDataFile,
   readImage,
   readMemory,
@@ -55,6 +56,7 @@ import {
   prepareWorkLog,
   replaceMemoryLine,
   saveCss,
+  saveScripts,
   saveHtmlSource,
   saveUpload,
   setPageDraft,
@@ -475,6 +477,24 @@ workspacesRouter.put(
     const { file, content, version } = req.body ?? {};
     const css = await saveCss(key, file, content, version);
     res.json({ css, status: await getStatus(key) });
+  }),
+);
+
+/* Code from other services on the site's published pages (content/data/scripts.json). */
+
+workspacesRouter.get(
+  "/:owner/:repo/scripts",
+  handle(async (req, res) => res.json(await readScripts(keyFor(req)))),
+);
+
+workspacesRouter.put(
+  "/:owner/:repo/scripts",
+  // Up to 20 scripts of 50 KB each, and JSON escaping adds to it.
+  express.json({ limit: "3mb" }),
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const scripts = await saveScripts(key, req.body?.items, req.body?.version);
+    res.json({ scripts, status: await getStatus(key) });
   }),
 );
 

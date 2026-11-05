@@ -208,8 +208,8 @@ const NOT_TEXT = new Set([
   "url", "slug", "layout", "date", "updated", "order", "menu", "draft", "stylesheet", "canonical",
   "ogImage", "image", "noindex", "navHidden", "collection", "relatedProduct", "parentUrl",
 ]);
-// Site-wide data the page isn't the place to change: the menus and the redirects.
-const NOT_SHARED_TEXT = new Set(["content/data/navigation.json", "content/data/redirects.json"]);
+// Site-wide data the page isn't the place to change: the menus, the redirects and the scripts.
+const NOT_SHARED_TEXT = new Set(["content/data/navigation.json", "content/data/redirects.json", "content/data/scripts.json"]);
 const SEO_FIELDS = new Set(["title", "description"]);
 
 const looksLikeText = (value) => /\p{L}/u.test(value) && !/^(\/|https?:|mailto:|tel:|#)/.test(value.trim());

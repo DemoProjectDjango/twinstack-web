@@ -19,6 +19,7 @@ export function describeChange(change: Change, overview: Overview | null): { wha
   if (page) what = `Page: ${page.title}`;
   else if (path.startsWith("content/") && path.endsWith(".md")) what = `Page: ${baseName(path).replace(/\.md$/, "")}`;
   else if (path === "content/data/navigation.json") what = "Menu and footer";
+  else if (path === "content/data/scripts.json") what = "Scripts on your site";
   else if (path.startsWith("content/data/")) what = `Business info: ${baseName(path).replace(/\.json$/, "")}`;
   else if (path === "site.config.json") what = "Site settings and logo";
   else if (path.startsWith("assets/img/")) what = `Image: ${baseName(path)}`;

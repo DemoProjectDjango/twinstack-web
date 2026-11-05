@@ -34,7 +34,7 @@ app.set("trust proxy", 1);
 // Stripe signs the exact bytes it sends, so its webhook takes the raw body, before JSON parsing.
 app.post("/api/stripe/webhook", express.raw({ type: "application/json", limit: "1mb" }), stripeWebhook);
 const json = express.json();
-const UPLOAD_PATH = /^\/api\/workspaces\/[^/]+\/[^/]+\/(uploads|html-source|css\/source|brand\/image|assistant\/attachments)$/;
+const UPLOAD_PATH = /^\/api\/workspaces\/[^/]+\/[^/]+\/(uploads|html-source|css\/source|scripts|brand\/image|assistant\/attachments)$/;
 app.use((req, res, next) => (UPLOAD_PATH.test(req.path) ? next() : json(req, res, next)));
 app.use(cookieParser());
 

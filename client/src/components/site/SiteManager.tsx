@@ -32,6 +32,7 @@ import { SiteContext, useSite, type PageEditMode, type SiteContextValue, type Si
 import { usePublishNow, usePublishing, useSiteTools, useSiteUpdate } from "./site-hooks";
 import { StaticInfoPanel } from "./StaticInfoPanel";
 import { StatusStrip } from "./StatusStrip";
+import { ScriptsPanel } from "./ScriptsPanel";
 import { StylesPanel } from "./StylesPanel";
 import { TreePanel } from "./TreePanel";
 import { Button, ErrorText, Notice, ScreenHeader, Spinner } from "./ui";
@@ -695,7 +696,12 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
               {section === "tree" && <TreePanel />}
               {section === "schedule" && <SchedulePanel />}
               {section === "memory" && <MemoryPanel />}
-              {section === "styles" && <StylesPanel />}
+              {section === "styles" && (
+                <div className="space-y-6">
+                  <ScriptsPanel />
+                  <StylesPanel />
+                </div>
+              )}
               {section === "models" && <ModelPanel />}
               {section === "tools" && <BuildPanel />}
             </div>
