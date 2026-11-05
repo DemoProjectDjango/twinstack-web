@@ -809,11 +809,12 @@ workspacesRouter.post(
     const { name, what, brief } = req.body ?? {};
     // The pages the site has, for the plan to update or keep rather than create again.
     const overview = await getOverview(keyFor(req));
+    // By `address`: most pages have no `url` of their own and are built at their collection's pattern.
     const existing = overview.collections
       .flatMap((c) => c.pages)
-      .filter((p) => typeof p.url === "string")
+      .filter((p) => typeof p.address === "string")
       .slice(0, 40)
-      .map((p) => ({ url: p.url, title: p.title ?? p.url }));
+      .map((p) => ({ url: p.address, title: p.title ?? p.address }));
     res.json(await planSetup({ userId: req.user.id, siteId, name, what, brief, existing: existing.length ? existing : undefined }));
   }),
 );

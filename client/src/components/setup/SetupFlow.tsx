@@ -546,21 +546,28 @@ export function SetupFlow({
 
   const body = (
     <>
-      <div className="flex items-center gap-1.5" aria-hidden="true">
-        {Array.from({ length: known ? steps.length + 1 : step + 3 }, (_, i) => (
-          <span
-            key={i}
-            className={`h-1 flex-1 rounded-full ${i <= step + 1 ? "bg-foreground" : "bg-zinc-200 dark:bg-zinc-800"}`}
-          />
-        ))}
+      {/* Stays in view; the step under it scrolls, in a window whose height the host limits. */}
+      <div className="-mx-6 shrink-0 border-b border-zinc-100 px-6 pb-3 dark:border-zinc-900">
+        <div className="flex items-center gap-1.5" aria-hidden="true">
+          {Array.from(
+            { length: known ? steps.length + 1 : step + 3 },
+            (_, i) => (
+              <span
+                key={i}
+                className={`h-1 flex-1 rounded-full ${i <= step + 1 ? "bg-foreground" : "bg-zinc-200 dark:bg-zinc-800"}`}
+              />
+            ),
+          )}
+        </div>
+        <p className="mt-5 text-xs font-medium text-zinc-500">
+          Step {step + 2}
+          {known && ` of ${steps.length + 1}`}
+          {questionIndex >= 0 &&
+            ` · Question ${questionIndex + 1} of ${asked.length}`}
+        </p>
       </div>
-      <p className="mt-5 text-xs font-medium text-zinc-500">
-        Step {step + 2}
-        {known && ` of ${steps.length + 1}`}
-        {questionIndex >= 0 &&
-          ` · Question ${questionIndex + 1} of ${asked.length}`}
-      </p>
 
+      <div id="setup-flow" className="-mx-6 min-h-0 overflow-y-auto px-6 pb-6 pt-4">
       {current === "name" && (
         <>
           <h2
@@ -801,38 +808,34 @@ export function SetupFlow({
           )}
         </Button>
       </div>
+      </div>
     </>
   );
 
   // Inside Create a new site's own window, so the look doesn't change after the name.
   if (embedded) return body;
   return (
-    // Scrolls as a whole when the window is taller than the screen (the review step can be).
-    <div
-      id="setup-flow"
-      className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-4 text-foreground backdrop-blur-[2px]"
-    >
-      <div className="flex min-h-full items-center justify-center">
-        <section
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="setup-step-title"
-          className="w-full max-w-xl rounded-xl border border-zinc-200 bg-background p-6 shadow-xl dark:border-zinc-800"
-        >
-          <div className="mb-5 flex items-start gap-3">
-            <h1 className="text-lg font-semibold">{title}</h1>
-            <button
-              type="button"
-              onClick={onCancel}
-              aria-label="Close"
-              className="-mr-2 -mt-1 ml-auto grid size-8 place-items-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-foreground dark:hover:bg-zinc-900"
-            >
-              ×
-            </button>
-          </div>
-          {body}
-        </section>
-      </div>
+    // Above the site's navbar (z-100), which would otherwise cover the window's top and its close button.
+    <div className="fixed inset-0 z-1000 flex items-center justify-center bg-black/50 p-4 text-foreground backdrop-blur-[2px]">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="setup-step-title"
+        className="flex max-h-full w-full max-w-xl flex-col overflow-hidden rounded-xl border border-zinc-200 bg-background px-6 pt-6 shadow-xl dark:border-zinc-800"
+      >
+        <div className="mb-5 flex shrink-0 items-start gap-3">
+          <h1 className="text-lg font-semibold">{title}</h1>
+          <button
+            type="button"
+            onClick={onCancel}
+            aria-label="Close"
+            className="-mr-2 -mt-1 ml-auto grid size-8 place-items-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-foreground dark:hover:bg-zinc-900"
+          >
+            ×
+          </button>
+        </div>
+        {body}
+      </section>
     </div>
   );
 }

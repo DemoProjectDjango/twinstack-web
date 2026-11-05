@@ -184,7 +184,7 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
       onClick={(e) => {
         if (e.target === e.currentTarget && !asking) close();
       }}
-      className={`m-auto w-[calc(100%-2rem)] ${asking ? "max-w-xl" : "max-w-lg"} ${asking ? "max-h-[calc(100dvh-2rem)] overflow-y-auto" : "overflow-visible"} rounded-xl border border-zinc-200 bg-background p-0 text-foreground shadow-xl backdrop:bg-black/50 dark:border-zinc-800`}
+      className={`m-auto w-[calc(100%-2rem)] ${asking ? "max-w-xl" : "max-w-lg"} ${asking ? "max-h-[calc(100dvh-2rem)] overflow-hidden" : "overflow-visible"} rounded-xl border border-zinc-200 bg-background p-0 text-foreground shadow-xl backdrop:bg-black/50 dark:border-zinc-800`}
     >
       {working ? (
         <div className="p-6" aria-live="polite">
@@ -223,8 +223,9 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
         </div>
       ) : asking ? (
         // The setup questions, in this same window so its look doesn't change after the name.
-        <div className="p-6">
-          <div className="flex items-start gap-3">
+        // The title and the steps' progress stay in view; the step itself scrolls (SetupFlow).
+        <div className="flex max-h-[calc(100dvh-2rem-2px)] flex-col px-6 pt-6">
+          <div className="flex shrink-0 items-start gap-3">
             <div>
               <h2 id={`${nameId}-title`} className="text-lg font-semibold">
                 Create a new site
@@ -242,7 +243,7 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
               </svg>
             </button>
           </div>
-          <div className="mt-5">
+          <div className="mt-5 flex min-h-0 flex-col">
             <SetupFlow
               embedded
               name={siteName.trim()}
