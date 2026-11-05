@@ -67,6 +67,7 @@ import {
 } from "../site-files.js";
 import { getStaticInfo, saveStaticInfo } from "../static-info.js";
 import { getBrand, saveBrand, saveBrandImage } from "../brand.js";
+import { fileUsage, listRepoFiles, prepareUploadedPage, removeConvertedPage, removeRepoFile, uploadRepoFile } from "../repo-files.js";
 import { planSetup, saveSetup } from "../site-setup.js";
 import { pendingBuild } from "../setup-build.js";
 import { APPEARANCE_MARKER, HEADER_FOOTER_FILES, HEADER_FOOTER_MARKERS, getNavigation, saveNavigation, setPageMenu } from "../navigation.js";
@@ -477,6 +478,62 @@ workspacesRouter.put(
     const { file, content, version } = req.body ?? {};
     const css = await saveCss(key, file, content, version);
     res.json({ css, status: await getStatus(key) });
+  }),
+);
+
+/* The repo's folders, and a file uploaded into one (repo-files.js). */
+
+workspacesRouter.get(
+  "/:owner/:repo/files",
+  handle(async (req, res) => res.json(await listRepoFiles(keyFor(req)))),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/files",
+  // Files up to 10 MB, and base64 adds a third.
+  express.json({ limit: "15mb" }),
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const saved = await uploadRepoFile(key, req.body ?? {});
+    res.status(201).json({ saved, status: await getStatus(key) });
+  }),
+);
+
+/* Removing a file, or a page made from an HTML file. The first says what still uses it, for the question asked before. */
+
+workspacesRouter.get(
+  "/:owner/:repo/file-usage",
+  handle(async (req, res) => res.json({ usedBy: await fileUsage(keyFor(req), req.query.address, typeof req.query.page === "string" ? req.query.page : null) })),
+);
+
+workspacesRouter.delete(
+  "/:owner/:repo/files",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    await removeRepoFile(key, req.query.file);
+    res.json({ status: await getStatus(key) });
+  }),
+);
+
+workspacesRouter.delete(
+  "/:owner/:repo/files/page",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    await removeConvertedPage(key, req.query.file);
+    res.json({ status: await getStatus(key) });
+  }),
+);
+
+/* An uploaded HTML file the owner wants as a page: made ready for the page-convert command. */
+
+workspacesRouter.post(
+  "/:owner/:repo/files/page",
+  // The HTML with its stylesheets and scripts: 6 MB together, and JSON escaping adds to it.
+  express.json({ limit: "8mb" }),
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const prepared = await prepareUploadedPage(key, req.body ?? {});
+    res.json({ ...prepared, status: await getStatus(key) });
   }),
 );
 

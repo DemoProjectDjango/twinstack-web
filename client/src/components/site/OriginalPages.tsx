@@ -48,10 +48,10 @@ function saveQueue(owner: string, repo: string, files: string[]) {
 
 /** A failure no retry fixes: out of credits, or Claude or GitHub access gone. Stops the whole run. */
 class StopAll extends Error {}
-const OUT_OF_CREDITS = /used all your Claude credits|billing_error/i;
+export const OUT_OF_CREDITS = /used all your Claude credits|billing_error/i;
 
 /** What the conversion said went wrong: its "Refused to write" list when there is one, else its last lines. */
-function reasonOf(output: string) {
+export function reasonOf(output: string) {
   const refused = output.match(/Refused to write[^\n]*\n((?:\s+- .*\n?)+)/);
   if (refused) return `It looked wrong, so nothing was written: ${refused[1].trim().split("\n").map((line) => line.trim().replace(/^- /, "")).join("; ")}`;
   return output.trim().split("\n").slice(-6).join("\n") || "It stopped without saying why.";

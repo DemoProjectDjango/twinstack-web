@@ -145,6 +145,11 @@ export type CssSource = { file: string; exists: boolean; content: string; versio
 export type SiteScript = { name: string; code: string; place: "head" | "body"; pages: "all" | string[]; on: boolean };
 export type SiteScripts = { items: SiteScript[]; version: string };
 
+/** A folder of the site's repo on the Files screen. `locked` says why it takes no uploads; `isNew` is the client's: not saved until it has a file. */
+export type RepoFolder = { name: string; path: string; locked: string | null; files: { name: string; size: number; address: string }[]; folders: RepoFolder[]; isNew?: boolean };
+/** `pages`: the pages made from an HTML file, which have no file in a folder. `home`: the homepage, which can't be removed. */
+export type RepoFiles = { folders: RepoFolder[]; pages: { file: string; title: string; address: string; home: boolean }[]; maxBytes: number };
+
 export type Overview = {
   /** `description`: what the business does (site.config.json); older servers don't send it. */
   site: { name: string; url: string; model: string | null; description?: string };
@@ -179,6 +184,8 @@ export type Overview = {
     chromeDesign?: boolean;
     /** A conversion can make the page's own header and footer the site's (edit-page.js --with-header / --with-footer). */
     pageConvertChrome?: boolean;
+    /** A conversion can keep the page's own header and footer on that page alone (edit-page.js --own-chrome). */
+    pageConvertOwnChrome?: boolean;
     /** A page can add itself to the menu or footer (frontmatter `menu`, set with /navigation/page-menu). */
     pageMenus?: boolean;
     /** Its base.html loads the visit counter (assets/js/analytics.js) when site.config.json → analytics has a key. */

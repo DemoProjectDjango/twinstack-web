@@ -24,6 +24,7 @@ export function describeChange(change: Change, overview: Overview | null): { wha
   else if (path === "site.config.json") what = "Site settings and logo";
   else if (path.startsWith("assets/img/")) what = `Image: ${baseName(path)}`;
   else if (path.startsWith("assets/css/") || path.startsWith("assets/js/") || path.startsWith("styles/")) what = `Styles and scripts: ${baseName(path)}`;
+  else if (path.startsWith("assets/") || path.startsWith("static/")) what = `File: ${baseName(path)}`;
   else if (path.startsWith("knowledge/")) what = "AI notes about your site";
   else if (path === "scripts/site-tree.md") what = "Page plan";
   else if (path === "scripts/scaffold-schedule.md") what = "Planned posts";

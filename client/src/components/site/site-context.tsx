@@ -24,6 +24,7 @@ export type SiteSection =
   | "tree"
   | "schedule"
   | "memory"
+  | "files"
   | "styles"
   | "models"
   | "tools";

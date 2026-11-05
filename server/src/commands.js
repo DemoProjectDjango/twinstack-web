@@ -418,6 +418,9 @@ export const COMMANDS = {
         // The page's own header and footer become the site's, on every page (copies that support it).
         if (flag(input, "withHeader")) args.push("--with-header");
         if (flag(input, "withFooter")) args.push("--with-footer");
+        // The owner's choice for this page alone: its own header and footer, or the site's.
+        if (input?.chrome === "own") args.push("--own-chrome");
+        if (input?.chrome === "site") args.push("--site-chrome");
       }
       const direction = text(input, "instruction", "Direction", { max: 4000, multiline: true, optional: true });
       if (direction) args.push(direction);

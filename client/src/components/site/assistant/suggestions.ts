@@ -52,6 +52,10 @@ export const SUGGESTIONS: Record<SiteSection | "page", { placeholder: string; it
     placeholder: "Tell the AI something to always remember…",
     items: ["Always write in British English", "Our audience is busy parents; keep it simple", "What do you know about my site so far?"],
   },
+  files: {
+    placeholder: "Ask the AI about your site…",
+    items: ["How do I link to a file I added?", "Add a download button for /assets/files/price-list.pdf to the Contact page"],
+  },
   styles: {
     placeholder: "Describe a style change…",
     items: ["Make the buttons rounder", "Use a slightly larger font for paragraphs"],

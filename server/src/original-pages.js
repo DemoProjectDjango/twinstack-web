@@ -171,7 +171,7 @@ const fromFile = (file, href) => path.posix.normalize(href.startsWith("/") ? hre
 const QUOTED_CSS_URL = /url\(\s*(["']?)([^"')]+)\1\s*\)/gi;
 
 /** `css` (from `cssFile`) with its local url()s pointing at the same files from the converted stylesheet. */
-function rebaseCss(css, cssFile) {
+export function rebaseCss(css, cssFile) {
   return css.replace(QUOTED_CSS_URL, (whole, quote, href) => {
     const [target, rest = ""] = href.trim().split(/(?=[?#])/);
     if (!isLocal(target)) return whole;
@@ -185,7 +185,7 @@ function rebaseCss(css, cssFile) {
  * `exists(rel)` says whether the repo has that file: GitHub Pages serves pricing.html at
  * "/pricing", which the site's check.js doesn't know, so such a link gets its ".html".
  */
-function rebaseHtml(html, file, exists) {
+export function rebaseHtml(html, file, exists) {
   const root = (raw) => {
     // Browsers decode entity codes in addresses (an embed's src='https:&#47;&#47;…'); the
     // conversion doesn't, and would read that one as relative. &amp; stays as it is.
