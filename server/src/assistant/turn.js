@@ -55,6 +55,8 @@ const tooCostlyNote = ({ needed, balance, fresh }) => {
 
 const OUT_OF_CREDITS_NOTE = "I've stopped here because your Claude credits have run out. Buy more credits below and I'll carry on.";
 
+// A turn that read things and ended on buttons alone leaves the owner's question unanswered.
+const NO_WORDS_NOTE = "You haven't written anything to the owner in this reply. Tell them now, in words, the answer or what you did. Don't call any more tools.";
 const PROPOSED ="Shown to the owner as a card. It is NOT applied yet: they'll apply or skip it, and the next message will tell you which.";
 
 export function anthropicClient(apiKey) {
@@ -132,6 +134,7 @@ export async function runTurn({ client, key, model: requested, history, live, on
   return { appended: messages.slice(start), actions, usage, model, stopReason, lastPrompt };
 
   async function loop() {
+    let nudged = false;
     for (let step = 0; step < MAX_STEPS; step++) {
       const params = {
         model: requested,
@@ -182,7 +185,7 @@ export async function runTurn({ client, key, model: requested, history, live, on
           } else if (block.type === "tool_use") {
             const info = toolInfo(block.name);
             if (info?.kind === "read") {
-              const part = { type: "activity", label: info.activity({}) };
+              const part = { type: "activity", label: info.activity({}), pending: true };
               live.parts.push(part);
               blockParts.set(event.index, part);
             } else if (info && info.kind !== "talk") {
@@ -253,7 +256,12 @@ export async function runTurn({ client, key, model: requested, history, live, on
 
       const toolUses = message.content.filter((b) => b.type === "tool_use");
       if (!toolUses.length) {
-        messages.push({ role: "assistant", content: message.content });
+        if (message.content.length) messages.push({ role: "assistant", content: message.content });
+        if (!nudged && !live.parts.some((p) => p.type === "text" && p.text.trim()) && step < MAX_STEPS - 1) {
+          nudged = true;
+          messages.push({ role: "user", content: NO_WORDS_NOTE });
+          continue;
+        }
         break;
       }
 
@@ -310,6 +318,15 @@ export async function runTurn({ client, key, model: requested, history, live, on
       // The assistant turn and every result for it go in together (one message of results), so the
       // history never ends on a tool call without its result.
       messages.push({ role: "assistant", content: message.content }, { role: "user", content: results });
+
+      // It has spoken and shown its buttons, with nothing to read back: asking again only gets the
+      // same recap twice, at the owner's cost. The owner's next message follows the results.
+      const said = live.parts.some((p) => p.type === "text" && p.text.trim());
+      const waiting = toolUses.some((b) => toolInfo(b.name)?.kind === "read") || results.some((r) => r.is_error);
+      if (said && !waiting && toolUses.some((b) => toolInfo(b.name)?.kind === "talk")) {
+        stopReason = "end_turn";
+        break;
+      }
 
       if (step === MAX_STEPS - 1) {
         live.parts.push({ type: "text", text: "I've stopped here to check in. Tell me to carry on if you'd like me to continue." });

@@ -520,6 +520,19 @@ ${tail(job.output)}`);
     async (action: AssistantAction, { confirmed = false }: { confirmed?: boolean } = {}) => {
       // Run automatically, the owner's request is the confirmation (Claude only removes or publishes when asked).
       if (!confirmed && action.tool === "delete_page" && !(await confirmModal(`Remove "${(action.meta.title as string) ?? action.input.file}" from your site? You can still undo it on What's changed until you publish.`, { title: "Remove page", confirmLabel: "Remove page", danger: true }))) return;
+      // Always asked, even run automatically: unpublished work thrown away can't be got back.
+      if (action.tool === "undo_changes") {
+        const files = (action.input.files as string[]).join(", ");
+        if (!(await confirmModal(`Put these back as they were last published? Their unpublished changes are gone for good: ${files}`, { title: "Undo changes", confirmLabel: "Undo them", danger: true }))) {
+          await record(action, "skipped").catch(setError);
+          return;
+        }
+      }
+      if (!confirmed && action.tool === "remove_file") {
+        const usedBy = (action.meta.usedBy as string[] | undefined) ?? [];
+        const warning = usedBy.length ? ` It's still used by ${usedBy.join(", ")}, and a link or image pointing at a missing file stops your site from publishing.` : "";
+        if (!(await confirmModal(`Remove "${action.meta.name as string}" from your site?${warning} You can still undo it on What's changed until you publish.`, { title: "Remove file", confirmLabel: "Remove file", danger: true }))) return;
+      }
       if (
         !confirmed &&
         action.tool === "publish_changes" &&
@@ -632,7 +645,9 @@ ${tail(job.output)}`);
       if (!ids.length) return;
       // The questions each card would ask, asked once for all of them.
       const tools = new Set(ids.map((id) => actions[id].tool));
-      const removes = ids.filter((id) => actions[id].tool === "delete_page").map((id) => `"${(actions[id].meta.title as string) ?? actions[id].input.file}"`);
+      const removes = ids
+        .filter((id) => actions[id].tool === "delete_page" || actions[id].tool === "remove_file")
+        .map((id) => `"${(actions[id].meta.title as string) ?? (actions[id].meta.name as string) ?? actions[id].input.file}"`);
       if (removes.length || tools.has("publish_changes")) {
         const parts = [
           removes.length && `remove ${removes.join(", ")} from your site (you can still undo it on What's changed until you publish)`,

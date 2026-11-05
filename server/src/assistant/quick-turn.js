@@ -21,7 +21,7 @@ const QUESTION = /^(?:what|why|how|where|when|which|who|whose|is|are|was|were|do
 
 // Other parts of the site, which have tools of their own.
 const ELSEWHERE =
-  /\b(?:header|footer|menus?|navigation|nav bar|navbar|logo|favicon|publish\w*|go live|live site|search results?|seo|google|meta (?:title|description)|site ?plan|schedul\w*|stylesheets?|css|every page|all (?:the |my |our )?pages|other pages|whole (?:site|website)|site-?wide|each page|new page|another page|create (?:a |an )?page|add (?:a |an )?page|redirects?|blog posts?|undo|revert|restore)\b/;
+  /\b(?:header|footer|menus?|navigation|nav bar|navbar|logo|favicon|publish\w*|go live|live site|search results?|seo|google|meta (?:title|description)|site ?plan|schedul\w*|stylesheets?|css|every page|all (?:the |my |our )?pages|other pages|whole (?:site|website)|site-?wide|each page|new page|another page|create (?:a |an )?page|add (?:a |an )?page|redirects?|blog posts?|undo|revert|restore|files?|folders?|documents?|downloads?|pdfs?|csv|spreadsheets?|robots|sitemap|scripts?|pixels?|tracking|analytics|widgets?|hide|hidden|unhide|rename)\b|\b[\w-]+\.[a-z][a-z0-9]{1,4}\b/;
 
 // Facts kept in the site details, which pages show from there: changing them on one page would
 // leave the rest of the site out of step, so Claude decides (update_site_details).
@@ -31,6 +31,8 @@ const SITE_DETAILS =
 // Changes that only take something out, move it or restyle one thing: safe on a page even when
 // the thing is a site detail shown there ("remove the opening hours section").
 const PAGE_ONLY_KINDS = new Set(["remove", "move", "tweak", "reminder", "constraint", "statement"]);
+
+const TELLING_KINDS = new Set(["statement", "reminder", "constraint"]);
 
 const HOMEPAGE = /\b(?:home ?page|front page|main page|landing page)\b/;
 
@@ -106,6 +108,9 @@ export async function runQuickTurn({ key, text, openPage, autoApply = true, live
   const pages = overview.collections.flatMap((c) => c.pages);
   const file = pageOf(text, pages, openPage);
   if (!file) return null;
+  // Telling rather than asking ("we opened in 2016, not 2015") with no page named: the fact may be
+  // on any page, not the one that happens to be open, so Claude looks for it.
+  if (!pageOf(text, pages, null) && clausesOf(text).map(scoreClause).some((c) => TELLING_KINDS.has(c.kind))) return null;
   const page = pages.find((p) => p.file === file);
   // A page still holding the starter skeleton needs a whole design, not one change (next-steps.js's rule).
   const body = ((await readText(path.join(workspaceDir(key), file))) ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();

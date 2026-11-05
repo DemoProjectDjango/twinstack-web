@@ -504,6 +504,13 @@ const LOGGED_FILE = {
   create_missing_pages: () => "scripts/site-tree.md",
   update_page_search_settings: (a) => a.input.file,
   add_file_to_site: (a, file) => file,
+  write_file: (a) => a.input.file,
+  edit_file: (a) => a.input.file,
+  remove_file: (a) => a.input.file,
+  move_file: (a) => a.input.to,
+  create_pdf: (a, file) => file,
+  set_page_hidden: (a) => a.input.file,
+  update_site_scripts: () => "content/data/scripts.json",
   create_image: (a, file) => file,
 };
 

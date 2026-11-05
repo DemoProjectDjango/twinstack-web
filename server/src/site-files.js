@@ -1168,7 +1168,7 @@ export async function readCss(key, file) {
 }
 
 /** Unbalanced braces (outside comments and strings) would break the build or drop rules silently. */
-function cssProblem(css) {
+export function cssProblem(css) {
   let depth = 0;
   for (let i = 0; i < css.length; i++) {
     const c = css[i];

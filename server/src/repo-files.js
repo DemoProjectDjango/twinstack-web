@@ -1,8 +1,9 @@
+import { isUtf8 } from "node:buffer";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { rebaseCss, rebaseHtml } from "./original-pages.js";
-import { createPageAt, getOverview, inside, saveHtmlSource } from "./site-files.js";
+import { contentVersion, createPageAt, cssProblem, getOverview, inside, saveHtmlSource } from "./site-files.js";
 import { WorkspaceError, acquire, tryGit, workspaceDir } from "./workspace.js";
 
 // The Files screen: the repo's folders, and uploading a file into one, in a new folder if the owner
@@ -100,8 +101,7 @@ async function replacesBuilt(key, rel) {
   return page ? `A file called ${inRoot} here would replace your "${page.title}" page. Rename the file, or put it in another folder.` : null;
 }
 
-/** Saves one file in a folder, making the folder if it's new. A file already there is only replaced when asked (409 otherwise). */
-export async function uploadRepoFile(key, { folder, name, data, replace }) {
+function checkedFolder(folder) {
   const parts = typeof folder === "string" ? folder.split("/") : [];
   if (!parts.length || parts.length > MAX_DEPTH + 1 || parts.some((part) => part.length > MAX_NAME || !NAME.test(part))) {
     throw new WorkspaceError("Folder names can use letters, numbers, dots, dashes and underscores.", 400);
@@ -109,35 +109,254 @@ export async function uploadRepoFile(key, { folder, name, data, replace }) {
   if (parts.some((part) => HIDDEN.has(part))) throw new WorkspaceError(`A folder can't be called ${parts.find((part) => HIDDEN.has(part))}: it's left out of what's saved.`, 400);
   const locked = lockOf(folder);
   if (locked) throw new WorkspaceError(locked, 403);
+  return parts;
+}
+
+/** Saves one file in a folder, making the folder if it's new. A file already there is only replaced when asked (409 otherwise). */
+export async function uploadRepoFile(key, { folder, name, data, replace }) {
+  checkedFolder(folder);
   const file = cleanFileName(name);
   if (!file) throw new WorkspaceError("That file has no usable name. Rename it, then try again.", 400);
   if (typeof data !== "string" || !data) throw new WorkspaceError(`${file} is empty.`, 400);
   const buffer = Buffer.from(data, "base64");
   if (!buffer.length) throw new WorkspaceError(`${file} is empty.`, 400);
   if (buffer.length > MAX_FILE_BYTES) throw new WorkspaceError(`${file} is over 10 MB. Files that large are better kept elsewhere and linked to.`, 400);
+  return saveRepoFile(key, { folder, file, buffer, replace });
+}
+
+/** Whether a file can be saved in this folder under this (clean) name; says why not, and whether one's already there. */
+export async function checkRepoPlacement(key, folder, file) {
+  const parts = checkedFolder(folder);
   const rel = `${folder}/${file}`;
   const built = await replacesBuilt(key, rel);
   if (built) throw new WorkspaceError(built, 400);
-
   const dir = workspaceDir(key);
-  const target = inside(dir, rel);
+  // A file the repo's .gitignore leaves out would seem saved, then never be published.
+  if ((await tryGit(dir, ["check-ignore", "--quiet", "--", rel])) !== null) throw new WorkspaceError(`Files like ${file} are left out of what's published. Rename it, then try again.`, 400);
+  for (let at = 1; at <= parts.length; at++) {
+    const stat = await fs.lstat(inside(dir, parts.slice(0, at).join("/"))).catch(() => null);
+    if (stat && !stat.isDirectory()) throw new WorkspaceError(`${parts.slice(0, at).join("/")} is a file, not a folder.`, 400);
+  }
+  const existing = await fs.lstat(inside(dir, rel)).catch(() => null);
+  if (existing && !existing.isFile()) throw new WorkspaceError(`There's already a folder called ${file} here.`, 400);
+  return { rel, exists: Boolean(existing) };
+}
+
+/** Saves bytes as `file` (a clean name) in a folder, by the same rules. */
+export async function saveRepoFile(key, { folder, file, buffer, replace }) {
   const release = acquire(key, `saving ${file}`);
   try {
-    // A file the repo's .gitignore leaves out would seem saved, then never be published.
-    if ((await tryGit(dir, ["check-ignore", "--quiet", "--", rel])) !== null) throw new WorkspaceError(`Files like ${file} are left out of what's published. Rename it, then try again.`, 400);
-    for (let at = 1; at <= parts.length; at++) {
-      const stat = await fs.lstat(inside(dir, parts.slice(0, at).join("/"))).catch(() => null);
-      if (stat && !stat.isDirectory()) throw new WorkspaceError(`${parts.slice(0, at).join("/")} is a file, not a folder.`, 400);
-    }
-    const existing = await fs.lstat(target).catch(() => null);
-    if (existing && !existing.isFile()) throw new WorkspaceError(`There's already a folder called ${file} here.`, 400);
-    if (existing && replace !== true) throw new WorkspaceError(`There's already a file called ${file} in this folder.`, 409);
+    const { rel, exists } = await checkRepoPlacement(key, folder, file);
+    if (exists && replace !== true) throw new WorkspaceError(`There's already a file called ${file} in this folder.`, 409);
+    const target = inside(workspaceDir(key), rel);
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, buffer);
-    return { file: rel, name: file, address: addressOf(rel), replaced: Boolean(existing) };
+    return { file: rel, name: file, address: addressOf(rel), replaced: exists };
   } finally {
     release();
   }
+}
+
+/* --------------------------------------------------------------- the AI's files */
+
+// The AI can read any text in the repo, and change more than the Files screen offers (the owner
+// asks in words, and it knows which file is what). Everything a site update would replace stays
+// out of reach: scripts/, the layouts and the deploy workflow are the template's (twinstack-update.json).
+const OPEN_TO_AI = [
+  /^content\/(?!data\/(?:navigation|scripts)\.json$).+\.(?:md|json)$/,
+  /^styles\/.+\.css$/,
+  /^assets\/css\/imported\/.+\.css$/,
+  /^assets\/js\/imported\/.+\.m?js$/,
+  /^knowledge\/notes\.md$/,
+  /^site\.config\.json$/,
+  /^templates\/partials\/(?:header|footer)\.html$/,
+];
+const REMOVABLE_BY_AI = /^(?:styles\/global|assets\/css\/imported|assets\/js\/imported)\//;
+// What the app itself keeps in site.config.json: changing it by hand would break the site or its updates.
+const APP_SITE_KEYS = ["collections", "updates", "analytics"];
+// The kinds of file the AI may write as text. An SVG isn't one: previews show them, so drawing goes
+// through svg.js's checks (create_image).
+const TEXT_FILE = /\.(txt|html?|xml|json|csv|tsv|md|webmanifest|ics|vcf|ya?ml|css|m?js)$/i;
+const SKIPPED_IN_LISTS = new Set(["scripts", "templates", ".github"]);
+
+/** A repo path, split. Hidden files (.env), .git, node_modules and dist are never reachable. */
+function aiPath(file) {
+  const parts = typeof file === "string" ? file.split("/") : [];
+  const bad = (part, at) => !part || (part.startsWith(".") && !(at === 0 && part === ".github")) || part.includes("\\") || HIDDEN.has(part);
+  if (!parts.length || parts.some(bad)) throw new WorkspaceError("That isn't a file on this site.", 400);
+  return parts;
+}
+
+/** Why the AI can't change this file, or null. */
+function aiLock(rel) {
+  if (OPEN_TO_AI.some((allowed) => allowed.test(rel))) return null;
+  if (isPublic(rel) && !lockOf(path.posix.dirname(rel))) return null;
+  if (rel === "content/data/navigation.json") return "The menu and footer change through update_menu_and_footer.";
+  if (rel === "content/data/scripts.json") return "The site's scripts change through update_site_scripts.";
+  if (rel.startsWith("content/")) return "Only .md and .json files belong under content.";
+  if (rel.startsWith("templates/")) return "The layouts are the site's own tools, which a site update replaces, so they can't be changed. Pages design themselves, and the header and footer have design_header_and_footer.";
+  return "This is part of the site's own tools, which a site update replaces, so it can't be changed.";
+}
+
+/** What's wrong with this new text for this file, or null. */
+function aiContentProblem(rel, content, before) {
+  if (rel.endsWith(".json")) {
+    let value;
+    try {
+      value = JSON.parse(content);
+    } catch (err) {
+      return `it isn't valid JSON (${err.message})`;
+    }
+    if (rel === "site.config.json") {
+      const old = JSON.parse(before || "{}");
+      const changed = APP_SITE_KEYS.find((field) => JSON.stringify(value?.[field]) !== JSON.stringify(old[field]));
+      if (changed) return `${changed} is kept by the app and has to stay as it is`;
+    }
+  }
+  if (/^content\/.+\.md$/.test(rel) && !/^---\r?\n[\s\S]*?\r?\n---/.test(content)) return "a page has to start with its settings between --- lines";
+  if (rel.endsWith(".css")) {
+    const problem = cssProblem(content);
+    if (problem) return problem;
+  }
+  // The standard header and footer are the template's, which a site update replaces: only ones
+  // marked as designed stay the owner's (keepDesigned).
+  if (/^templates\/partials\//.test(rel) && !(before.includes("data-designed") && content.includes("data-designed"))) {
+    return "the standard header and footer can't be edited by hand (a site update would replace them): use update_menu_and_footer or design_header_and_footer, and keep data-designed on a designed one";
+  }
+  return null;
+}
+
+/** The files under a folder, or everywhere but the site's own tools; links are never followed. */
+export async function listSiteFiles(key, folder = null) {
+  const dir = workspaceDir(key);
+  const files = [];
+  const budget = { left: MAX_LISTED };
+  const walk = async (rel, depth) => {
+    const entries = await fs.readdir(rel ? inside(dir, rel) : dir, { withFileTypes: true }).catch(() => []);
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const child = rel ? `${rel}/${entry.name}` : entry.name;
+      if (HIDDEN.has(entry.name) || (entry.name.startsWith(".") && child !== ".github") || budget.left <= 0) continue;
+      if (entry.isDirectory()) {
+        if (depth < MAX_DEPTH && (folder || !SKIPPED_IN_LISTS.has(child))) await walk(child, depth + 1);
+      } else if (entry.isFile()) {
+        budget.left--;
+        files.push({ file: child, size: (await fs.stat(inside(dir, child))).size, ...(isPublic(child) && { address: addressOf(child) }), canChange: !aiLock(child) });
+      }
+    }
+  };
+  if (folder) {
+    const parts = aiPath(folder);
+    for (let at = 1; at <= parts.length; at++) {
+      const stat = await fs.lstat(inside(dir, parts.slice(0, at).join("/"))).catch(() => null);
+      if (!stat?.isDirectory()) throw new WorkspaceError(`${folder} isn't a folder on this site.`, 404);
+    }
+  }
+  await walk(folder, 0);
+  return files;
+}
+
+/** Whether the file is there, going down its path without following links (one could point out of the repo). */
+async function fileThere(dir, parts) {
+  for (let at = 1; at <= parts.length; at++) {
+    const stat = await fs.lstat(inside(dir, parts.slice(0, at).join("/"))).catch(() => null);
+    if (!stat) return false;
+    if (at < parts.length ? !stat.isDirectory() : !stat.isFile()) throw new WorkspaceError("That isn't a file you can change here.", 400);
+  }
+  return true;
+}
+
+/** A text file's content and version; `exists` is false when there's none yet. A file that isn't text is refused. */
+export async function readRepoText(key, file) {
+  const parts = aiPath(file);
+  const dir = workspaceDir(key);
+  if (!(await fileThere(dir, parts))) return { file, exists: false, content: "", version: null, address: addressOf(file) };
+  const bytes = await fs.readFile(inside(dir, file));
+  if (bytes.includes(0) || !isUtf8(bytes)) throw new WorkspaceError(`${parts.at(-1)} isn't a text file, so it can't be read or changed as text.`, 400);
+  const content = bytes.toString("utf8");
+  return { file, exists: true, content, version: contentVersion(content), address: addressOf(file) };
+}
+
+/** A name that works in a web address and isn't left out of what's published, in a folder it can go in. */
+async function checkNewFile(key, parts) {
+  const name = parts.at(-1);
+  const clean = cleanFileName(name);
+  if (clean !== name) throw new WorkspaceError(`${name} wouldn't work in a web address. Call it ${clean || "something else"}.`, 400);
+  const folder = parts.slice(0, -1).join("/");
+  if (!lockOf(folder)) return checkRepoPlacement(key, folder, name);
+  const rel = parts.join("/");
+  if ((await tryGit(workspaceDir(key), ["check-ignore", "--quiet", "--", rel])) !== null) throw new WorkspaceError(`Files like ${name} are left out of what's published.`, 400);
+  return null;
+}
+
+/** Whether the AI can write this text to this file: what's there now, or why not. */
+export async function checkRepoTextWrite(key, file, content) {
+  const parts = aiPath(file);
+  const locked = aiLock(file);
+  if (locked) throw new WorkspaceError(locked, 403);
+  const name = parts.at(-1);
+  if (!TEXT_FILE.test(name)) throw new WorkspaceError(`${name} can't be written as text: only .txt, .html, .xml, .json, .csv, .tsv, .md, .webmanifest, .ics, .vcf, .yml, .css and .js files can.`, 400);
+  const current = await readRepoText(key, file);
+  if (!current.exists) await checkNewFile(key, parts);
+  const problem = aiContentProblem(file, content, current.content);
+  if (problem) throw new WorkspaceError(`${name} wasn't saved: ${problem}.`, 400);
+  return current;
+}
+
+/** Adds or changes a text file, as an ordinary unpublished change. `version` is what it was read as (null: a new file). */
+export async function writeRepoText(key, file, content, version) {
+  const release = acquire(key, `saving ${path.posix.basename(String(file))}`);
+  try {
+    const current = await checkRepoTextWrite(key, file, content);
+    if (current.version !== version) throw new WorkspaceError(`${file} changed after this was written, so it wasn't saved.`, 409);
+    const target = inside(workspaceDir(key), file);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, content);
+    return current;
+  } finally {
+    release();
+  }
+}
+
+/** A file the AI may move or remove, or why not. Pages can be moved; delete_page removes them. */
+export async function aiFileAt(key, file, { moving = false } = {}) {
+  const parts = aiPath(file);
+  const page = /^content\/(?!data\/).+\.md$/.test(file);
+  const open = REMOVABLE_BY_AI.test(file) || (isPublic(file) && !lockOf(path.posix.dirname(file))) || (moving && page);
+  if (!open) throw new WorkspaceError(page ? "That's a page: use delete_page." : aiLock(file) ?? "The site needs this file, so it can't be moved or removed: change what's in it instead.", 403);
+  return (await fileThere(workspaceDir(key), parts)) ? { file, name: parts.at(-1), address: addressOf(file), page, published: isPublic(file) } : null;
+}
+
+/** Checks a move, and returns what the file's new place would be. */
+export async function checkMove(key, file, to) {
+  const found = await aiFileAt(key, file, { moving: true });
+  if (!found) throw new WorkspaceError(`${file} isn't there.`, 404);
+  const parts = aiPath(to);
+  const target = await aiFileAt(key, to, { moving: true });
+  if (target) throw new WorkspaceError(`${to} is already there. Remove it first if the owner wants it replaced.`, 409);
+  if (path.posix.extname(file).toLowerCase() !== path.posix.extname(to).toLowerCase()) throw new WorkspaceError("A file keeps its kind when it's renamed: use the same ending.", 400);
+  await checkNewFile(key, parts);
+  return { ...found, to, toAddress: addressOf(to) };
+}
+
+/** Renames or moves a file, and removes any folder that leaves empty. */
+export async function moveSiteFile(key, file, to) {
+  const release = acquire(key, `moving ${path.posix.basename(String(file))}`);
+  try {
+    await checkMove(key, file, to);
+    const dir = workspaceDir(key);
+    await fs.mkdir(path.dirname(inside(dir, to)), { recursive: true });
+    await fs.rename(inside(dir, file), inside(dir, to));
+    await removeEmptyFolders(dir, aiPath(file));
+  } finally {
+    release();
+  }
+}
+
+/** Removes a file the AI may remove. */
+export async function removeSiteFile(key, file) {
+  if (!(await aiFileAt(key, file))) throw new WorkspaceError(`${path.posix.basename(file)} isn't there any more.`, 404);
+  return removeParts(key, aiPath(file));
 }
 
 const LOCAL_REFERENCE = /\b(?:src|href|poster|data-src)\s*=\s*["']([^"']+)["']|url\(\s*["']?([^"')]+)["']?\s*\)/gi;
@@ -267,25 +486,28 @@ export async function fileUsage(key, address, except = null) {
 /** Removes a file from assets/ or static/, and any folder that leaves empty (git keeps no empty folders). */
 export async function removeRepoFile(key, file) {
   const parts = typeof file === "string" ? file.split("/") : [];
-  if (parts.length < 2 || parts.some((part) => !part || part === "." || part === ".." || part.startsWith(".") || HIDDEN.has(part))) throw new WorkspaceError("That isn't a file you can remove here.", 400);
-  const folder = parts.slice(0, -1).join("/");
-  const locked = lockOf(folder);
+  if (parts.length < 2 || parts.some((part) => !part || part.startsWith(".") || part.includes("\\") || HIDDEN.has(part))) throw new WorkspaceError("That isn't a file you can change here.", 400);
+  const locked = lockOf(parts.slice(0, -1).join("/"));
   if (locked) throw new WorkspaceError(locked, 403);
+  return removeParts(key, parts);
+}
+
+async function removeParts(key, parts) {
   const dir = workspaceDir(key);
   const release = acquire(key, `removing ${parts.at(-1)}`);
   try {
-    for (let at = 1; at <= parts.length; at++) {
-      const stat = await fs.lstat(inside(dir, parts.slice(0, at).join("/"))).catch(() => null);
-      if (!stat) throw new WorkspaceError(`${parts.at(-1)} isn't there any more.`, 404);
-      if (at < parts.length ? !stat.isDirectory() : !stat.isFile()) throw new WorkspaceError("That isn't a file you can remove here.", 400);
-    }
-    await fs.unlink(inside(dir, file));
-    for (let at = parts.length - 1; at > 1; at--) {
-      const empty = await fs.rmdir(inside(dir, parts.slice(0, at).join("/"))).then(() => true, () => false);
-      if (!empty) break;
-    }
+    if (!(await fileThere(dir, parts))) throw new WorkspaceError(`${parts.at(-1)} isn't there any more.`, 404);
+    await fs.unlink(inside(dir, parts.join("/")));
+    await removeEmptyFolders(dir, parts);
   } finally {
     release();
+  }
+}
+
+async function removeEmptyFolders(dir, parts) {
+  for (let at = parts.length - 1; at > 1; at--) {
+    const empty = await fs.rmdir(inside(dir, parts.slice(0, at).join("/"))).then(() => true, () => false);
+    if (!empty) break;
   }
 }
 

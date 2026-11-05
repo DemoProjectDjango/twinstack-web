@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { addAttachmentToSite, readAttachmentMeta, saveMadeImage, sitePathFor } from "./attachments.js";
+import { addAttachmentToSite, readAttachment, readAttachmentMeta, saveMadeImage, sitePathFor } from "./attachments.js";
 import { analyticsSummary } from "../analytics.js";
 import { getBrand, saveBrand } from "../brand.js";
 import { normalizeLink, pageForLink } from "../links.js";
 import { getNavigation, saveNavigation } from "../navigation.js";
+import { makePdf, pdfProblem } from "../documents.js";
+import { aiFileAt, checkMove, checkRepoPlacement, checkRepoTextWrite, cleanFileName, fileUsage, listSiteFiles, moveSiteFile, readRepoText, removeSiteFile, saveRepoFile, writeRepoText } from "../repo-files.js";
 import { readSeo } from "../seo.js";
 import { DRAWN_DIR, MAX_SVG_CHARS, checkSvg, drawnName, saveDrawnImage, svgAspect, svgPreview } from "../svg.js";
 import { ImageError, MAX_PROMPT_CHARS, QUALITIES, SHAPES, generateImage } from "../images.js";
@@ -21,14 +23,18 @@ import {
   readDataFile,
   readPage,
   readSchedule,
+  readScripts,
   readSiteConfig,
   saveCss,
+  saveScripts,
+  setPageDraft,
+  checkScripts,
   writeDataFile,
   writeSchedule,
 } from "../site-files.js";
 import { readCheckReport } from "../site-check.js";
 import { checkStaticInfo, getStaticInfo, saveStaticInfo } from "../static-info.js";
-import { WorkspaceError, commitAndPush, getStatus, siteIdFor, workspaceDir } from "../workspace.js";
+import { WorkspaceError, commitAndPush, discardChanges, getStatus, siteIdFor, workspaceDir } from "../workspace.js";
 import { SYSTEM_PROMPT } from "./prompt.js";
 
 // The assistant's tools. Read tools run on the server as soon as Claude calls them. Change tools
@@ -55,6 +61,7 @@ const slugify = (text) =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 70);
 const MAX_READ_CHARS = 80_000;
+const MAX_LISTED_FILES = 300;
 const SEO_FIELD_NAMES = ["metaTitle", "metaDescription", "focusKeyword", "ogImage", "ogImageAlt", "canonical", "noindex"];
 const LOGO_FIELDS = ["logoText", "logo", "logoDark", "logoMark", "favicon"];
 // The logo settings a drawn image can be used as (create_image's use_as).
@@ -187,6 +194,20 @@ const TOOLS = [
     [],
     { kind: "read", activity: () => "Looking at your photos" },
   ),
+  tool(
+    "list_files",
+    "The site's files: each one's path, size, whether you can change it (canChange), and the address it's published at under assets and static (static is published at the site's root). The site's own tools (scripts, templates) are only listed when named as the folder.",
+    { folder: { type: "string", description: "Optional: only this folder, e.g. static, assets/files or templates." } },
+    [],
+    { kind: "read", activity: () => "Looking at your files" },
+  ),
+  tool(
+    "read_file",
+    "The text of any file from list_files (site.config.json, robots.txt, a layout, a CSV…), to see exactly how something is done before changing it. A file that isn't text, such as a PDF or a photo, can't be read this way.",
+    { file: { type: "string", description: "e.g. static/robots.txt" } },
+    ["file"],
+    { kind: "read", activity: (input) => `Reading ${input.file ?? "a file"}` },
+  ),
 
   // ---------------------------------------------------------------- change
   tool(
@@ -233,15 +254,131 @@ const TOOLS = [
   ),
   tool(
     "add_file_to_site",
-    "Proposes adding an attached file to the site: images go with the site's photos, any other file to /assets/files/<name>.",
+    "Proposes adding an attached file to the site: images go with the site's photos, any other file to /assets/files/<name>; folder puts it somewhere else under assets or static, or, with replace, over a file already there.",
     {
       attachment: { type: "string", description: "att_…" },
       name: { type: "string", description: "Optional, e.g. summer-menu.pdf." },
+      folder: { type: "string", description: "Optional, e.g. static or assets/files/menus. Leave out for a photo going on a page." },
+      replace: { type: "boolean", description: "With folder: overwrite the file of that name." },
       ...summaryField,
       ...continueField,
     },
     ["attachment", "summary"],
     { kind: "change", runs: "server", title: "Add a file to the site" },
+  ),
+  tool(
+    "write_file",
+    "Proposes adding a text file, or replacing all of one (read_file first; edit_file for part of one). Open to anything canChange says: assets, static, content, styles, site.config.json, notes.",
+    {
+      file: { type: "string", description: "e.g. static/robots.txt or assets/files/prices.csv." },
+      content: { type: "string", description: "The complete new file." },
+      ...summaryField,
+      ...continueField,
+    },
+    ["file", "content", "summary"],
+    { kind: "change", runs: "server", title: "Save a file" },
+  ),
+  tool(
+    "edit_file",
+    "Proposes exact replacements in any text file that canChange, including a page's own file: the quick and free way to change a word, price, link, colour or setting (a page's title, address or description) when you know exactly what changes. read_file or read_page first.",
+    {
+      file: { type: "string" },
+      edits: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            find: { type: "string", description: "The exact text, long enough to appear only once." },
+            replace: { type: "string" },
+            all: { type: "boolean", description: "Replace every place it appears." },
+          },
+          required: ["find", "replace"],
+          additionalProperties: false,
+        },
+      },
+      ...summaryField,
+      ...continueField,
+    },
+    ["file", "edits", "summary"],
+    { kind: "change", runs: "server", title: "Change a file" },
+  ),
+  tool(
+    "move_file",
+    "Proposes renaming or moving a file, which keeps its kind. A page's address doesn't change when its file moves: that's its url setting (edit_file). Refused while the site uses the old address, unless fix_links_next.",
+    {
+      file: { type: "string" },
+      to: { type: "string", description: "The new path, e.g. assets/files/summer-menu.pdf." },
+      fix_links_next: { type: "boolean", description: "You'll point what uses it at the new address straight after (with continue_after)." },
+      ...summaryField,
+      ...continueField,
+    },
+    ["file", "to", "summary"],
+    { kind: "change", runs: "server", title: "Rename a file" },
+  ),
+  tool(
+    "create_pdf",
+    "Proposes a PDF made from your text (a price list, menu or guide to download), saved under assets or static. Link to it from a page or the menu if the owner wants it found. Western letters only.",
+    {
+      file: { type: "string", description: "e.g. assets/files/price-list.pdf." },
+      title: { type: "string" },
+      content: { type: "string", description: "Markdown: # and ## headings, - lists, paragraphs." },
+      replace: { type: "boolean", description: "Overwrite the file of that name." },
+      ...summaryField,
+      ...continueField,
+    },
+    ["file", "title", "content", "summary"],
+    { kind: "change", runs: "server", title: "Create a PDF" },
+  ),
+  tool(
+    "set_page_hidden",
+    "Proposes hiding a page from the published site without deleting it, or showing it again. Not the homepage.",
+    { file: { type: "string" }, hidden: { type: "boolean" }, ...summaryField, ...continueField },
+    ["file", "hidden", "summary"],
+    { kind: "change", runs: "server", title: "Hide or show a page" },
+  ),
+  tool(
+    "update_site_scripts",
+    "Proposes the complete new list of code from other services on the published site (Google Analytics, a tracking pixel, a chat widget, a verification tag). read_file content/data/scripts.json first and keep the items that are there. code starts and ends with a tag; pages is \"all\" or a list of addresses.",
+    {
+      scripts: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            code: { type: "string" },
+            place: { type: "string", enum: ["head", "body"] },
+            pages: { anyOf: [{ type: "string", enum: ["all"] }, { type: "array", items: { type: "string" } }] },
+            on: { type: "boolean" },
+          },
+          required: ["name", "code", "place", "pages", "on"],
+          additionalProperties: false,
+        },
+      },
+      ...summaryField,
+      ...continueField,
+    },
+    ["scripts", "summary"],
+    { kind: "change", runs: "server", title: "Change the site's scripts" },
+  ),
+  tool(
+    "undo_changes",
+    "Proposes putting changed files back as they were last published, throwing away those unpublished changes for good (the owner is always asked first). get_site_overview's unpublishedChanges lists them. It can't go back to a version that was never published.",
+    { files: { type: "array", items: { type: "string" }, description: "The paths to put back." }, ...summaryField },
+    ["files", "summary"],
+    { kind: "change", runs: "server", title: "Undo changes" },
+  ),
+  tool(
+    "remove_file",
+    "Proposes removing a file from list_files. Refused while the site still uses it, because a link or image pointing at a missing file stops publishing.",
+    {
+      file: { type: "string" },
+      remove_anyway: { type: "boolean", description: "Remove it even though the site uses it, only when the owner knows and still wants it gone." },
+      ...summaryField,
+      ...continueField,
+    },
+    ["file", "summary"],
+    { kind: "change", runs: "server", title: "Remove a file" },
   ),
   tool(
     "convert_page_from_html",
@@ -655,6 +792,15 @@ async function runRead(name, input, key, context) {
       return await readSchedule(key);
     case "list_images":
       return await listImages(key);
+    case "list_files": {
+      const files = await listSiteFiles(key, str(input, "folder", { max: 300, optional: true })?.replace(/^\/+|\/+$/g, "") || null);
+      return { files: files.slice(0, MAX_LISTED_FILES), moreFiles: Math.max(0, files.length - MAX_LISTED_FILES) };
+    }
+    case "read_file": {
+      const current = await readRepoText(key, str(input, "file", { max: 300 }));
+      if (!current.exists) throw new ToolInputError(`${current.file} isn't there. See list_files.`);
+      return capped(current.content);
+    }
     default:
       throw new ToolInputError(`Unknown tool ${name}.`);
   }
@@ -744,8 +890,97 @@ async function prepareChange(name, input, key, context) {
     case "add_file_to_site": {
       const meta = await attachmentOf(input?.attachment, key);
       const name = str(input, "name", { max: 120, optional: true });
+      const folder = str(input, "folder", { max: 300, optional: true })?.replace(/^\/+|\/+$/g, "");
+      if (folder) {
+        const fileName = cleanFileName(name || meta.name);
+        if (!fileName) throw new ToolInputError("That file has no usable name: give one in name.");
+        const { rel, exists } = await checkRepoPlacement(key, folder, fileName);
+        if (exists && input.replace !== true) throw new ToolInputError(`${rel} is already there. Set replace only if the owner wants it replaced, or use another name.`);
+        return { ...base, input: { attachment: meta.id, name: fileName, folder, replace: input.replace === true }, meta: { file: meta.name, kind: meta.kind, path: rel, replaces: exists } };
+      }
+      if (input?.replace === true) throw new ToolInputError("replace needs folder: the folder of the file it replaces.");
       const { dir, base: fileBase, extension } = sitePathFor(meta, name);
       return { ...base, input: { attachment: meta.id, name }, meta: { file: meta.name, kind: meta.kind, path: `${dir}/${fileBase}.${extension}` } };
+    }
+    case "write_file": {
+      const file = str(input, "file", { max: 300 });
+      const content = str(input, "content", { max: MAX_READ_CHARS });
+      const current = await checkRepoTextWrite(key, file, content);
+      // read_file cuts a longer file off, so its complete new text can't be written from what was read.
+      if (current.content.length > MAX_READ_CHARS) throw new ToolInputError(`${file} is too long to replace whole: use edit_file.`);
+      return { ...base, input: { file, content }, meta: { before: current.content, version: current.version, exists: current.exists, address: current.address } };
+    }
+    case "edit_file": {
+      const file = str(input, "file", { max: 300 });
+      const { exists, content: before } = await readRepoText(key, file);
+      if (!exists) throw new ToolInputError(`${file} isn't there. See list_files, or use write_file for a new file.`);
+      if (!Array.isArray(input.edits) || !input.edits.length || input.edits.length > 30) throw new ToolInputError("edits must be a list of 1 to 30 replacements.");
+      let content = before;
+      const eol = before.includes("\r\n") ? (text) => text.replace(/\r?\n/g, "\r\n") : (text) => text;
+      for (const edit of input.edits) {
+        if (typeof edit?.find !== "string" || !edit.find || typeof edit.replace !== "string") throw new ToolInputError("Each edit needs find and replace text.");
+        const find = eol(edit.find);
+        const count = content.split(find).length - 1;
+        if (!count) throw new ToolInputError(`"${edit.find.slice(0, 120)}" isn't in ${file}. Read it again and use its exact text.`);
+        if (count > 1 && edit.all !== true) throw new ToolInputError(`"${edit.find.slice(0, 120)}" is in ${file} ${count} times. Use more of the text around it, or all.`);
+        content = content.split(find).join(eol(edit.replace));
+      }
+      if (content === before) throw new ToolInputError("Those edits change nothing.");
+      const current = await checkRepoTextWrite(key, file, content);
+      return { ...base, input: { file, content }, meta: { before, version: current.version, exists: true, address: current.address } };
+    }
+    case "move_file": {
+      const file = str(input, "file", { max: 300 });
+      const to = str(input, "to", { max: 300 });
+      const moved = await checkMove(key, file, to);
+      const usedBy = moved.published ? await fileUsage(key, moved.address) : [];
+      if (usedBy.length && input.fix_links_next !== true) throw new ToolInputError(`${moved.address} is used by ${usedBy.join(", ")}, and a link to the old address stops publishing. Set fix_links_next and continue_after, then change those to ${moved.toAddress}.`);
+      return { ...base, input: { file, to }, meta: { name: moved.name, to } };
+    }
+    case "create_pdf": {
+      const file = str(input, "file", { max: 300 });
+      const title = str(input, "title", { max: 200 }).trim();
+      const content = str(input, "content", { max: MAX_READ_CHARS });
+      if (!file.toLowerCase().endsWith(".pdf")) throw new ToolInputError("file must end in .pdf.");
+      const problem = pdfProblem(`${title}\n${content}`);
+      if (problem) throw new ToolInputError(`${problem}. Offer a page or a text file instead.`);
+      const folder = path.posix.dirname(file);
+      const name = cleanFileName(path.posix.basename(file));
+      const { rel, exists } = await checkRepoPlacement(key, folder, name);
+      if (exists && input.replace !== true) throw new ToolInputError(`${rel} is already there. Set replace only if the owner wants it replaced, or use another name.`);
+      return { ...base, input: { folder, name, title, content, replace: input.replace === true }, meta: { path: rel, replaces: exists } };
+    }
+    case "set_page_hidden": {
+      const file = pageFileOf(input);
+      if (typeof input.hidden !== "boolean") throw new ToolInputError("hidden must be true or false.");
+      const page = await readPage(key, file);
+      if (input.hidden && /^url\s*:\s*["']?\/["']?\s*$/m.test(page.content)) throw new ToolInputError("The homepage can't be hidden: visitors see it first.");
+      return { ...base, input: { file, hidden: input.hidden }, meta: { title: titleOf(page.content) ?? file } };
+    }
+    case "update_site_scripts": {
+      const overview = await getOverview(key);
+      if (!overview.features.customScripts) throw new ToolInputError("This site's tools are older than scripts on the site: it needs the latest site update, which the editor offers. Tell the owner.");
+      const scripts = checkScripts(input.scripts);
+      const current = await readScripts(key);
+      return { ...base, input: { scripts }, meta: { before: current.items, version: current.version } };
+    }
+    case "undo_changes": {
+      const changes = (await getStatus(key)).changes.map((c) => c.path);
+      if (!changes.length) throw new ToolInputError("There are no unpublished changes to undo.");
+      const files = Array.isArray(input.files) ? [...new Set(input.files)] : [];
+      const unknown = files.filter((f) => !changes.includes(f));
+      if (!files.length || unknown.length) throw new ToolInputError(`${unknown.length ? `No unpublished change at ${unknown.join(", ")}. ` : ""}The changed files are: ${changes.join(", ")}.`);
+      return { ...base, input: { files }, meta: {} };
+    }
+    case "remove_file": {
+      const file = str(input, "file", { max: 300 });
+      const found = await aiFileAt(key, file);
+      if (!found) throw new ToolInputError(`${file} isn't there. See list_files.`);
+      const usedBy = await fileUsage(key, found.address);
+      if (usedBy.length && input.remove_anyway !== true) {
+        throw new ToolInputError(`${found.address} is still used by ${usedBy.join(", ")}. Take it off there first (with continue_after), or ask the owner, then use remove_anyway.`);
+      }
+      return { ...base, input: { file }, meta: { name: found.name, address: found.address, usedBy } };
     }
     case "convert_page_from_html": {
       const file = pageFileOf(input);
@@ -1024,7 +1259,37 @@ export async function applyServerAction(key, action, { accessToken, user } = {})
     case "delete_page":
       await deletePage(key, input.file);
       return `Removed ${input.file}.`;
+    case "write_file":
+      await writeRepoText(key, input.file, input.content, meta.version);
+      return `Saved ${input.file} (published at ${meta.address}).`;
+    case "edit_file":
+      await writeRepoText(key, input.file, input.content, meta.version);
+      return `Saved ${input.file}.`;
+    case "remove_file":
+      await removeSiteFile(key, input.file);
+      return `Removed ${input.file}.`;
+    case "move_file":
+      await moveSiteFile(key, input.file, input.to);
+      return `Moved ${input.file} to ${input.to}.`;
+    case "create_pdf": {
+      const saved = await saveRepoFile(key, { folder: input.folder, file: input.name, buffer: await makePdf(input), replace: input.replace });
+      return { result: `Saved ${saved.file} (published at ${saved.address}).`, data: { path: saved.file } };
+    }
+    case "set_page_hidden":
+      await setPageDraft(key, input.file, input.hidden);
+      return `${input.hidden ? "Hid" : "Showed"} ${input.file}.`;
+    case "update_site_scripts":
+      await saveScripts(key, input.scripts, meta.version);
+      return "Saved the site's scripts.";
+    case "undo_changes":
+      await discardChanges(key, input.files);
+      return `Put back ${input.files.length} file(s) as last published.`;
     case "add_file_to_site": {
+      if (input.folder) {
+        const { bytes } = await readAttachment(key, input.attachment);
+        const saved = await saveRepoFile(key, { folder: input.folder, file: input.name, buffer: bytes, replace: input.replace });
+        return { result: `${saved.replaced ? "Replaced" : "Added"} ${saved.file} (published at ${saved.address}).`, data: { path: saved.file } };
+      }
       const added = await addAttachmentToSite(key, input.attachment, input.name);
       return { result: `Added it to the site as ${added} (published at /${added}).`, data: { path: added } };
     }

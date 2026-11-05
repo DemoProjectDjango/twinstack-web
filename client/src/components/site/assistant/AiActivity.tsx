@@ -105,6 +105,21 @@ function describe(action: AssistantAction, pages: SitePage[]): { doing: string; 
           doing: `Adding ${text(meta.file) ?? "a file"} to the site`,
           item: text(meta.file) ?? "File",
         };
+      case "write_file":
+      case "edit_file":
+        return { doing: `Saving ${text(input.file) ?? "a file"}`, item: text(input.file) ?? "File" };
+      case "move_file":
+        return { doing: `Renaming ${text(meta.name) ?? "a file"}`, item: text(input.to) ?? "File" };
+      case "create_pdf":
+        return { doing: `Making ${text(meta.path) ?? "a PDF"}`, item: text(meta.path) ?? "PDF" };
+      case "set_page_hidden":
+        return { doing: input.hidden ? `Hiding ${named}` : `Showing ${named}`, item };
+      case "update_site_scripts":
+        return { doing: "Updating the site's scripts", item: "Site scripts" };
+      case "undo_changes":
+        return { doing: "Undoing changes", item: "Undo changes" };
+      case "remove_file":
+        return { doing: `Removing ${text(meta.name) ?? "a file"}`, item: `Remove ${text(meta.name) ?? "a file"}` };
       case "delete_page":
         return { doing: `Removing ${named}`, item: `Remove ${named}` };
       case "create_missing_pages":

@@ -36,6 +36,13 @@ const APPLY_LABEL: Partial<Record<AssistantAction["tool"], string>> = {
   create_page: "Create it",
   delete_page: "Remove page",
   add_file_to_site: "Add it",
+  write_file: "Save it",
+  edit_file: "Save it",
+  move_file: "Rename it",
+  remove_file: "Remove file",
+  create_pdf: "Create it",
+  set_page_hidden: "Do it",
+  undo_changes: "Undo them",
   create_image: "Save it",
   convert_page_from_html: "Bring it in",
   create_missing_pages: "Create them",
@@ -171,6 +178,44 @@ function ChangeDetails({ action }: { action: AssistantAction }) {
           rows={[
             ["File", show(meta.file)],
             ["Goes to", `/${show(meta.path)}`],
+            ...(meta.replaces ? ([["Replaces", "The file already there"]] as [string, ReactNode][]) : []),
+          ]}
+        />
+      );
+    case "move_file":
+      return <Rows rows={[["From", show(input.file)], ["To", show(input.to)]]} />;
+    case "create_pdf":
+      return (
+        <Rows
+          rows={[
+            ["Saved as", `/${show(meta.path)}`],
+            ...(meta.replaces ? ([["Replaces", "The file already there"]] as [string, ReactNode][]) : []),
+            ["Title", show(input.title)],
+            ["What it says", show(input.content)],
+          ]}
+        />
+      );
+    case "set_page_hidden":
+      return <Rows rows={[["Page", show(meta.title)], ["Visitors", input.hidden ? "Can't see it" : "Can see it"]]} />;
+    case "update_site_scripts":
+      return <LiveDiff before={json(meta.before)} after={json(input.scripts)} label="Changes" />;
+    case "undo_changes":
+      return <Rows rows={[["Goes back to the last published version", (input.files as string[]).join("\n")]]} />;
+    case "edit_file":
+    case "write_file":
+      return (
+        <div className="space-y-2">
+          <Rows rows={[["File", show(input.file)], ...(/^(assets|static)\//.test(String(input.file)) ? ([["Published at", show(meta.address)]] as [string, ReactNode][]) : [])]} />
+          <LiveDiff before={String(meta.before ?? "")} after={String(input.content ?? "")} label={meta.exists ? "Changes" : "New file"} />
+        </div>
+      );
+    case "remove_file":
+      return (
+        <Rows
+          rows={[
+            ["File", show(input.file)],
+            ["Published at", show(meta.address)],
+            ...((meta.usedBy as string[] | undefined)?.length ? ([["Still used by", (meta.usedBy as string[]).join(", ")]] as [string, ReactNode][]) : []),
           ]}
         />
       );
@@ -330,7 +375,7 @@ export function ActionCard({ id }: { id: string }) {
         )}
         {action.status === "proposed" && !busy && (
           <>
-            <Button variant={action.tool === "delete_page" ? "danger" : "primary"} className="text-xs" disabled={locked} onClick={() => void apply(action)}>
+            <Button variant={action.tool === "delete_page" || action.tool === "remove_file" || action.tool === "undo_changes" ? "danger" : "primary"} className="text-xs" disabled={locked} onClick={() => void apply(action)}>
               {APPLY_LABEL[action.tool] ?? "Apply"}
             </Button>
             <Button variant="ghost" className="text-xs" disabled={locked} onClick={() => void skip(action)}>
