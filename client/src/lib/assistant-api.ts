@@ -32,6 +32,7 @@ export type ActionTool =
   | "undo_changes"
   | "convert_page_from_html"
   | "update_site_plan"
+  | "check_site"
   | "create_missing_pages"
   | "update_page_search_settings"
   | "write_search_text_for_all_pages"

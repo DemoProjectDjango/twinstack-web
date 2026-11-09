@@ -13,7 +13,7 @@ import {
   type Turn,
 } from "@/lib/assistant-api";
 import { confirmModal } from "@/lib/confirm";
-import { api, workspacePath, type HtmlSource, type Overview, type Proposal, type WorkspaceStatus } from "@/lib/site-api";
+import { api, workspacePath, type HtmlSource, type Overview, type Proposal, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
 import { useSite } from "../site-context";
 
 // "Ask Claude": the site's conversation, shared by the side panel and the boxes on each screen.
@@ -483,6 +483,25 @@ ${tail(job.output)}`);
           const { proposal } = await api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal"));
           if (!proposal || proposal.file !== input.file) throw new Error("The AI didn't come back with the converted page.");
           await record(action, "ready", "The converted page is ready to look at.");
+          return;
+        }
+        case "check_site": {
+          const checkPath = workspacePath(owner, repo, "/check");
+          let check = await api<SiteCheck>(checkPath);
+          // Nothing changed since the last check: its answer still stands, and a build is skipped.
+          if (!check.fresh) {
+            await runAndWait("check");
+            check = await api<SiteCheck>(checkPath);
+          }
+          const report = check.report;
+          if (!report) throw new Error("The check didn't finish. Try it again.");
+          const count = report.problems.length + report.moreProblems;
+          const found = report.ok
+            ? "The check passed: nothing stops the live site from updating."
+            : report.buildFailed
+              ? `The site couldn't be built. ${report.failure ?? ""}`
+              : `The check found ${count} problem${count === 1 ? "" : "s"} (read_site_problems has the details): ${report.problems.slice(0, 8).map((p) => p.message).join("; ")}`;
+          await record(action, "applied", found.slice(0, 1000));
           return;
         }
         case "create_missing_pages": {

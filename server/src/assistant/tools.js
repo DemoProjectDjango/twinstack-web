@@ -9,7 +9,7 @@ import { getBrand, saveBrand } from "../brand.js";
 import { normalizeLink, pageForLink } from "../links.js";
 import { getNavigation, saveNavigation } from "../navigation.js";
 import { makePdf, pdfProblem } from "../documents.js";
-import { aiFileAt, checkMove, checkRepoPlacement, checkRepoTextWrite, cleanFileName, fileUsage, listSiteFiles, moveSiteFile, readRepoText, removeSiteFile, saveRepoFile, writeRepoText, writeRepoTexts } from "../repo-files.js";
+import { aiFileAt, checkMove, checkRepoPlacement, checkRepoTextWrite, cleanFileName, fileUsage, listSiteFiles, moveSiteFile, readRepoText, removeSiteFile, saveRepoFile, searchSiteText, writeRepoText, writeRepoTexts } from "../repo-files.js";
 import { readSeo } from "../seo.js";
 import { DRAWN_DIR, MAX_SVG_CHARS, checkSvg, drawnName, saveDrawnImage, svgAspect, svgPreview } from "../svg.js";
 import { ImageError, MAX_PROMPT_CHARS, QUALITIES, SHAPES, generateImage } from "../images.js";
@@ -208,6 +208,16 @@ const TOOLS = [
     { file: { type: "string", description: "e.g. static/robots.txt" } },
     ["file"],
     { kind: "read", activity: (input) => `Reading ${input.file ?? "a file"}` },
+  ),
+  tool(
+    "search_site",
+    "Finds where some exact text appears across the site's pages, settings and other text files, ignoring case: each hit as file:line: the text around it, up to 5 per file and 50 in all, with the totals. Use it instead of reading files one by one.",
+    {
+      text: { type: "string", description: "A phone number, price, name, link…" },
+      folder: { type: "string", description: "Optional: only this folder, e.g. content/blog." },
+    },
+    ["text"],
+    { kind: "read", activity: (input) => (input.text ? `Searching your site for "${input.text}"` : "Searching your site") },
   ),
   tool(
     "read_attachment",
@@ -438,6 +448,13 @@ const TOOLS = [
     { content: { type: "string", description: "The complete new file." }, ...summaryField, ...continueField },
     ["content", "summary"],
     { kind: "change", runs: "server", title: "Change the site plan" },
+  ),
+  tool(
+    "check_site",
+    "Runs the check the live site runs before it updates, once the changes before it in this reply are made. You then carry on by yourself and are told the result.",
+    summaryField,
+    ["summary"],
+    { kind: "change", runs: "client", title: "Check the site" },
   ),
   tool(
     "create_missing_pages",
@@ -880,6 +897,11 @@ async function runRead(name, input, key, context) {
       if (!current.exists) throw new ToolInputError(`${current.file} isn't there. See list_files.`);
       return capped(current.content);
     }
+    case "search_site": {
+      const text = str(input, "text", { max: 300 }).trim();
+      if (text.length < 2) throw new ToolInputError("Search for at least 2 characters.");
+      return await searchSiteText(key, text, str(input, "folder", { max: 300, optional: true })?.replace(/^\/+|\/+$/g, "") || null);
+    }
     case "read_attachment":
       return readAttachmentPart(input, key);
     default:
@@ -1114,6 +1136,9 @@ async function prepareChange(name, input, key, context) {
       const current = await readDataFile(key, "site-tree");
       return { ...base, input: { content }, meta: { before: current.content } };
     }
+    case "check_site":
+      // Always carries on: a result nobody reads back is no use.
+      return { ...base, continueAfter: true, input: {}, meta: {} };
     case "create_missing_pages":
       return { ...base, input: {}, meta: {} };
     case "update_page_search_settings": {

@@ -256,6 +256,42 @@ export async function listSiteFiles(key, folder = null) {
   return files;
 }
 
+const MAX_SEARCH_BYTES = 1024 * 1024;
+const MAX_SEARCH_LINES = 50;
+const MAX_LINES_PER_FILE = 5;
+const SEARCH_CONTEXT = 100;
+const NOT_SEARCHED = /^(?:package(?:-lock)?\.json|knowledge\/work-log\.md)$/;
+
+/**
+ * Where some text appears in the site's text files, ignoring case. Results are capped per file and
+ * overall, so the same footer line on 80 pages can't flood the answer: `files` still counts them all.
+ */
+export async function searchSiteText(key, query, folder = null) {
+  const dir = workspaceDir(key);
+  const needle = query.toLowerCase();
+  const candidates = (await listSiteFiles(key, folder)).filter((f) => TEXT_FILE.test(f.file) && f.size <= MAX_SEARCH_BYTES && !NOT_SEARCHED.test(f.file));
+  const lines = [];
+  let matches = 0;
+  let files = 0;
+  for (const { file } of candidates) {
+    const bytes = await fs.readFile(inside(dir, file)).catch(() => null);
+    if (!bytes || bytes.includes(0) || !isUtf8(bytes)) continue;
+    let inFile = 0;
+    bytes.toString("utf8").split(/\r?\n/).forEach((line, index) => {
+      const at = line.toLowerCase().indexOf(needle);
+      if (at < 0) return;
+      matches++;
+      inFile++;
+      if (inFile > MAX_LINES_PER_FILE || lines.length >= MAX_SEARCH_LINES) return;
+      const start = Math.max(0, at - SEARCH_CONTEXT);
+      const end = at + needle.length + SEARCH_CONTEXT;
+      lines.push(`${file}:${index + 1}: ${start ? "…" : ""}${line.slice(start, end).trim()}${end < line.length ? "…" : ""}`);
+    });
+    if (inFile) files++;
+  }
+  return { matches, files, lines, moreLines: matches - lines.length };
+}
+
 /** Whether the file is there, going down its path without following links (one could point out of the repo). */
 async function fileThere(dir, parts) {
   for (let at = 1; at <= parts.length; at++) {
