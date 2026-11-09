@@ -610,7 +610,7 @@ async function syncEditor(dir, branch, accessToken, log, resolve) {
  * the moved file. Where they touch the same lines, `resolve` (Claude) combines them when given;
  * otherwise, or if it fails, the owner's unpublished version wins.
  */
-async function moveEditor(dir, target, args, log, resolve = null) {
+export async function moveEditor(dir, target, args, log, resolve = null) {
   const updated = new Set((await git(dir, ["diff", "--name-only", "-z", "HEAD", target])).split("\0").filter(Boolean));
   const saved = [];
   for (const change of await listChanges(dir)) {

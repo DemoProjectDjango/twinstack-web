@@ -451,7 +451,7 @@ assistantRouter.post(
         const actions = Object.fromEntries((result?.actions ?? []).map((a) => [`actions.${a.id}`, a]));
         const usage = result?.usage;
         await updateConversation(conversation.id, userId, {
-          $push: { display: entry, ...(result?.appended.length && { messages: { $each: result.appended } }) },
+          $push: { display: entry, ...(result?.appended.length && { messages: { $each: result.appended } }), ...(result?.madeFiles?.length && { attachments: { $each: result.madeFiles } }) },
           $set: { ...actions, ...(result?.lastPrompt && { lastPrompt: { tokens: result.lastPrompt, model: turnModel, at: new Date().toISOString() } }) },
           ...(usage && { $inc: Object.fromEntries(Object.entries(usage).map(([k, v]) => [`usage.${k}`, v])) }),
         });

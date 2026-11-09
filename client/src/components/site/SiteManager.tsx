@@ -6,7 +6,8 @@ import { claudeAccess, inEditorWords } from "@/lib/claude";
 import { useCredits } from "@/lib/credits";
 import { confirmModal } from "@/lib/confirm";
 import { siteTitle } from "@/lib/repos";
-import { ApiError, api, setBeforeChange, workspacePath, type Job, type Overview, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
+import { ApiError, api, setBeforeChange, workspacePath, type IncomingChanges, type Job, type Overview, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
+import { GitHubChangesModal, wasDismissed } from "./GitHubChanges";
 import { AiHelpBadge } from "./AiHelpBadge";
 import { AnalyticsPanel } from "./AnalyticsPanel";
 import { AiActivity } from "./assistant/AiActivity";
@@ -145,6 +146,9 @@ function runningJob(active: NonNullable<WorkspaceStatus["activeJob"]>): Job {
 export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   const [status, setRawStatus] = useState<WorkspaceStatus | null>(null);
   const [openError, setOpenError] = useState<unknown>(null);
+  const [incoming, setIncoming] = useState<IncomingChanges | null>(null);
+  const [incomingOpen, setIncomingOpen] = useState(false);
+  const [incomingKept, setIncomingKept] = useState<string[]>([]);
   const [overview, setOverview] = useState<Overview | null>(null);
   const credits = useCredits();
   const [job, setJob] = useState<Job | null>(null);
@@ -306,6 +310,15 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
         api<{ creator: boolean }>(workspacePath(owner, repo, "/analytics/access"))
           .then((a) => !cancelled && setIsCreator(a.creator))
           .catch(() => {});
+        if (opened.behind && opened.onDefaultBranch) {
+          api<{ incoming: IncomingChanges | null }>(workspacePath(owner, repo, "/incoming"))
+            .then(({ incoming: found }) => {
+              if (cancelled || !found) return;
+              setIncoming(found);
+              setIncomingOpen(!wasDismissed(owner, repo, found.sha));
+            })
+            .catch(() => {});
+        }
         if (opened.activeJob) setJob(runningJob(opened.activeJob));
         else if (opened.needsInstall) void run("install");
         // No preview yet, or one built before the latest changes (the page was left or reloaded
@@ -506,6 +519,21 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
     setOpenPage(null);
   }, [confirmDiscardDraft]);
 
+  /** GitHub's changes are in: reinstall if they changed the packages, then check the site (which also refreshes the preview). */
+  async function incomingAccepted({ status: latest, kept }: { status: WorkspaceStatus; kept: string[] }) {
+    setIncoming(null);
+    setIncomingOpen(false);
+    setIncomingKept(kept);
+    setStatus(latest);
+    try {
+      await refresh();
+      if (latest.needsInstall) await runAndWait("install");
+      void run("check");
+    } catch (err) {
+      setRunError(err);
+    }
+  }
+
   async function resetToDefault() {
     setResetting(true);
     setRunError(null);
@@ -658,7 +686,11 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
                 loader covers only this card, so the header and the menu stay usable while it works. */}
             <div className="relative">
             <div className="space-y-6 rounded-2xl bg-background p-4 shadow-sm sm:p-6">
-              <SiteNotices onReset={resetToDefault} />
+              <SiteNotices onReset={resetToDefault} onShowIncoming={incoming ? () => setIncomingOpen(true) : null} />
+              {incoming && incomingOpen && (
+                <GitHubChangesModal owner={owner} repo={repo} incoming={incoming} onAccepted={(result) => void incomingAccepted(result)} onClose={() => setIncomingOpen(false)} />
+              )}
+              {incomingKept.length > 0 && <Notice tone="warning">Your unpublished version was kept for {incomingKept.join(", ")}, because GitHub changed the same lines.</Notice>}
               <ErrorText error={runError} />
               {/* After every build, on every screen: links to pages that don't exist yet, with a way to make them. */}
               {!status.needsInstall && <MissingPages />}
@@ -826,7 +858,7 @@ function TopBar() {
 }
 
 /** The few states that change what every screen means: an unfinished review, or newer work on GitHub. */
-function SiteNotices({ onReset }: { onReset: () => void }) {
+function SiteNotices({ onReset, onShowIncoming }: { onReset: () => void; onShowIncoming: (() => void) | null }) {
   const { status, busy } = useSite();
   const noChanges = status.changes.length === 0;
 
@@ -846,7 +878,11 @@ function SiteNotices({ onReset }: { onReset: () => void }) {
     return (
       <Notice tone="warning">
         Your site was changed somewhere else since you opened it.{" "}
-        {noChanges ? (
+        {onShowIncoming ? (
+          <Button variant="ghost" className="ml-1 underline" disabled={busy} onClick={onShowIncoming}>
+            See what changed
+          </Button>
+        ) : noChanges ? (
           <Button variant="ghost" className="ml-1 underline" disabled={busy} onClick={onReset}>
             Get the latest version
           </Button>

@@ -11,6 +11,7 @@ import { issueProxyToken } from "../claude-proxy.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeKeyFor } from "../credits.js";
 import { FastModelError, chooseSiteFastModel, fastModelForSite, siteFastModelView } from "../fast-model.js";
 import { ImageModelError, chooseSiteImageModel, siteImageModelView } from "../image-model.js";
+import { acceptIncoming, incomingChanges } from "../github-changes.js";
 import { getAccessToken } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
 import {
@@ -64,6 +65,7 @@ import {
   WORK_LOG_FOR_RUN,
   writeDataFile,
   writeSchedule,
+  logWork,
 } from "../site-files.js";
 import { getStaticInfo, saveStaticInfo } from "../static-info.js";
 import { getBrand, saveBrand, saveBrandImage } from "../brand.js";
@@ -165,6 +167,28 @@ workspacesRouter.post(
   handle(async (req, res) => {
     const accessToken = await getAccessToken(req, res);
     res.json(await resetToDefault({ key: keyFor(req), accessToken }));
+  }),
+);
+
+// Changes pushed to GitHub from outside the editor: what they are, and bringing them in.
+workspacesRouter.get(
+  "/:owner/:repo/incoming",
+  handle(async (req, res) => {
+    res.json({ incoming: await incomingChanges(keyFor(req)) });
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/incoming/accept",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const sha = req.body?.sha;
+    if (typeof sha !== "string" || !/^[a-f0-9]{40}$/.test(sha)) throw new WorkspaceError("Unknown changes.", 400);
+    const accessToken = await getAccessToken(req, res);
+    const { subjects, ...result } = await acceptIncoming({ key, accessToken, sha });
+    // So the AI knows the site changed without it.
+    await logWork(key, { command: "github-changes", file: "the site's repository", instruction: `Brought in changes made outside the editor: ${subjects.join("; ")}`.slice(0, 1000), summary: [] }).catch((err) => console.error("Couldn't log the GitHub changes:", err.message));
+    res.json(result);
   }),
 );
 

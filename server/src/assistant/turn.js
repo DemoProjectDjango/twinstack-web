@@ -117,6 +117,8 @@ export async function runTurn({ client, key, model: requested, history, live, on
   const start = history.length;
   const usage = emptyUsage();
   const actions = [];
+  // Pictures view_page uploaded: the conversation's files, deleted with it.
+  const madeFiles = [];
   let model = requested;
   let stopReason = null;
   let lastPrompt = 0;
@@ -127,11 +129,11 @@ export async function runTurn({ client, key, model: requested, history, live, on
   } catch (err) {
     if (err instanceof Anthropic.APIError && err.status && client.apiKey === config.platformAnthropicKey) noteProviderError("claude", err.status, err.message);
     // Whatever finished before the error (complete steps only) is still part of the conversation.
-    err.partial = { appended: messages.slice(start), actions, usage, model, lastPrompt };
+    err.partial = { appended: messages.slice(start), actions, usage, model, lastPrompt, madeFiles };
     throw err;
   }
   onUpdate();
-  return { appended: messages.slice(start), actions, usage, model, stopReason, lastPrompt };
+  return { appended: messages.slice(start), actions, usage, model, stopReason, lastPrompt, madeFiles };
 
   async function loop() {
     let nudged = false;
@@ -279,7 +281,7 @@ export async function runTurn({ client, key, model: requested, history, live, on
           live.parts.push(workingPart);
           onUpdate();
         }
-        const outcome = await runTool(block.name, block.input, key, { beginSpend, signal, imageModel, userId }).finally(() => {
+        const outcome = await runTool(block.name, block.input, key, { beginSpend, signal, imageModel, userId, client, madeFiles }).finally(() => {
           if (workingPart) live.parts = live.parts.filter((p) => p !== workingPart);
         });
         if (outcome.error) {

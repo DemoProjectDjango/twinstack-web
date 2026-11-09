@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { addAttachmentToSite, attachmentText, readAttachment, readAttachmentMeta, saveMadeImage, sitePathFor } from "./attachments.js";
+import { addAttachmentToSite, attachmentBlock, attachmentText, ensureUploaded, readAttachment, readAttachmentMeta, saveMadeImage, sitePathFor } from "./attachments.js";
+import { SCREENS, describeView, viewPage } from "./view-page.js";
 import { appended, describePlan, outlineOf, planBlocks } from "./copy-blocks.js";
 import { analyticsSummary } from "../analytics.js";
 import { getBrand, saveBrand } from "../brand.js";
@@ -208,6 +209,17 @@ const TOOLS = [
     { file: { type: "string", description: "e.g. static/robots.txt" } },
     ["file"],
     { kind: "read", activity: (input) => `Reading ${input.file ?? "a file"}` },
+  ),
+  tool(
+    "view_page",
+    "A picture of a page as visitors see it (hidden pages too), with its scripts off, plus whether it's too wide for the screen and which images didn't load. Shows the site as it is now: a change you proposed in this reply isn't in it yet. Costs the owner a little, so use one screen when one will do.",
+    {
+      page: { type: "string", description: "A file from get_site_overview or an address like /about.html." },
+      screen: { type: "string", enum: ["phone", "computer", "both"], description: "Default both." },
+      from_y: { type: "integer", description: "Where to start on a long page, from the last result." },
+    },
+    ["page"],
+    { kind: "read", activity: (input) => `Looking at ${input.page ?? "a page"}`, working: () => "Looking at your page" },
   ),
   tool(
     "search_site",
@@ -757,6 +769,38 @@ const MAX_MATCHES = 30;
 const MAX_LINE_CHARS = 1_500;
 const MAX_PART_CHARS = 30_000;
 
+/**
+ * Claude's view of a page, as content blocks. Pictures go through the Files API like attachments:
+ * the history keeps a short id rather than the image, and the conversation's files clean up with it.
+ */
+async function viewPageBlocks(input, key, context) {
+  const page = str(input, "page", { max: 300 });
+  let url = page;
+  if (PAGE_FILE.test(page)) {
+    const found = (await getOverview(key)).collections.flatMap((c) => c.pages).find((p) => p.file === page);
+    if (!found?.url) throw new ToolInputError(`${page} isn't a page with an address. See get_site_overview.`);
+    url = found.url;
+  }
+  if (!url.startsWith("/") || url.startsWith("//") || url.split(/[?#]/)[0].split("/").includes("..")) throw new ToolInputError(`"${page}" isn't a page file or an address starting with /.`);
+  const choice = input.screen ?? "both";
+  if (choice !== "both" && !Object.hasOwn(SCREENS, choice)) throw new ToolInputError("screen must be phone, computer or both.");
+  const screens = choice === "both" ? [SCREENS.phone, SCREENS.computer] : [SCREENS[choice]];
+  if (!context.client) throw new ToolInputError("Pages can't be looked at here.");
+  const blocks = [];
+  for (const view of await viewPage(key, url.split(/[?#]/)[0], screens, Math.trunc(Number(input.from_y)) || 0)) {
+    let uploaded;
+    try {
+      const made = await saveMadeImage(key, { name: "page-view.jpg", bytes: view.bytes });
+      uploaded = await ensureUploaded(context.client, key, made);
+    } catch (err) {
+      throw new ToolInputError(`The picture of the page couldn't be sent: ${err.message}`);
+    }
+    context.madeFiles?.push(uploaded.id);
+    blocks.push({ type: "text", text: describeView(view) }, attachmentBlock(uploaded));
+  }
+  return { blocks };
+}
+
 /** A part of a long attachment. A very long line is cut around what was searched for, or at its start. */
 async function readAttachmentPart(input, key) {
   const meta = await attachmentOf(input.attachment, key);
@@ -897,6 +941,8 @@ async function runRead(name, input, key, context) {
       if (!current.exists) throw new ToolInputError(`${current.file} isn't there. See list_files.`);
       return capped(current.content);
     }
+    case "view_page":
+      return viewPageBlocks(input, key, context);
     case "search_site": {
       const text = str(input, "text", { max: 300 }).trim();
       if (text.length < 2) throw new ToolInputError("Search for at least 2 characters.");
@@ -1349,6 +1395,7 @@ export async function runTool(name, input, key, context = {}) {
     if (info.kind === "talk") return { talk: choicesOf(input) };
     if (info.kind === "read") {
       const result = await runRead(name, input, key, context);
+      if (Array.isArray(result?.blocks)) return { result: result.blocks };
       return { result: typeof result === "string" ? result : JSON.stringify(result) };
     }
     return { action: await prepareChange(name, input, key, context) };

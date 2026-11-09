@@ -411,6 +411,17 @@ export type SiteProblem =
   | { kind: "cut-off"; message: string; element: string; page: ProblemPage | null }
   | { kind: "other"; message: string };
 
+/** What GitHub has that the editor doesn't, from outside the editor (server/src/github-changes.js). */
+export type IncomingChanges = {
+  sha: string;
+  commits: { sha: string; author: string; date: string; subject: string }[];
+  moreCommits: number;
+  files: { path: string; status: "added" | "removed" | "changed"; kind: string }[];
+  moreFiles: number;
+  overlap: string[];
+  needsPublish: boolean;
+};
+
 export type SiteCheckReport = {
   checkedAt: string;
   /** Passed: nothing stops the live site from updating. */
