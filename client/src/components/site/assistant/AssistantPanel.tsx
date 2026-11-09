@@ -108,7 +108,7 @@ export function AssistantPanel() {
       aria-label="Ask the AI"
       {...drop.handlers}
       inert={!open}
-      className={`fixed inset-0 z-50 flex flex-col overflow-hidden border-zinc-200 bg-background transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none sm:inset-auto sm:bottom-4 sm:right-4 sm:top-[4.5rem] sm:w-[27rem] sm:rounded-2xl sm:border sm:shadow-2xl dark:border-zinc-800 ${
+      className={`fixed inset-0 z-50 flex flex-col overflow-hidden border-zinc-200 bg-background transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none sm:inset-auto sm:bottom-4 sm:right-4 sm:top-4 sm:w-[27rem] sm:rounded-2xl sm:border sm:shadow-2xl dark:border-zinc-800 ${
         shown ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-8 opacity-0"
       }`}
     >

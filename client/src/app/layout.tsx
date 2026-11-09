@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { CheckoutReturn } from "@/components/CheckoutReturn";
+import { HideInSiteEditor } from "@/components/HideInSiteEditor";
 import { Navbar } from "@/components/Navbar";
 import { Toaster } from "@/components/Toaster";
 import "./globals.css";
@@ -27,7 +28,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <Navbar />
+        <HideInSiteEditor>
+          <Navbar />
+        </HideInSiteEditor>
         {children}
         <Toaster />
         <CheckoutReturn />

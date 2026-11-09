@@ -877,37 +877,40 @@ function Report({
       <p className="text-xs text-zinc-500">Click a row, or use Add filter above, to see only those visitors. Click it again to show everyone.</p>
 
       <div className="grid items-start gap-4 lg:grid-cols-2">
-        <Section title="Pages" description={pagesTab === "viewed" ? "The pages people look at most." : "The first page each visitor opens."}>
-          <Segmented
-            label="Pages"
-            value={pagesTab}
-            options={[
-              { value: "viewed", label: "Most viewed" },
-              { value: "entries", label: "Where visitors arrive" },
-            ]}
-            onChange={setPagesTab}
-          />
-          <div className="mt-3">
-            {pagesTab === "viewed" ? (
-              <BarList
-                rows={report.pages.slice(0, 12).map((p) => ({ key: p.path, label: label(p.path), value: p.pageviews }))}
-                valueLabel="Views"
-                empty={`No page views ${inPeriod(report.period)}.`}
-                active={filters.page}
-                onPick={(path) => onPick("page", path)}
-              />
-            ) : (
-              <BarList
-                rows={report.entries.map((p) => ({ key: p.path, label: label(p.path), value: p.count }))}
-                valueLabel="Visitors"
-                empty={`No visitors ${inPeriod(report.period)}.`}
-                active={filters.page}
-                onPick={(path) => onPick("page", path)}
-              />
-            )}
-          </div>
-        </Section>
-        <Section title="Where visitors come from" description="The site or link that sent each visitor.">
+        <FixedSection
+          title="Pages"
+          description={pagesTab === "viewed" ? "The pages people look at most." : "The first page each visitor opens."}
+          toolbar={
+            <Segmented
+              label="Pages"
+              value={pagesTab}
+              options={[
+                { value: "viewed", label: "Most viewed" },
+                { value: "entries", label: "Where visitors arrive" },
+              ]}
+              onChange={setPagesTab}
+            />
+          }
+        >
+          {pagesTab === "viewed" ? (
+            <BarList
+              rows={report.pages.slice(0, 12).map((p) => ({ key: p.path, label: label(p.path), value: p.pageviews }))}
+              valueLabel="Views"
+              empty={`No page views ${inPeriod(report.period)}.`}
+              active={filters.page}
+              onPick={(path) => onPick("page", path)}
+            />
+          ) : (
+            <BarList
+              rows={report.entries.map((p) => ({ key: p.path, label: label(p.path), value: p.count }))}
+              valueLabel="Visitors"
+              empty={`No visitors ${inPeriod(report.period)}.`}
+              active={filters.page}
+              onPick={(path) => onPick("page", path)}
+            />
+          )}
+        </FixedSection>
+        <FixedSection title="Where visitors come from" description="The site or link that sent each visitor.">
           <BarList
             rows={report.sources.map((s) => ({
               key: s.name,
@@ -923,8 +926,8 @@ function Report({
             active={filters.source}
             onPick={(name) => onPick("source", name)}
           />
-        </Section>
-        <Section title="Devices" description="Phones are under 768 pixels wide, tablets under 1024.">
+        </FixedSection>
+        <FixedSection title="Devices" description="Phones are under 768 pixels wide, tablets under 1024.">
           <BarList
             rows={report.devices.map((d) => ({ key: d.name, label: d.name, value: d.count }))}
             valueLabel="Visitors"
@@ -936,8 +939,8 @@ function Report({
             <BarList rows={report.browsers.map((d) => ({ key: d.name, label: d.name, value: d.count }))} valueLabel="Browser" empty="" active={filters.browser} onPick={(name) => onPick("browser", name)} />
             <BarList rows={report.systems.map((d) => ({ key: d.name, label: d.name, value: d.count }))} valueLabel="System" empty="" active={filters.os} onPick={(name) => onPick("os", name)} />
           </div>
-        </Section>
-        <Section title="Where visitors are" description="From each visitor's time zone, the only location the counter knows.">
+        </FixedSection>
+        <FixedSection title="Where visitors are" description="From each visitor's time zone, the only location the counter knows.">
           <BarList
             rows={report.zones.slice(0, 10).map((z) => ({ key: z.name, label: zoneLabel(z.name), value: z.count }))}
             valueLabel="Visitors"
@@ -945,9 +948,9 @@ function Report({
             active={filters.zone}
             onPick={(name) => onPick("zone", name)}
           />
-        </Section>
+        </FixedSection>
         {report.clicks.length > 0 && (
-          <Section title="Contact clicks" description="Clicks on your phone number, email address, WhatsApp and links to other sites.">
+          <FixedSection title="Contact clicks" description="Clicks on your phone number, email address, WhatsApp and links to other sites.">
             <BarList
               rows={report.clicks.map((c) => ({
                 key: `${c.kind}:${c.target ?? ""}`,
@@ -957,10 +960,10 @@ function Report({
               valueLabel="Clicks"
               empty=""
             />
-          </Section>
+          </FixedSection>
         )}
         {report.notFound.length > 0 && (
-          <Section title="Missing pages people tried" description="Addresses visitors opened that your site doesn't have. They saw the “page not found” page.">
+          <FixedSection title="Missing pages people tried" description="Addresses visitors opened that your site doesn't have. They saw the “page not found” page.">
             <BarList
               rows={report.notFound.map((n) => ({
                 key: n.path,
@@ -975,10 +978,10 @@ function Report({
               valueLabel="Visits"
               empty=""
             />
-          </Section>
+          </FixedSection>
         )}
         {report.campaigns.length > 0 && (
-          <Section title="Campaigns" description="Visits from links with utm_source, utm_medium or utm_campaign tags.">
+          <FixedSection title="Campaigns" description="Visits from links with utm_source, utm_medium or utm_campaign tags.">
             <BarList
               rows={report.campaigns.map((c) => ({
                 key: `${c.source}|${c.medium}|${c.campaign}`,
@@ -988,7 +991,7 @@ function Report({
               valueLabel="Visitors"
               empty=""
             />
-          </Section>
+          </FixedSection>
         )}
       </div>
 
@@ -1243,6 +1246,18 @@ function StatTile({ label, value, change: delta, note }: { label: string; value:
 }
 
 /** Rows with a light bar behind each, as long as its share of the largest; clickable when `onPick` is set. */
+/** A report card of one fixed height, so the grid stays even: a long list scrolls inside it. */
+function FixedSection({ title, description, toolbar, children }: { title: string; description: ReactNode; toolbar?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="flex h-[28rem] flex-col rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
+      <h3 className="shrink-0 font-semibold">{title}</h3>
+      <p className="mt-1 shrink-0 text-sm text-zinc-500">{description}</p>
+      {toolbar && <div className="mt-4 shrink-0">{toolbar}</div>}
+      <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">{children}</div>
+    </section>
+  );
+}
+
 function BarList({
   rows,
   valueLabel,
@@ -1260,7 +1275,7 @@ function BarList({
   const max = Math.max(...rows.map((r) => r.value), 1);
   return (
     <div className="text-sm">
-      <div className="mb-1 flex justify-end text-xs font-medium text-zinc-500">{valueLabel}</div>
+      <div className="sticky top-0 z-10 mb-1 flex justify-end bg-background text-xs font-medium text-zinc-500">{valueLabel}</div>
       <ul className="space-y-1">
         {rows.map((row) => {
           const selected = active === row.key;

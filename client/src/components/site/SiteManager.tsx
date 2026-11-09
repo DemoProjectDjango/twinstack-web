@@ -143,7 +143,7 @@ function runningJob(active: NonNullable<WorkspaceStatus["activeJob"]>): Job {
   return { ...active, status: "running", exitCode: null, output: "", truncated: false, next: 0 };
 }
 
-export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
+export function SiteManager({ owner, repo, account, links }: { owner: string; repo: string; account: React.ReactNode; links: React.ReactNode }) {
   const [status, setRawStatus] = useState<WorkspaceStatus | null>(null);
   const [openError, setOpenError] = useState<unknown>(null);
   const [incoming, setIncoming] = useState<IncomingChanges | null>(null);
@@ -549,7 +549,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
 
   if (openError) {
     return (
-      <Shell title={repo}>
+      <Shell title={repo} account={account}>
         <div className="mt-8 space-y-3">
           <ErrorText error={openError} />
           <Link href="/dashboard" className="text-sm underline">
@@ -562,7 +562,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
 
   if (!status) {
     return (
-      <Shell title={repo}>
+      <Shell title={repo} account={account}>
         {/* In the middle of the window, below the header. */}
         <div role="status" className="flex min-h-[calc(100dvh-14rem)] flex-col items-center justify-center text-center">
           <span aria-hidden="true" className="size-10 animate-spin rounded-full border-[3px] border-zinc-200 border-t-indigo-600 motion-reduce:animate-none dark:border-zinc-800 dark:border-t-indigo-400" />
@@ -616,13 +616,22 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
   return (
     <SiteContext.Provider value={context}>
       <AssistantProvider context={assistantContext}>
-      <Shell title={siteTitle(overview?.site.name, overview?.displayName, repo)} actions={<TopBar />}>
-        {/* On wide screens the grid takes over the page's bottom padding (-mb-24 pb-24), so it reaches the
-            foot of the page and the sticky menu card is never pushed up by the end of its row. */}
-        <div className={`mt-6 grid gap-5 transition-[grid-template-columns] duration-300 lg:-mb-24 lg:pb-24 ${navCollapsed ? "lg:grid-cols-[4.25rem_minmax(0,1fr)]" : "lg:grid-cols-[14rem_minmax(0,1fr)]"}`}>
-          {/* Wide screens: the menu card runs to the bottom of the window and stays where it starts (the
-              header above it is about 11rem tall), so it always fits on screen; More tools sits at its foot. */}
-          <nav aria-label="Site editor" className="lg:sticky lg:top-[11rem] lg:self-start">
+      <Frame>
+        {/* On wide screens the screen's column takes over the page's bottom padding (-mb-24, pb-24 below), so
+            the row reaches the foot of the page and the sticky column is never pushed up by its end. */}
+        <div className={`grid grid-cols-[minmax(0,1fr)] gap-5 transition-[grid-template-columns] duration-300 lg:-mb-24 ${navCollapsed ? "lg:grid-cols-[4.25rem_minmax(0,1fr)]" : "lg:grid-cols-[14rem_minmax(0,1fr)]"}`}>
+          {/* Wide screens: the logo, the site's name and the menu fill the window's height and stay put. */}
+          <div className="min-w-0 lg:sticky lg:top-4 lg:flex lg:h-[calc(100dvh-2rem)] lg:min-h-96 lg:flex-col lg:self-start">
+            <div className={`mb-3 ${navCollapsed ? "lg:flex lg:justify-center" : ""}`}>
+              <Brand collapsed={navCollapsed} />
+              <div className={navCollapsed ? "lg:hidden" : ""}>
+                <Link href="/dashboard" className="mt-3 inline-block text-sm text-zinc-500 hover:text-foreground">
+                  ← Your sites
+                </Link>
+                <h1 className="mt-0.5 line-clamp-2 text-xl font-bold tracking-tight">{siteTitle(overview?.site.name, overview?.displayName, repo)}</h1>
+              </div>
+            </div>
+          <nav aria-label="Site editor" className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
             {/* Small screens: one button opens the list, so the menu doesn't push the page down. */}
             <button
               type="button"
@@ -633,7 +642,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
               <span>{current?.label ?? "Menu"}</span>
               <span aria-hidden="true">{menuOpen ? "▴" : "▾"}</span>
             </button>
-            <div className={`${menuOpen ? "mt-2 flex" : "hidden"} flex-col rounded-2xl bg-background p-2.5 shadow-sm lg:mt-0 lg:flex lg:h-[calc(100dvh-12rem)] lg:min-h-80 lg:overflow-y-auto`}>
+            <div className={`${menuOpen ? "mt-2 flex" : "hidden"} flex-col rounded-2xl bg-background p-2.5 shadow-sm lg:mt-0 lg:flex lg:min-h-0 lg:flex-1 lg:overflow-y-auto`}>
               <div className={`mb-1 hidden items-center lg:flex ${navCollapsed ? "justify-center" : "justify-between pl-2.5"}`}>
                 {!navCollapsed && <span className="text-xs font-semibold tracking-wider text-zinc-500">YOUR SITE</span>}
                 <button
@@ -680,8 +689,16 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
               </div>
             </div>
           </nav>
+          </div>
 
-          <div className="min-w-0 space-y-4">
+          <div className="min-w-0 space-y-4 lg:pb-24">
+            <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              {links}
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+                <TopBar />
+                <div className="flex items-center gap-3">{account}</div>
+              </div>
+            </header>
             {/* The screen on its white card; the AI bar floats below it on the page's grey. The AI's
                 loader covers only this card, so the header and the menu stay usable while it works. */}
             <div className="relative">
@@ -753,7 +770,7 @@ export function SiteManager({ owner, repo }: { owner: string; repo: string }) {
           </div>
         </div>
         {!withAiBar && <StatusStrip onShowLog={() => showSection("tools")} />}
-      </Shell>
+      </Frame>
       <AssistantPanel />
       <FirstRunSetup />
       </AssistantProvider>
@@ -776,7 +793,7 @@ function AiBar() {
     <div
       inert={open}
       aria-hidden={open}
-      className={`grid transition-[grid-template-rows,opacity,transform] duration-300 ease-out motion-reduce:transition-none ${
+      className={`grid grid-cols-[minmax(0,1fr)] transition-[grid-template-rows,opacity,transform] duration-300 ease-out motion-reduce:transition-none ${
         open ? "pointer-events-none translate-y-4 grid-rows-[0fr] opacity-0" : "translate-y-0 grid-rows-[1fr] opacity-100"
       }`}
     >
@@ -935,21 +952,41 @@ function NavButton({
  * The editor's page: soft grey, with the menu and screens on white cards. While the conversation
  * is open on a wide screen, it's docked on the right and the page makes room for it.
  */
-function Shell({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) {
+/** The editor's background and page width, leaving room for the chat when it's open. */
+function Frame({ children }: { children: React.ReactNode }) {
   const assistant = useOptionalAssistant();
   return (
     <div className="flex flex-1 flex-col bg-[#F6F6F3] dark:bg-zinc-950">
-      <main className={`mx-auto w-full flex-1 px-4 pb-24 pt-6 transition-[padding] ${assistant?.open ? "xl:max-w-none xl:pr-[30rem]" : ""}`}>
-        <Link href="/dashboard" className="text-sm text-zinc-500 hover:text-foreground">
-          ← Your sites
-        </Link>
-        <header className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-3">
-          <h1 className="min-w-0 truncate text-2xl font-bold tracking-tight">{title}</h1>
-          <div className="sm:ml-auto">{actions}</div>
-        </header>
-        {children}
-      </main>
+      <main className={`mx-auto w-full flex-1 px-4 pb-24 pt-4 transition-[padding] ${assistant?.open ? "xl:max-w-none xl:pr-[30rem]" : ""}`}>{children}</main>
     </div>
+  );
+}
+
+function Brand({ collapsed = false }: { collapsed?: boolean }) {
+  return (
+    <Link href="/dashboard" title="Your sites" className="flex items-center gap-2 font-semibold tracking-tight">
+      <span aria-hidden="true" className="grid size-7 place-items-center rounded-md bg-foreground text-xs text-background">
+        TS
+      </span>
+      <span className={collapsed ? "lg:sr-only" : ""}>Twinstack</span>
+    </Link>
+  );
+}
+
+/** While a site opens, or if it can't: the editor's layout isn't there yet. */
+function Shell({ title, account, children }: { title: string; account: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <Frame>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Brand />
+        <div className="flex items-center gap-3">{account}</div>
+      </div>
+      <Link href="/dashboard" className="mt-4 inline-block text-sm text-zinc-500 hover:text-foreground">
+        ← Your sites
+      </Link>
+      <h1 className="mt-1.5 truncate text-2xl font-bold tracking-tight">{title}</h1>
+      {children}
+    </Frame>
   );
 }
 

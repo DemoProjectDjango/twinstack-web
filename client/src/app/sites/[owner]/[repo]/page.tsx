@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { NavAccount } from "@/components/NavAccount";
+import { NavLinks } from "@/components/NavLinks";
 import { SiteManager } from "@/components/site/SiteManager";
 import { getUser } from "@/lib/session";
 
@@ -14,5 +16,5 @@ export default async function SitePage({ params }: PageProps<"/sites/[owner]/[re
   // Sites live on GitHub; the dashboard is where it gets connected.
   if (!user.github) redirect("/dashboard");
 
-  return <SiteManager owner={owner} repo={repo} />;
+  return <SiteManager owner={owner} repo={repo} account={<NavAccount user={user} compact />} links={<NavLinks signedIn admin={user.admin} withoutSites />} />;
 }
