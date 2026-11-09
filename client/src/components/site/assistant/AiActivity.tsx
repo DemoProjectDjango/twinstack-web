@@ -108,6 +108,8 @@ function describe(action: AssistantAction, pages: SitePage[]): { doing: string; 
       case "write_file":
       case "edit_file":
         return { doing: `Saving ${text(input.file) ?? "a file"}`, item: text(input.file) ?? "File" };
+      case "append_blocks_from_attachment":
+        return { doing: `Adding to ${String(meta.ready ?? "many")} files`, item: "Added to many files" };
       case "move_file":
         return { doing: `Renaming ${text(meta.name) ?? "a file"}`, item: text(input.to) ?? "File" };
       case "create_pdf":

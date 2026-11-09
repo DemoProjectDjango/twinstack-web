@@ -23,6 +23,7 @@ export type ActionTool =
   | "add_file_to_site"
   | "write_file"
   | "edit_file"
+  | "append_blocks_from_attachment"
   | "move_file"
   | "remove_file"
   | "create_pdf"

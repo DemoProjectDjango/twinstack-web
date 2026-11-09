@@ -166,7 +166,7 @@ async function store(key, name, buffer, extra = {}) {
   const clean = cleanName(name);
   const { text, ...type } = classify(clean, buffer);
   const id = `att_${randomBytes(8).toString("hex")}`;
-  const meta = { id, name: clean, ...type, size: buffer.length, fileId: null, ...extra, createdAt: new Date().toISOString() };
+  const meta = { id, name: clean, ...type, size: buffer.length, ...(text !== undefined && { textChars: text.length }), fileId: null, ...extra, createdAt: new Date().toISOString() };
 
   const dir = dirOf(key);
   await fs.mkdir(dir, { recursive: true });
@@ -210,9 +210,20 @@ export async function ensureUploaded(client, key, meta) {
   return next;
 }
 
-/** The content block that shows Claude an attachment, or null for a file it can't read. */
+// Text longer than this isn't sent whole: every later request in the conversation would carry it.
+// Claude gets its outline and the parts it needs through read_attachment.
+const LARGE_TEXT_CHARS = 30_000;
+const isLargeText = (meta) => (meta.kind === "text" && meta.size > LARGE_TEXT_CHARS) || (meta.kind === "document" && (meta.textChars ?? 0) > LARGE_TEXT_CHARS);
+
+/** The text of a text file or Word document. */
+export async function attachmentText(key, meta) {
+  if (meta.kind !== "text" && meta.kind !== "document") throw new WorkspaceError(`${meta.name} isn't a text file or Word document.`, 400);
+  return fs.readFile(path.join(dirOf(key), meta.kind === "document" ? `${meta.id}.txt` : meta.id), "utf8");
+}
+
+/** The content block that shows Claude an attachment, or null for a file it can't read or one too long to send whole. */
 export function attachmentBlock(meta) {
-  if (!meta.fileId) return null;
+  if (!meta.fileId || isLargeText(meta)) return null;
   if (meta.kind === "image") return { type: "image", source: { type: "file", file_id: meta.fileId } };
   return { type: "document", source: { type: "file", file_id: meta.fileId }, title: meta.name };
 }
@@ -222,7 +233,12 @@ const KIND_LABEL = { image: "image", pdf: "PDF", text: "text file", document: "W
 
 /** One line per attachment for the message: the id Claude passes to tools, and what it is. */
 export function describeAttachment(meta) {
-  const readable = meta.kind === "file" ? `you can't read it${meta.note ? `: ${meta.note}` : ""}, but it can be added to the site` : "attached below";
+  const readable =
+    meta.kind === "file"
+      ? `you can't read it${meta.note ? `: ${meta.note}` : ""}, but it can be added to the site`
+      : isLargeText(meta)
+        ? "too long to attach whole: read_attachment shows its outline and the parts you need"
+        : "attached below";
   return `${meta.id}: ${meta.name} (${KIND_LABEL[meta.kind]}, ${sizeLabel(meta.size)}; ${readable})`;
 }
 

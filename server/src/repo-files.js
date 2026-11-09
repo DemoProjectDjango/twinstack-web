@@ -318,6 +318,20 @@ export async function writeRepoText(key, file, content, version) {
   }
 }
 
+/** Saves several text files as one change: everything is checked first, so a refusal writes none of them. */
+export async function writeRepoTexts(key, writes) {
+  const release = acquire(key, `saving ${writes.length} files`);
+  try {
+    for (const { file, content, version } of writes) {
+      const current = await checkRepoTextWrite(key, file, content);
+      if (current.version !== version) throw new WorkspaceError(`${file} changed after this was prepared, so nothing was saved.`, 409);
+    }
+    for (const { file, content } of writes) await fs.writeFile(inside(workspaceDir(key), file), content);
+  } finally {
+    release();
+  }
+}
+
 /** A file the AI may move or remove, or why not. Pages can be moved; delete_page removes them. */
 export async function aiFileAt(key, file, { moving = false } = {}) {
   const parts = aiPath(file);

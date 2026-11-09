@@ -312,7 +312,7 @@ export async function runTurn({ client, key, model: requested, history, live, on
         actions.push(action);
         live.actions.push(action);
         live.parts.push({ type: "action", id: action.id });
-        results.push({ type: "tool_result", tool_use_id: block.id, content: PROPOSED });
+        results.push({ type: "tool_result", tool_use_id: block.id, content: outcome.action.note ? `${PROPOSED} ${outcome.action.note}` : PROPOSED });
       }
       onUpdate();
       // The assistant turn and every result for it go in together (one message of results), so the

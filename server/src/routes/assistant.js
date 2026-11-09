@@ -506,6 +506,7 @@ const LOGGED_FILE = {
   add_file_to_site: (a, file) => file,
   write_file: (a) => a.input.file,
   edit_file: (a) => a.input.file,
+  append_blocks_from_attachment: () => "content",
   remove_file: (a) => a.input.file,
   move_file: (a) => a.input.to,
   create_pdf: (a, file) => file,

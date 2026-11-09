@@ -38,6 +38,7 @@ const APPLY_LABEL: Partial<Record<AssistantAction["tool"], string>> = {
   add_file_to_site: "Add it",
   write_file: "Save it",
   edit_file: "Save it",
+  append_blocks_from_attachment: "Add them",
   move_file: "Rename it",
   remove_file: "Remove file",
   create_pdf: "Create it",
@@ -209,6 +210,20 @@ function ChangeDetails({ action }: { action: AssistantAction }) {
           <LiveDiff before={String(meta.before ?? "")} after={String(input.content ?? "")} label={meta.exists ? "Changes" : "New file"} />
         </div>
       );
+    case "append_blocks_from_attachment": {
+      const failed = (meta.failed ?? []) as { file: string; reason: string }[];
+      return (
+        <Rows
+          rows={[
+            ["From", show(meta.name)],
+            ["Files to add to", show(meta.ready)],
+            ...(meta.skipped ? ([["Already done", show(meta.skipped)]] as [string, ReactNode][]) : []),
+            ...(failed.length ? ([["Can't be added", failed.map((f) => `${f.file}: ${f.reason}`).join("\n")]] as [string, ReactNode][]) : []),
+            ["Files", ((meta.files ?? []) as string[]).join("\n")],
+          ]}
+        />
+      );
+    }
     case "remove_file":
       return (
         <Rows

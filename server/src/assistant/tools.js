@@ -2,13 +2,14 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { addAttachmentToSite, readAttachment, readAttachmentMeta, saveMadeImage, sitePathFor } from "./attachments.js";
+import { addAttachmentToSite, attachmentText, readAttachment, readAttachmentMeta, saveMadeImage, sitePathFor } from "./attachments.js";
+import { appended, describePlan, outlineOf, planBlocks } from "./copy-blocks.js";
 import { analyticsSummary } from "../analytics.js";
 import { getBrand, saveBrand } from "../brand.js";
 import { normalizeLink, pageForLink } from "../links.js";
 import { getNavigation, saveNavigation } from "../navigation.js";
 import { makePdf, pdfProblem } from "../documents.js";
-import { aiFileAt, checkMove, checkRepoPlacement, checkRepoTextWrite, cleanFileName, fileUsage, listSiteFiles, moveSiteFile, readRepoText, removeSiteFile, saveRepoFile, writeRepoText } from "../repo-files.js";
+import { aiFileAt, checkMove, checkRepoPlacement, checkRepoTextWrite, cleanFileName, fileUsage, listSiteFiles, moveSiteFile, readRepoText, removeSiteFile, saveRepoFile, writeRepoText, writeRepoTexts } from "../repo-files.js";
 import { readSeo } from "../seo.js";
 import { DRAWN_DIR, MAX_SVG_CHARS, checkSvg, drawnName, saveDrawnImage, svgAspect, svgPreview } from "../svg.js";
 import { ImageError, MAX_PROMPT_CHARS, QUALITIES, SHAPES, generateImage } from "../images.js";
@@ -208,6 +209,18 @@ const TOOLS = [
     ["file"],
     { kind: "read", activity: (input) => `Reading ${input.file ?? "a file"}` },
   ),
+  tool(
+    "read_attachment",
+    "A text or Word attachment, a part at a time. With only attachment: its outline (headings with line numbers, how many code blocks). With from_line: those lines. With search: the lines containing that text. Read only what you need.",
+    {
+      attachment: { type: "string", description: "att_…" },
+      from_line: { type: "integer" },
+      lines: { type: "integer", description: "How many, up to 200 (default 60)." },
+      search: { type: "string" },
+    },
+    ["attachment"],
+    { kind: "read", activity: () => "Reading your attachment" },
+  ),
 
   // ---------------------------------------------------------------- change
   tool(
@@ -280,9 +293,10 @@ const TOOLS = [
   ),
   tool(
     "edit_file",
-    "Proposes exact replacements in any text file that canChange, including a page's own file: the quick and free way to change a word, price, link, colour or setting (a page's title, address or description) when you know exactly what changes. read_file or read_page first.",
+    "Proposes exact replacements in any text file that canChange, including a page's own file: the quick and free way to change a word, price, link, colour or setting (a page's title, address or description) when you know exactly what changes. read_file or read_page first. append adds text at the very end, with no need to read the file.",
     {
       file: { type: "string" },
+      append: { type: "string", description: "Text to add after everything in the file." },
       edits: {
         type: "array",
         items: {
@@ -299,8 +313,31 @@ const TOOLS = [
       ...summaryField,
       ...continueField,
     },
-    ["file", "edits", "summary"],
+    ["file", "summary"],
     { kind: "change", runs: "server", title: "Change a file" },
+  ),
+  tool(
+    "append_blocks_from_attachment",
+    "Proposes adding code blocks from a text attachment to the end of many site files, copied exactly by the app, so you never retype them. It uses every fenced code block with a site file named just before it (in a heading or line). Pass the ids and rules only. The result says how many are ready, already done or can't be added.",
+    {
+      attachment: { type: "string", description: "att_…" },
+      section: { type: "string", description: "Only blocks under the first heading containing this, e.g. Part B." },
+      skip_if_contains: { type: "string", description: "A file already containing this is left alone, e.g. an id the blocks carry." },
+      corrections: {
+        type: "array",
+        description: "Only for fixes the owner agreed to: exact text to change in one file's block.",
+        items: {
+          type: "object",
+          properties: { file: { type: "string" }, find: { type: "string" }, replace: { type: "string" } },
+          required: ["file", "find", "replace"],
+          additionalProperties: false,
+        },
+      },
+      ...summaryField,
+      ...continueField,
+    },
+    ["attachment", "summary"],
+    { kind: "change", runs: "server", title: "Add to many files" },
   ),
   tool(
     "move_file",
@@ -698,6 +735,48 @@ function capped(text) {
 
 /* ----------------------------------------------------------- read tools */
 
+const MAX_OUTLINE_HEADINGS = 200;
+const MAX_MATCHES = 30;
+const MAX_LINE_CHARS = 1_500;
+const MAX_PART_CHARS = 30_000;
+
+/** A part of a long attachment. A very long line is cut around what was searched for, or at its start. */
+async function readAttachmentPart(input, key) {
+  const meta = await attachmentOf(input.attachment, key);
+  const text = await attachmentText(key, meta);
+  const lines = text.split(/\r?\n/);
+  const clip = (line, at = 0) => {
+    if (line.length <= MAX_LINE_CHARS) return line;
+    const start = Math.max(0, at - 200);
+    return `${start ? "…" : ""}${line.slice(start, start + MAX_LINE_CHARS)}${start + MAX_LINE_CHARS < line.length ? `…[${line.length} characters in all]` : ""}`;
+  };
+  const search = str(input, "search", { max: 300, optional: true });
+  if (search) {
+    const needle = search.toLowerCase();
+    const found = lines.flatMap((line, i) => {
+      const at = line.toLowerCase().indexOf(needle);
+      return at < 0 ? [] : [`${i + 1}: ${clip(line, at)}`];
+    });
+    return { matches: found.length, lines: found.slice(0, MAX_MATCHES) };
+  }
+  if (input.from_line !== undefined && input.from_line !== null) {
+    const from = Math.max(1, Math.trunc(Number(input.from_line)) || 1);
+    const count = Math.min(200, Math.max(1, Math.trunc(Number(input.lines)) || 60));
+    let part = lines.slice(from - 1, from - 1 + count).map((line, i) => `${from + i}: ${clip(line)}`).join("\n");
+    if (part.length > MAX_PART_CHARS) part = `${part.slice(0, MAX_PART_CHARS)}\n[…cut off: ask for fewer lines]`;
+    return `${part}\n[${lines.length} lines in all]`;
+  }
+  const items = outlineOf(text);
+  const headings = items.filter((item) => item.type === "heading");
+  return {
+    name: meta.name,
+    lines: lines.length,
+    codeBlocks: items.filter((item) => item.type === "block").length,
+    headings: headings.slice(0, MAX_OUTLINE_HEADINGS).map((h) => `${h.line}: ${"#".repeat(h.level)} ${h.text}`),
+    moreHeadings: Math.max(0, headings.length - MAX_OUTLINE_HEADINGS),
+  };
+}
+
 async function runRead(name, input, key, context) {
   switch (name) {
     case "read_analytics": {
@@ -801,12 +880,21 @@ async function runRead(name, input, key, context) {
       if (!current.exists) throw new ToolInputError(`${current.file} isn't there. See list_files.`);
       return capped(current.content);
     }
+    case "read_attachment":
+      return readAttachmentPart(input, key);
     default:
       throw new ToolInputError(`Unknown tool ${name}.`);
   }
 }
 
 /* --------------------------------------------------------- change tools */
+
+function blockOptions(input) {
+  const list = input.corrections ?? [];
+  if (!Array.isArray(list) || list.length > 100) throw new ToolInputError("corrections must be a list of at most 100.");
+  const corrections = list.map((c) => ({ file: str(c, "file", { max: 300 }), find: str(c, "find", { max: 4000 }), replace: typeof c?.replace === "string" ? c.replace : "" }));
+  return { section: str(input, "section", { max: 200, optional: true }), skipIfContains: str(input, "skip_if_contains", { max: 300, optional: true }), corrections };
+}
 
 /**
  * Checks a proposed change and captures what it needs: `meta.before` (the current state, for the
@@ -914,10 +1002,12 @@ async function prepareChange(name, input, key, context) {
       const file = str(input, "file", { max: 300 });
       const { exists, content: before } = await readRepoText(key, file);
       if (!exists) throw new ToolInputError(`${file} isn't there. See list_files, or use write_file for a new file.`);
-      if (!Array.isArray(input.edits) || !input.edits.length || input.edits.length > 30) throw new ToolInputError("edits must be a list of 1 to 30 replacements.");
+      const edits = input.edits ?? [];
+      const append = str(input, "append", { max: 20_000, optional: true });
+      if (!Array.isArray(edits) || edits.length > 30 || (!edits.length && !append)) throw new ToolInputError("Give append, or edits as a list of 1 to 30 replacements.");
       let content = before;
       const eol = before.includes("\r\n") ? (text) => text.replace(/\r?\n/g, "\r\n") : (text) => text;
-      for (const edit of input.edits) {
+      for (const edit of edits) {
         if (typeof edit?.find !== "string" || !edit.find || typeof edit.replace !== "string") throw new ToolInputError("Each edit needs find and replace text.");
         const find = eol(edit.find);
         const count = content.split(find).length - 1;
@@ -925,9 +1015,24 @@ async function prepareChange(name, input, key, context) {
         if (count > 1 && edit.all !== true) throw new ToolInputError(`"${edit.find.slice(0, 120)}" is in ${file} ${count} times. Use more of the text around it, or all.`);
         content = content.split(find).join(eol(edit.replace));
       }
+      if (append) content = appended(content, append);
       if (content === before) throw new ToolInputError("Those edits change nothing.");
       const current = await checkRepoTextWrite(key, file, content);
       return { ...base, input: { file, content }, meta: { before, version: current.version, exists: true, address: current.address } };
+    }
+    case "append_blocks_from_attachment": {
+      const options = blockOptions(input);
+      const meta = await attachmentOf(input.attachment, key);
+      const plan = await planBlocks(key, await attachmentText(key, meta), options);
+      const report = describePlan(plan, "Ready to add to");
+      if (!plan.ready.length) throw new ToolInputError(`Nothing to add. ${report}`);
+      // Only what the card shows: the content is worked out again when it's applied, from the files as they are then.
+      return {
+        ...base,
+        input: { attachment: meta.id, ...options },
+        meta: { name: meta.name, ready: plan.ready.length, skipped: plan.skipped.length, failed: plan.failed.slice(0, 50), files: plan.ready.slice(0, 50).map((w) => w.file) },
+        note: report,
+      };
     }
     case "move_file": {
       const file = str(input, "file", { max: 300 });
@@ -1265,6 +1370,13 @@ export async function applyServerAction(key, action, { accessToken, user } = {})
     case "edit_file":
       await writeRepoText(key, input.file, input.content, meta.version);
       return `Saved ${input.file}.`;
+    case "append_blocks_from_attachment": {
+      const { attachment, ...options } = input;
+      const attached = await readAttachmentMeta(key, attachment);
+      const plan = await planBlocks(key, await attachmentText(key, attached), options);
+      if (plan.ready.length) await writeRepoTexts(key, plan.ready);
+      return describePlan(plan, "Added to");
+    }
     case "remove_file":
       await removeSiteFile(key, input.file);
       return `Removed ${input.file}.`;
