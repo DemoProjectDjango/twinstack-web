@@ -7,6 +7,7 @@ import { useCredits } from "@/lib/credits";
 import { confirmModal } from "@/lib/confirm";
 import { siteTitle } from "@/lib/repos";
 import { ApiError, api, setBeforeChange, workspacePath, type IncomingChanges, type Job, type Overview, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
+import { toast } from "@/lib/toast";
 import { GitHubChangesModal, wasDismissed } from "./GitHubChanges";
 import { AiHelpBadge } from "./AiHelpBadge";
 import { AnalyticsPanel } from "./AnalyticsPanel";
@@ -315,7 +316,17 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
             .then(({ incoming: found }) => {
               if (cancelled || !found) return;
               setIncoming(found);
-              setIncomingOpen(!wasDismissed(owner, repo, found.sha));
+              const ask = () => !cancelled && setIncomingOpen(!wasDismissed(owner, repo, found.sha));
+              // Brought in by themselves, so the owner never meets a clash at publish time. Saved work
+              // not yet on GitHub (or a failure) still asks, since that needs publishing first.
+              if (found.needsPublish || opened.activeJob) return ask();
+              api<{ status: WorkspaceStatus; kept: string[] }>(workspacePath(owner, repo, "/incoming/accept"), { method: "POST", body: { sha: found.sha } })
+                .then((result) => {
+                  if (cancelled) return;
+                  toast.info("Your site had newer changes on GitHub. They're in the editor now.");
+                  void incomingAccepted(result);
+                })
+                .catch(ask);
             })
             .catch(() => {});
         }
