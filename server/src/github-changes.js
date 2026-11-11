@@ -2,8 +2,8 @@ import { moveEditor } from "./site-update.js";
 import { WorkspaceError, acquire, getStatus, git, listChanges, readMeta, tryGit, workspaceDir } from "./workspace.js";
 
 // Changes that reached the site's GitHub repo from outside the editor (a push from someone's
-// computer, an edit on github.com). Opening a site only fetches them; the owner sees what changed
-// and decides when to bring them in. They're already on the live site either way.
+// computer, an edit on github.com). Opening a site brings them in by itself (SiteManager accepts
+// them); the window asking first is only the fallback. They are already on the live site.
 
 const MAX_COMMITS = 30;
 const MAX_FILES = 200;
@@ -57,7 +57,6 @@ export async function incomingChanges(key) {
   const files = filesOf(await git(dir, ["diff", "--name-status", "--no-renames", "-z", `HEAD...${target}`]));
   const incoming = new Set(files.map((f) => f.path));
   const overlap = (await listChanges(dir)).map((c) => c.path).filter((file) => incoming.has(file));
-  const ahead = Number((await git(dir, ["rev-list", "--count", `${target}..HEAD`])).trim());
   return {
     sha: (await git(dir, ["rev-parse", target])).trim(),
     commits: outside.slice(0, MAX_COMMITS).map(({ platform: _platform, ...commit }) => ({ ...commit, sha: commit.sha.slice(0, 7) })),
@@ -65,8 +64,8 @@ export async function incomingChanges(key) {
     files: files.slice(0, MAX_FILES),
     moreFiles: Math.max(0, files.length - MAX_FILES),
     overlap,
-    // Commits here that never reached GitHub: publishing puts them after GitHub's first.
-    needsPublish: ahead > 0,
+    // Accepting now handles saved work that never reached GitHub too (acceptIncoming).
+    needsPublish: false,
   };
 }
 
@@ -87,7 +86,13 @@ export async function acceptIncoming({ key, accessToken, sha }) {
     await git(dir, ["fetch", "--quiet", "--prune", "origin"], { accessToken });
     const target = `origin/${branch}`;
     if ((await git(dir, ["rev-parse", target])).trim() !== sha) throw new WorkspaceError("Your site changed on GitHub again just now. Reload the page to see the latest changes.", 409);
-    if ((await git(dir, ["rev-list", "--count", `${target}..HEAD`])).trim() !== "0") throw new WorkspaceError("You have saved work that hasn't reached GitHub yet. Publish it first, and these changes will be brought in with it.", 409);
+    // Saved work that never reached GitHub (a publish that didn't finish) becomes unpublished
+    // changes again, on top of where it started, so it's combined like any other unpublished work
+    // instead of clashing when it's published. Publishing commits it again.
+    if ((await git(dir, ["rev-list", "--count", `${target}..HEAD`])).trim() !== "0") {
+      const base = (await git(dir, ["merge-base", "HEAD", target])).trim();
+      await git(dir, ["reset", "--quiet", "--mixed", base]);
+    }
     subjects = (await git(dir, ["log", "--first-parent", "--format=%s", `HEAD..${target}`])).split("\n").filter(Boolean);
     await moveEditor(dir, target, ["merge", "--ff-only", "--quiet", target], (line) => {
       const files = /^Kept your unpublished version of (.+)\.$/.exec(line)?.[1];
