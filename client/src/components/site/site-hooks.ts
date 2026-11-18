@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { summarizeChanges } from "@/lib/change-labels";
 import { confirmModal } from "@/lib/confirm";
-import { api, workspacePath, type Job, type NavigationInfo, type Overview, type Publishing, type SiteCheck, type SiteUpdateInfo, type WorkspaceStatus } from "@/lib/site-api";
+import { ApiError, api, workspacePath, type Change, type Job, type NavigationInfo, type Overview, type Publishing, type SiteCheck, type SiteUpdateInfo, type WorkspaceStatus } from "@/lib/site-api";
 import { toast } from "@/lib/toast";
 import { wasVisited } from "./HomePanel";
 import type { PublishNowState, PublishingState, SiteTools, SiteUpdateState } from "./site-context";
@@ -330,6 +330,15 @@ export async function confirmSamples(check: SiteCheck | null) {
   );
 }
 
+/** The version note for a publish: what changed, then the owner's note (kept in the site's history). */
+export function publishMessage(changes: Change[], overview: Overview | null, note: string) {
+  const summary = summarizeChanges(changes, overview) || "Update the site";
+  const extra = note.trim();
+  return extra ? `${summary}
+
+${extra}` : summary;
+}
+
 export function usePublishNow({
   owner,
   repo,
@@ -340,6 +349,7 @@ export function usePublishNow({
   refresh,
   watch,
   openPublishScreen,
+  prepareToPublish,
   onError,
 }: {
   owner: string;
@@ -351,9 +361,11 @@ export function usePublishNow({
   refresh: () => Promise<void>;
   watch: () => void;
   openPublishScreen: () => void;
+  prepareToPublish: (then: () => void) => Promise<WorkspaceStatus | null>;
   onError: (err: unknown) => void;
 }): PublishNowState {
   const [working, setWorking] = useState<"checking" | "publishing" | null>(null);
+  const [asking, setAsking] = useState(false);
   const available = Boolean(status && (status.changes.length > 0 || status.ahead || !status.onDefaultBranch));
 
   const publish = useCallback(async () => {
@@ -363,44 +375,71 @@ export function usePublishNow({
       openPublishScreen();
       return;
     }
-    onError(null);
-    try {
-      setWorking("checking");
-      let check = await api<SiteCheck>(workspacePath(owner, repo, "/check"));
-      if (!check.fresh) {
-        await runAndWait("check");
-        check = await api<SiteCheck>(workspacePath(owner, repo, "/check"));
-      }
-      if (
-        check.fresh &&
-        check.report &&
-        !check.report.ok &&
-        !(await confirmModal(
-          "Your site still has problems that stop it from updating. If you publish now, your changes are saved, but your live site stays as it is until they're fixed. What's changed lists the problems.",
-          { title: "Publish with problems?", confirmLabel: "Publish anyway", danger: true },
-        ))
-      ) {
-        return;
-      }
-      if (!(await confirmSamples(check))) return;
-      setWorking("publishing");
-      const message = summarizeChanges(status.changes, overview) || "Update the site";
-      const committed = await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/commit"), {
-        method: "POST",
-        body: { message, mode: "direct" },
-      });
-      setStatus(committed.status);
-      watch();
-      await refresh();
-      toast.success("Published. Your live site updates in about a minute.");
-    } catch (err) {
-      onError(err);
-      // A failed push may still have committed locally.
-      await refresh().catch(() => {});
-    } finally {
-      setWorking(null);
-    }
-  }, [owner, repo, status, overview, working, runAndWait, setStatus, refresh, watch, openPublishScreen, onError]);
+    setAsking(true);
+  }, [owner, repo, status, working, openPublishScreen]);
 
-  return { available, working, publish };
+  // The latest `go`, for the clash window's "Publish now", which comes after re-renders.
+  const goRef = useRef<(note: string, retried?: boolean) => Promise<void>>(async () => {});
+  const go = useCallback(
+    async (note: string, retried = false) => {
+      setAsking(false);
+      onError(null);
+      try {
+        setWorking("checking");
+        // Someone else's publish first: combined with this browser's work, or settled by the owner.
+        const latest = await prepareToPublish(() => void goRef.current(note));
+        if (!latest) return;
+        if (!latest.changes.length && !latest.ahead) {
+          toast.info("There's nothing left to publish: your changes were already live.");
+          return;
+        }
+        let check = await api<SiteCheck>(workspacePath(owner, repo, "/check"));
+        if (!check.fresh) {
+          await runAndWait("check");
+          check = await api<SiteCheck>(workspacePath(owner, repo, "/check"));
+        }
+        if (
+          check.fresh &&
+          check.report &&
+          !check.report.ok &&
+          !(await confirmModal(
+            "Your site still has problems that stop it from updating. If you publish now, your changes are saved, but your live site stays as it is until they're fixed. What's changed lists the problems.",
+            { title: "Publish with problems?", confirmLabel: "Publish anyway", danger: true },
+          ))
+        ) {
+          return;
+        }
+        if (!(await confirmSamples(check))) return;
+        setWorking("publishing");
+        const committed = await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/commit"), {
+          method: "POST",
+          body: { message: publishMessage(latest.changes, overview, note), mode: "direct" },
+        });
+        setStatus(committed.status);
+        watch();
+        await refresh();
+        toast.success("Published. Your live site updates in about a minute.");
+      } catch (err) {
+        // Someone published the same places in the moment between: the work is unpublished changes
+        // again, so going round once more shows both versions to choose from.
+        if (err instanceof ApiError && err.code === "publish_clash" && !retried) {
+          await refresh().catch(() => {});
+          setWorking(null);
+          return await goRef.current(note, true);
+        }
+        onError(err);
+        // A failed push may still have committed locally.
+        await refresh().catch(() => {});
+      } finally {
+        setWorking(null);
+      }
+    },
+    [owner, repo, overview, runAndWait, setStatus, refresh, watch, prepareToPublish, onError],
+  );
+  useEffect(() => {
+    goRef.current = go;
+  }, [go]);
+
+  const cancel = useCallback(() => setAsking(false), []);
+  return { available, working, publish, asking, go, cancel };
 }

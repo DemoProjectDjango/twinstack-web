@@ -724,16 +724,35 @@ function conversationView(doc) {
   return { id: _id.toHexString(), ...rest };
 }
 
-export async function findConversation(userId, siteId) {
-  const doc = await conversations().findOne({ userId, siteId, archived: false }, { sort: { updatedAt: -1 } });
+/**
+ * Which conversations a request may see: the account's on the site, in this browser. `site` is
+ * `{ id, editor }` (routes/assistant.js's `chat`) or a bare site id (no browser). `editor: null`
+ * also matches conversations from before they were per browser, which have no `editor` field.
+ */
+function chatScope(userId, site) {
+  const { id, editor } = site !== null && typeof site === "object" ? site : { id: site, editor: null };
+  return { userId, siteId: id, editor: editor ?? null };
+}
+
+/** The account's conversations on the site from before they were per browser become this browser's. */
+export async function claimLegacyConversations(userId, siteId, editor) {
+  if (!editor) return;
+  await conversations().updateMany({ userId, siteId, editor: null }, { $set: { editor } });
+}
+
+export async function findConversation(userId, site) {
+  const doc = await conversations().findOne({ ...chatScope(userId, site), archived: false }, { sort: { updatedAt: -1 } });
   return conversationView(doc);
 }
 
-export async function createConversation({ userId, siteId, toolset }) {
+export async function createConversation({ userId, site, toolset }) {
+  const { siteId, editor } = chatScope(userId, site);
   const now = new Date();
   const doc = {
     userId,
     siteId,
+    // The browser it belongs to (workspace.js's editor id); null for an account's from before.
+    editor,
     // The assistant's tool list it was started with (a conversation stays bound to it).
     toolset,
     archived: false,
@@ -767,10 +786,11 @@ export async function updateConversation(id, userId, update) {
  * Archives the user's active conversation on the site and removes the archived ones past
  * KEPT_CONVERSATIONS. Returns the removed ones' attachment ids, for the caller to delete.
  */
-export async function archiveConversations(userId, siteId) {
-  await conversations().updateMany({ userId, siteId, archived: false }, { $set: { archived: true, archivedAt: new Date(), filesKept: true } });
+export async function archiveConversations(userId, site) {
+  const scope = chatScope(userId, site);
+  await conversations().updateMany({ ...scope, archived: false }, { $set: { archived: true, archivedAt: new Date(), filesKept: true } });
   const old = await conversations()
-    .find({ userId, siteId, archived: true }, { sort: { updatedAt: -1 }, skip: KEPT_CONVERSATIONS, projection: { attachments: 1 } })
+    .find({ ...scope, archived: true }, { sort: { updatedAt: -1 }, skip: KEPT_CONVERSATIONS, projection: { attachments: 1 } })
     .toArray();
   if (!old.length) return [];
   await conversations().deleteMany({ _id: { $in: old.map((c) => c._id) } });
@@ -781,10 +801,10 @@ export async function archiveConversations(userId, siteId) {
  * The user's conversations on the site, newest first, as the history list shows them: the first
  * few chat entries (for a title) and how many there are, never the history itself.
  */
-export async function listConversations(userId, siteId) {
+export async function listConversations(userId, site) {
   const docs = await conversations()
     .aggregate([
-      { $match: { userId, siteId } },
+      { $match: chatScope(userId, site) },
       { $sort: { updatedAt: -1 } },
       { $limit: KEPT_CONVERSATIONS + 1 },
       {
@@ -807,15 +827,16 @@ export async function listConversations(userId, siteId) {
  * Makes one of the user's archived conversations on the site the active one again (archiving the
  * active one). Returns it, plus the attachment ids of any conversation pushed out, or null.
  */
-export async function reopenConversation(id, userId, siteId) {
+export async function reopenConversation(id, userId, site) {
+  const scope = chatScope(userId, site);
   const _id = objectId(id);
   if (!_id) return null;
   // Made the newest first, so making room for the active one can't push it out.
-  const { matchedCount } = await conversations().updateOne({ _id, userId, siteId }, { $set: { updatedAt: new Date() } });
+  const { matchedCount } = await conversations().updateOne({ _id, ...scope }, { $set: { updatedAt: new Date() } });
   if (!matchedCount) return null;
-  const removed = await archiveConversations(userId, siteId);
+  const removed = await archiveConversations(userId, site);
   const doc = await conversations().findOneAndUpdate(
-    { _id, userId, siteId },
+    { _id, ...scope },
     { $set: { archived: false, updatedAt: new Date() }, $unset: { archivedAt: "" } },
     { returnDocument: "after" },
   );
@@ -823,10 +844,10 @@ export async function reopenConversation(id, userId, siteId) {
 }
 
 /** Deletes one of the user's archived conversations on the site. Returns its attachment ids, or null. */
-export async function deleteConversation(id, userId, siteId) {
+export async function deleteConversation(id, userId, site) {
   const _id = objectId(id);
   if (!_id) return null;
-  const doc = await conversations().findOneAndDelete({ _id, userId, siteId, archived: true }, { projection: { attachments: 1 } });
+  const doc = await conversations().findOneAndDelete({ _id, ...chatScope(userId, site), archived: true }, { projection: { attachments: 1 } });
   return doc ? (doc.attachments ?? []) : null;
 }
 

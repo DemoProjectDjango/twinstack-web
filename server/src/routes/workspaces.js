@@ -12,6 +12,8 @@ import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeKeyFor } from
 import { FastModelError, chooseSiteFastModel, fastModelForSite, siteFastModelView } from "../fast-model.js";
 import { ImageModelError, chooseSiteImageModel, siteImageModelView } from "../image-model.js";
 import { acceptIncoming, incomingChanges } from "../github-changes.js";
+import { clashForAi, resolveForPublish, syncForPublish } from "../publish-sync.js";
+import { syncSiteTree } from "../site-tree-sync.js";
 import { getAccessToken } from "../github.js";
 import { cancelJob, getJob, serializeJob, startJob } from "../jobs.js";
 import {
@@ -66,6 +68,7 @@ import {
   writeDataFile,
   writeSchedule,
   logWork,
+  pageAddresses,
 } from "../site-files.js";
 import { getStaticInfo, saveStaticInfo } from "../static-info.js";
 import { getBrand, saveBrand, saveBrandImage } from "../brand.js";
@@ -77,7 +80,7 @@ import { SEO_FILES, SEO_MARKERS, installSeo, readSeo } from "../seo.js";
 import { readCheckReport } from "../site-check.js";
 import { readMissingPages } from "../missing-pages.js";
 import { editPreviewText } from "../text-edit.js";
-import { getUpdateStatus, siteUpdateSteps, undoSiteUpdate } from "../site-update.js";
+import { claudeResolver, getUpdateStatus, siteUpdateSteps, undoSiteUpdate } from "../site-update.js";
 import { readTemplateFile, templateToken } from "../sites.js";
 import {
   WorkspaceError,
@@ -108,7 +111,7 @@ workspacesRouter.post(
   handle(async (req, res) => {
     keyFor(req);
     const accessToken = await getAccessToken(req, res);
-    res.json(await openWorkspace({ accessToken, userId: req.user.id, owner: req.params.owner, repo: req.params.repo }));
+    res.json(await openWorkspace({ accessToken, userId: req.user.id, owner: req.params.owner, repo: req.params.repo, editor: req.editorId }));
   }),
 );
 
@@ -170,6 +173,79 @@ workspacesRouter.post(
   }),
 );
 
+// Site commands that can make or remove pages (`new`, the site plan's scaffold, a new section, the
+// schedule, the setup's build): the page plan (scripts/site-tree.md) is brought in step after them.
+const PAGE_COMMANDS = new Set(["new", "scaffold", "nav-add", "schedule", "site-build"]);
+
+// Before publishing (publish-sync.js): catch up with what others published, combining it with this
+// browser's unpublished work; files both changed in the same places are shown to the owner to settle.
+const PUBLISHED_SHA = /^[a-f0-9]{40}$/;
+
+workspacesRouter.post(
+  "/:owner/:repo/publish/sync",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const accessToken = await getAccessToken(req, res);
+    const result = await syncForPublish({ key, accessToken });
+    if (!result.clashes && result.subjects.length) await logIncoming(key, result.subjects);
+    res.json({ ...result, status: await getStatus(key) });
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/publish/resolve",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const { sha, resolutions } = req.body ?? {};
+    if (typeof sha !== "string" || !PUBLISHED_SHA.test(sha)) throw new WorkspaceError("Unknown changes.", 400);
+    const accessToken = await getAccessToken(req, res);
+    const result = await resolveForPublish({ key, accessToken, sha, resolutions });
+    await logIncoming(key, result.subjects);
+    res.json(result);
+  }),
+);
+
+// Claude's suggestion for one clashing file: shown to the owner to keep or change, never written here.
+workspacesRouter.post(
+  "/:owner/:repo/publish/combine",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const { sha, file } = req.body ?? {};
+    if (typeof sha !== "string" || !PUBLISHED_SHA.test(sha) || typeof file !== "string" || file.length > 500) throw new WorkspaceError("Unknown file.", 400);
+    const clash = await clashForAi({ key, sha, file });
+    const userId = req.user.id;
+    let claude;
+    try {
+      claude = await claudeKeyFor(userId);
+    } catch (err) {
+      if (!(err instanceof ClaudeAccessError)) throw err;
+      return res.status(err.status).json({ error: err.code, message: err.message });
+    }
+    const model = await getClaudeModel(userId);
+    const siteId = await siteIdFor(key).catch(() => null);
+    const runId = randomUUID();
+    const resolve = claudeResolver(claude.apiKey, model, () => beginSpend({ userId, siteId, runId, kind: "publish-combine", charged: claude.charged }));
+    const endActivity = beginClaudeActivity(userId);
+    try {
+      const content = await resolve(clash);
+      res.json({ content: Buffer.isBuffer(content) ? content.toString("utf8") : content });
+    } catch (err) {
+      if (err instanceof WorkspaceError) throw err;
+      throw new WorkspaceError(`The AI couldn't combine ${file} (${err.message.replace(/\.$/, "")}). Choose what to keep yourself.`, 502);
+    } finally {
+      endActivity();
+    }
+  }),
+);
+
+/** So the AI knows the site changed without it. */
+async function logIncoming(key, subjects) {
+  if (!subjects.length) return;
+  await logWork(key, { command: "github-changes", file: "the site's repository", instruction: `Brought in changes published elsewhere: ${subjects.join("; ")}`.slice(0, 1000), summary: [] }).catch((err) =>
+    console.error("Couldn't log the published changes:", err.message),
+  );
+}
+
 // Changes pushed to GitHub from outside the editor: what they are, and bringing them in.
 workspacesRouter.get(
   "/:owner/:repo/incoming",
@@ -185,9 +261,10 @@ workspacesRouter.post(
     const sha = req.body?.sha;
     if (typeof sha !== "string" || !/^[a-f0-9]{40}$/.test(sha)) throw new WorkspaceError("Unknown changes.", 400);
     const accessToken = await getAccessToken(req, res);
-    const { subjects, ...result } = await acceptIncoming({ key, accessToken, sha });
-    // So the AI knows the site changed without it.
-    await logWork(key, { command: "github-changes", file: "the site's repository", instruction: `Brought in changes made outside the editor: ${subjects.join("; ")}`.slice(0, 1000), summary: [] }).catch((err) => console.error("Couldn't log the GitHub changes:", err.message));
+    // Brought in only when it combines by itself; a clash waits for Publish (publish-sync.js).
+    const accepted = await acceptIncoming({ key, accessToken, sha });
+    const { subjects, ...result } = accepted;
+    await logIncoming(key, subjects);
     res.json(result);
   }),
 );
@@ -208,7 +285,8 @@ workspacesRouter.post(
 
     const status = await getStatus(key);
     if (status.needsInstall && name !== "install") {
-      throw new WorkspaceError("Install dependencies first.", 409);
+      // The editor installs and runs the command again by itself (SiteManager's `start`).
+      throw new WorkspaceError("Your site's tools need setting up first. It takes a minute or two.", 409, "needs_install");
     }
     const input = req.body?.input ?? {};
     const steps = command.steps(input);
@@ -229,6 +307,7 @@ workspacesRouter.post(
     let proxy = null;
     let endActivity = () => {};
     let workLog = null;
+    let pagesBefore = null;
     // How big the request is (task-size.js), when the cheaper model is in play at all.
     let sized = null;
     // The site's first homepage or header and footer (first-design.js), and the model that writes it.
@@ -267,16 +346,25 @@ workspacesRouter.post(
       // Claude reads the site's latest work log before every run, merged or not.
       if (command.claude) workLog = await prepareWorkLog(key);
       if (workLog) env.TWINSTACK_WORK_LOG = WORK_LOG_FOR_RUN;
+      // Commands that can make or remove pages: the page plan follows what they did.
+      if (PAGE_COMMANDS.has(name) && !input?.dryRun) pagesBefore = await pageAddresses(key).catch(() => null);
     } catch (err) {
       proxy?.revoke();
       endActivity();
       release();
       throw err;
     }
-    const finish = () => {
-      proxy?.revoke();
-      endActivity();
-      release();
+    const finish = async () => {
+      try {
+        if (pagesBefore) {
+          const after = await pageAddresses(key).catch(() => null);
+          if (after) await syncSiteTree(workspaceDir(key), pagesBefore, after);
+        }
+      } finally {
+        proxy?.revoke();
+        endActivity();
+        release();
+      }
     };
     // A command whose steps need the job's env and who's paying (site-build's picture).
     const commandSteps = command.withContext

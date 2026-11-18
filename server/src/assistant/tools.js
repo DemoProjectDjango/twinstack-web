@@ -33,6 +33,7 @@ import {
   checkScripts,
   writeDataFile,
   writeSchedule,
+  keepingSiteTree,
 } from "../site-files.js";
 import { readCheckReport } from "../site-check.js";
 import { checkStaticInfo, getStaticInfo, saveStaticInfo } from "../static-info.js";
@@ -1430,7 +1431,15 @@ const LOGO_LABELS = { logo: "logo", logoDark: "logo on dark backgrounds", logoMa
  * (and the card) as a string, or `{ result, data }` when the browser needs more (the path a file
  * was added at), or throws a WorkspaceError whose message is shown and reported back.
  */
-export async function applyServerAction(key, action, { accessToken, user } = {}) {
+// Server actions that can make, move or remove a page: the page plan (site-tree.md) follows them.
+const PAGE_TOOLS = new Set(["delete_page", "write_file", "remove_file", "move_file", "add_file_to_site"]);
+
+export async function applyServerAction(key, action, options = {}) {
+  if (!PAGE_TOOLS.has(action.tool)) return applyAction(key, action, options);
+  return keepingSiteTree(key, () => applyAction(key, action, options));
+}
+
+async function applyAction(key, action, { accessToken, user } = {}) {
   const { input, meta } = action;
   switch (action.tool) {
     case "delete_page":

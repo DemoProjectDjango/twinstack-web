@@ -1,4 +1,4 @@
-import { moveEditor } from "./site-update.js";
+import { analyseIncoming, bringInIncoming, incomingSubjects, unpublishedAsChanges } from "./publish-sync.js";
 import { WorkspaceError, acquire, getStatus, git, listChanges, readMeta, tryGit, workspaceDir } from "./workspace.js";
 
 // Changes that reached the site's GitHub repo from outside the editor (a push from someone's
@@ -70,13 +70,13 @@ export async function incomingChanges(key) {
 }
 
 /**
- * Brings GitHub's changes into the editor, keeping unpublished work: it's combined with them, and
- * where both changed the same lines the unpublished version stays (`kept`). `sha` is what the owner
- * was shown, so something newer is shown to them before it's brought in.
+ * Brings GitHub's changes into the editor when they combine with its unpublished work by themselves
+ * (publish-sync.js). Where both changed the same parts of a file, nothing is moved
+ * (`incoming_clash`): the owner settles it when they publish, seeing both versions. `sha` is what
+ * the owner was shown, so something newer is shown to them before it's brought in.
  */
 export async function acceptIncoming({ key, accessToken, sha }) {
   const release = acquire(key, "getting the changes from GitHub");
-  const kept = [];
   let subjects = [];
   try {
     const dir = workspaceDir(key);
@@ -86,20 +86,22 @@ export async function acceptIncoming({ key, accessToken, sha }) {
     await git(dir, ["fetch", "--quiet", "--prune", "origin"], { accessToken });
     const target = `origin/${branch}`;
     if ((await git(dir, ["rev-parse", target])).trim() !== sha) throw new WorkspaceError("Your site changed on GitHub again just now. Reload the page to see the latest changes.", 409);
-    // Saved work that never reached GitHub (a publish that didn't finish) becomes unpublished
-    // changes again, on top of where it started, so it's combined like any other unpublished work
-    // instead of clashing when it's published. Publishing commits it again.
-    if ((await git(dir, ["rev-list", "--count", `${target}..HEAD`])).trim() !== "0") {
-      const base = (await git(dir, ["merge-base", "HEAD", target])).trim();
-      await git(dir, ["reset", "--quiet", "--mixed", base]);
+    // Saved work that never reached GitHub (a publish that didn't finish) is combined like any other
+    // unpublished work; publishing commits it again.
+    await unpublishedAsChanges(dir, target);
+    subjects = await incomingSubjects(dir, target);
+    const found = await analyseIncoming(dir, target);
+    if (found.clashes.length) {
+      const files = found.clashes.map((c) => c.file);
+      throw new WorkspaceError(
+        `Someone else published changes to ${files.join(", ")}, which you've also changed here. You'll see both versions and choose what to keep when you publish.`,
+        409,
+        "incoming_clash",
+      );
     }
-    subjects = (await git(dir, ["log", "--first-parent", "--format=%s", `HEAD..${target}`])).split("\n").filter(Boolean);
-    await moveEditor(dir, target, ["merge", "--ff-only", "--quiet", target], (line) => {
-      const files = /^Kept your unpublished version of (.+)\.$/.exec(line)?.[1];
-      if (files) kept.push(...files.split(", "));
-    });
+    await bringInIncoming(dir, target, found, new Map());
   } finally {
     release();
   }
-  return { status: await getStatus(key), kept, subjects };
+  return { status: await getStatus(key), kept: [], subjects };
 }

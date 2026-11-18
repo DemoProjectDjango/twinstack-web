@@ -90,9 +90,12 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
   }
   // The page the frame shows (its full path, preview prefix included).
   const [framePath, setFramePath] = useState("");
-  // The frame reloads with each new build, but never under someone's typing.
-  const [shownVersion, setShownVersion] = useState(version);
-  if (shownVersion !== version && !typing) setShownVersion(version);
+  // The frame reloads with each new build, but never under someone's typing. Only a new build: after
+  // every command (the AI's work going on behind "See it") it kept reloading and never settled.
+  // Servers too old to say when it was built fall back to every change.
+  const build = status.builtAt === undefined ? `v${version}` : `b${status.builtAt}`;
+  const [shownVersion, setShownVersion] = useState(build);
+  if (shownVersion !== build && !typing) setShownVersion(build);
 
   // Where the frame is (the page's path and scroll), and where a reloaded frame should go back to.
   const place = useRef({ path: "", y: 0 });
@@ -179,8 +182,14 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
 
   // "Edit on site" from another screen.
   const target = previewTarget?.n ?? 0;
+  // Each request moves the frame once: the preview going missing for a moment during a rebuild (base
+  // "" and back) mustn't send the owner back there after they've moved on.
+  const wentTo = useRef(0);
   useEffect(() => {
-    if (previewTarget) go(previewTarget.url);
+    if (previewTarget && base && wentTo.current !== previewTarget.n) {
+      wentTo.current = previewTarget.n;
+      go(previewTarget.url);
+    }
     // Only a new request moves the frame.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, base]);

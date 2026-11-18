@@ -71,7 +71,7 @@ export function SiteBuildActivity() {
   if ((!build || build.status !== "running") && pending && !notNow && !busy && !(build && build.status === "failed" && closed !== build.id)) {
     return (
       <div className="absolute inset-0 z-40 flex items-start justify-center rounded-2xl bg-background/60 px-4 backdrop-blur-[2px]">
-        <div role="dialog" aria-labelledby="site-build-pending" className="sticky top-[30vh] my-8 w-full max-w-sm rounded-2xl border border-zinc-200 bg-background p-8 text-center shadow-2xl dark:border-zinc-800">
+        <div role="dialog" aria-labelledby="site-build-pending" className="sticky top-[12vh] my-8 max-h-[76vh] w-full max-w-sm overflow-y-auto overscroll-contain rounded-2xl border border-zinc-200 bg-background p-8 text-center shadow-2xl dark:border-zinc-800">
           <span aria-hidden="true" className="mx-auto grid size-12 place-items-center rounded-full bg-zinc-100 text-lg dark:bg-zinc-900">
             ✦
           </span>
@@ -139,7 +139,7 @@ export function SiteBuildActivity() {
 
   return (
     <div className="absolute inset-0 z-40 flex items-start justify-center rounded-2xl bg-background/60 px-4 backdrop-blur-[2px]">
-      <div role="status" aria-live="polite" className="sticky top-[30vh] my-8 w-full max-w-sm rounded-2xl border border-zinc-200 bg-background shadow-2xl dark:border-zinc-800">
+      <div role="status" aria-live="polite" className="sticky top-[12vh] my-8 max-h-[76vh] w-full max-w-sm overflow-y-auto overscroll-contain rounded-2xl border border-zinc-200 bg-background shadow-2xl dark:border-zinc-800">
         {failed ? (
           <div className="p-8 text-center">
             <h2 className="font-semibold">{build.status === "cancelled" ? "The build was stopped" : "Your site couldn't be built"}</h2>

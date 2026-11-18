@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { rebaseCss, rebaseHtml } from "./original-pages.js";
 import { contentVersion, createPageAt, cssProblem, getOverview, inside, saveHtmlSource } from "./site-files.js";
+import { updateSiteTree } from "./site-tree-sync.js";
 import { WorkspaceError, acquire, tryGit, workspaceDir } from "./workspace.js";
 
 // The Files screen: the repo's folders, and uploading a file into one, in a new folder if the owner
@@ -573,6 +574,7 @@ export async function removeConvertedPage(key, file) {
     await fs.rm(inside(dir, file));
     await fs.rm(inside(dir, sheet[1]), { force: true });
     await fs.rm(inside(dir, `assets/js/imported/${sheet[2]}`), { recursive: true, force: true });
+    if (page.address) await updateSiteTree(dir, { remove: [page.address] });
   } finally {
     release();
   }

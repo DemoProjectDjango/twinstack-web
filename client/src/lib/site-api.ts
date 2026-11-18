@@ -5,6 +5,31 @@ import { claudeStarted } from "./credits-store";
 
 export type Change = { path: string; status: "added" | "modified" | "deleted" | "renamed"; untracked: boolean };
 
+/**
+ * A file this browser's unpublished work and someone else's published work both changed in the
+ * same places (server/src/publish-sync.js). `text`: `parts` are text both keep (`same`) or the two
+ * versions of one place (`mine`/`theirs`); `whole`: one version or the other (a picture, a big
+ * file); `removed-here`/`removed-there`: one side removed the file and the other changed it.
+ */
+export type PublishClash = {
+  file: string;
+  kind: "text" | "whole" | "removed-here" | "removed-there";
+  mine: string | null;
+  theirs: string | null;
+  parts: ({ same: string } | { mine: string; theirs: string })[] | null;
+};
+
+/** `POST …/publish/sync`: brought in by itself (`subjects`, maybe none), or `clashes` to settle first. */
+export type PublishSync = {
+  status: WorkspaceStatus;
+  subjects: string[];
+  clashes?: PublishClash[];
+  sha?: string;
+};
+
+/** How one clash is settled: one whole version, or the combined text. */
+export type ClashResolution = { file: string; keep: "mine" | "theirs" } | { file: string; content: string };
+
 export type WorkspaceStatus = {
   owner: string;
   name: string;
@@ -23,6 +48,8 @@ export type WorkspaceStatus = {
   /** "empty" means the site built but has no homepage yet (no pages). */
   build: "none" | "empty" | "ready";
   previewUrl: string | null;
+  /** When the preview was last built (ms), from servers that send it. */
+  builtAt?: number | null;
   /** Only from POST …/open: whether the preview was built from the files as they are now (false: rebuild it). */
   previewFresh?: boolean;
 };

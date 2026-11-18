@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { anthropicClient } from "./assistant/turn.js";
@@ -12,7 +11,7 @@ import { noteProviderError } from "./provider-health.js";
 import { GIT_TIMEOUT_MS } from "./duplicate.js";
 import { githubFetch } from "./github.js";
 import { appTokenError } from "./sites.js";
-import { WorkspaceError, git, listChanges, markInstalled, readMeta, tryGit, workspaceDir } from "./workspace.js";
+import { WorkspaceError, git, listChanges, markInstalled, mergeFile, readMeta, tryGit, workspaceDir } from "./workspace.js";
 
 // One-click site updates: brings a copy up to the template's newest commit on its default branch
 // (every push to the template is an update) while keeping everything the owner made. The
@@ -202,26 +201,6 @@ async function readBlob(dir, sha) {
   return stdout;
 }
 
-/** git merge-file on three versions: `{ text, conflicts }`, with conflict markers when there are any. */
-async function mergeFile(ours, base, theirs) {
-  const tmp = await fs.mkdtemp(path.join(tmpdir(), "twinstack-merge-"));
-  try {
-    const [o, b, t] = ["ours", "base", "theirs"].map((n) => path.join(tmp, n));
-    await Promise.all([fs.writeFile(o, ours), fs.writeFile(b, base), fs.writeFile(t, theirs)]);
-    const args = ["merge-file", "-p", "-L", "your site", "-L", "before", "-L", "the update", o, b, t];
-    try {
-      const { stdout } = await execFileAsync("git", args, { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 });
-      return { text: stdout, conflicts: 0 };
-    } catch (err) {
-      // The exit code is the number of conflicts.
-      if (typeof err.code === "number" && err.code > 0 && err.stdout) return { text: err.stdout, conflicts: err.code };
-      throw err;
-    }
-  } finally {
-    await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
-  }
-}
-
 /** The update's package.json with the scripts and packages only the copy has kept, in its own line endings. */
 function mergePackageJson(oursText, theirsText) {
   const ours = safeJson(oursText);
@@ -266,6 +245,12 @@ function block(name, buffer) {
  * Claude's merge of one conflicting text file, checked before it's used. `beginSpend()` starts the
  * request's Spend (credits.js), which caps, watches and charges it; null means no credits are left.
  */
+/** For moveEditor outside an update (another person's published work): Claude combines a clashing file. */
+export function claudeResolver(anthropicKey, model, beginSpend) {
+  const client = anthropicClient(anthropicKey);
+  return (conflict) => mergeWithClaude(client, model, conflict, beginSpend);
+}
+
 async function mergeWithClaude(client, model, conflict, beginSpend) {
   const { file, ours, base, theirs, marked } = conflict;
   if ([ours, base, theirs].some((b) => b.length > MAX_MERGE_CHARS)) {

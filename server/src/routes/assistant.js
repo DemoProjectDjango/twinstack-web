@@ -33,7 +33,7 @@ import { fastModelForSite, fastModelKey } from "../fast-model.js";
 import { imageModelForSite } from "../image-model.js";
 import { getAccessToken } from "../github.js";
 import { logWork, readDataFile, recentWorkLog } from "../site-files.js";
-import { WorkspaceError, getStatus, siteIdFor } from "../workspace.js";
+import { WorkspaceError, editorOfKey, getStatus, siteIdFor } from "../workspace.js";
 import { handle, keyFor } from "./helpers.js";
 
 // "Ask Claude": one continuing conversation per user and site. A message starts a turn that runs
@@ -111,7 +111,8 @@ async function siteOf(req) {
   } catch {
     throw new WorkspaceError("Open the site first.", 409);
   }
-  return { key, siteId };
+  // Conversations are per browser, like its copy of the site (workspace.js), until it publishes.
+  return { key, siteId, chat: { id: siteId, editor: editorOfKey(key) } };
 }
 
 /** Deletes the files of conversations that are gone (deleted, or pushed out of the history). */
@@ -138,8 +139,8 @@ function historyView(doc) {
   };
 }
 
-async function ownConversation(req, siteId) {
-  const conversation = await findConversation(req.user.id, siteId);
+async function ownConversation(req, chat) {
+  const conversation = await findConversation(req.user.id, chat);
   if (!conversation) throw new WorkspaceError("There's no conversation yet.", 404);
   return conversation;
 }
@@ -210,8 +211,8 @@ function friendlyError(err) {
 assistantRouter.get(
   "/",
   handle(async (req, res) => {
-    const { siteId } = await siteOf(req);
-    res.json({ conversation: conversationView(await findConversation(req.user.id, siteId)) });
+    const { chat } = await siteOf(req);
+    res.json({ conversation: conversationView(await findConversation(req.user.id, chat)) });
   }),
 );
 
@@ -219,10 +220,10 @@ assistantRouter.get(
 assistantRouter.post(
   "/new",
   handle(async (req, res) => {
-    const { siteId } = await siteOf(req);
-    const current = await findConversation(req.user.id, siteId);
+    const { chat } = await siteOf(req);
+    const current = await findConversation(req.user.id, chat);
     if (current && runningTurnFor(current.id)) throw new WorkspaceError("Wait for Claude to finish, or stop it first.", 409);
-    await removeFiles(req, await archiveConversations(req.user.id, siteId));
+    await removeFiles(req, await archiveConversations(req.user.id, chat));
     res.json({ conversation: null });
   }),
 );
@@ -231,8 +232,8 @@ assistantRouter.post(
 assistantRouter.get(
   "/history",
   handle(async (req, res) => {
-    const { siteId } = await siteOf(req);
-    res.json({ conversations: (await listConversations(req.user.id, siteId)).map(historyView) });
+    const { chat } = await siteOf(req);
+    res.json({ conversations: (await listConversations(req.user.id, chat)).map(historyView) });
   }),
 );
 
@@ -240,10 +241,10 @@ assistantRouter.get(
 assistantRouter.post(
   "/history/:id/open",
   handle(async (req, res) => {
-    const { siteId } = await siteOf(req);
-    const current = await findConversation(req.user.id, siteId);
+    const { chat } = await siteOf(req);
+    const current = await findConversation(req.user.id, chat);
     if (current && runningTurnFor(current.id)) throw new WorkspaceError("Wait for Claude to finish, or stop it first.", 409);
-    const reopened = await reopenConversation(req.params.id, req.user.id, siteId);
+    const reopened = await reopenConversation(req.params.id, req.user.id, chat);
     if (!reopened) throw new WorkspaceError("That conversation isn't there any more.", 404);
     await removeFiles(req, reopened.removed);
     res.json({ conversation: conversationView(reopened.conversation) });
@@ -254,8 +255,8 @@ assistantRouter.post(
 assistantRouter.delete(
   "/history/:id",
   handle(async (req, res) => {
-    const { siteId } = await siteOf(req);
-    const files = await deleteConversation(req.params.id, req.user.id, siteId);
+    const { chat } = await siteOf(req);
+    const files = await deleteConversation(req.params.id, req.user.id, chat);
     if (!files) throw new WorkspaceError("That conversation isn't there any more.", 404);
     await removeFiles(req, files);
     res.json({ ok: true });
@@ -269,7 +270,7 @@ assistantRouter.delete(
 assistantRouter.post(
   "/messages",
   handle(async (req, res) => {
-    const { key, siteId } = await siteOf(req);
+    const { key, siteId, chat } = await siteOf(req);
     const userId = req.user.id;
     const continuing = req.body?.continue === true;
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
@@ -293,7 +294,7 @@ assistantRouter.post(
     }
     const model = await getAssistantModel(userId);
 
-    let conversation = await findConversation(userId, siteId);
+    let conversation = await findConversation(userId, chat);
     if (conversation && runningTurnFor(conversation.id)) throw new WorkspaceError("Claude is still answering. Wait for it, or stop it.", 409);
     // The owner's own messages in a new site's first week (the setup's build request among them), for the setup numbers.
     if (!continuing) noteSetupSignal(siteId, "messages");
@@ -306,10 +307,10 @@ assistantRouter.post(
         conversation.toolset !== TOOLSET_VERSION
           ? "Claude has been updated, so this is a fresh conversation. Your site keeps every change you applied."
           : "The files attached to that conversation are gone, so this is a fresh one. Your site keeps every change you applied.";
-      await removeFiles(req, await archiveConversations(userId, siteId));
+      await removeFiles(req, await archiveConversations(userId, chat));
       conversation = null;
     }
-    conversation ??= await createConversation({ userId, siteId, toolset: TOOLSET_VERSION });
+    conversation ??= await createConversation({ userId, site: chat, toolset: TOOLSET_VERSION });
     if (JSON.stringify(conversation.messages).length > MAX_HISTORY_CHARS) {
       throw new WorkspaceError("This conversation has got very long. Start a new conversation to carry on.", 409);
     }
@@ -525,8 +526,8 @@ async function logApplied(key, action, file) {
 assistantRouter.post(
   "/actions/:id/apply",
   handle(async (req, res) => {
-    const { key, siteId } = await siteOf(req);
-    const conversation = await ownConversation(req, siteId);
+    const { key, siteId, chat } = await siteOf(req);
+    const conversation = await ownConversation(req, chat);
     const action = conversation.actions?.[req.params.id];
     if (!action) throw new WorkspaceError("That change isn't in this conversation.", 404);
     if (action.runs !== "server") throw new WorkspaceError("This change runs from the editor.", 400);
@@ -565,8 +566,8 @@ assistantRouter.post(
 assistantRouter.post(
   "/actions/:id/status",
   handle(async (req, res) => {
-    const { key, siteId } = await siteOf(req);
-    const conversation = await ownConversation(req, siteId);
+    const { key, siteId, chat } = await siteOf(req);
+    const conversation = await ownConversation(req, chat);
     const action = conversation.actions?.[req.params.id];
     if (!action) throw new WorkspaceError("That change isn't in this conversation.", 404);
     const { status, result, file } = req.body ?? {};

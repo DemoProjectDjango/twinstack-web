@@ -118,7 +118,7 @@ export function GitHubChangesModal({
 
         {incoming.overlap.length > 0 && (
           <Notice tone="warning">
-            You also have unpublished changes to {incoming.overlap.join(", ")}. They&apos;ll be combined with these. If both changed the same lines, your unpublished version stays.
+            You also have unpublished changes to {incoming.overlap.join(", ")}. They&apos;ll be combined with these. If both changed the same places, nothing is brought in now: you&apos;ll see both versions and choose what to keep when you publish.
           </Notice>
         )}
         {incoming.needsPublish && <Notice tone="warning">You have saved work that hasn&apos;t reached GitHub yet. Publish it first, and these changes will be brought in with it.</Notice>}

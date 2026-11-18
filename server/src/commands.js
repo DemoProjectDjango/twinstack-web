@@ -9,6 +9,8 @@ import {
   PROPOSAL_FILE,
   PROPOSAL_PREVIEW_INPUT,
   PROPOSAL_SITE_DIR,
+  FOOTER_PARTIAL,
+  HEADER_PARTIAL,
   clearProposal,
   prepareProposalPreview,
   htmlSourceExists,
@@ -353,7 +355,7 @@ export const COMMANDS = {
     // A stale proposal must never be shown as this preview's result.
     prepare: async (key, input) => {
       for (const id of references(input)) await copyReference(key, id);
-      if (flag(input, "dryRun")) await clearProposal(key);
+      if (flag(input, "dryRun")) await clearProposal(key, [input.page]);
     },
   },
 
@@ -370,7 +372,7 @@ export const COMMANDS = {
       // A whole page designed at high effort, then looked at and improved, can take a while.
       return [script("edit-page.js", [...args, ...claudeFlags(input)], 30 * MINUTE)];
     },
-    prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
+    prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key, [input.page]) : undefined),
   },
 
   // Claude designs the header and footer as a pair (edit-page.js --chrome): one design shown on
@@ -397,7 +399,7 @@ export const COMMANDS = {
       if (flag(input, "dryRun")) args.push("--dry-run", `--proposal-out=${PROPOSAL_FILE}`);
       return [script("edit-page.js", args, 20 * MINUTE)];
     },
-    prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
+    prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key, [HEADER_PARTIAL, FOOTER_PARTIAL]) : undefined),
   },
 
   // An existing HTML page (uploaded into .git by saveHtmlSource) converted into the page's markdown.
@@ -433,7 +435,7 @@ export const COMMANDS = {
       if (input?.keepStyles !== false && ![...cssSources(input), ...jsSources(input)].every((file) => htmlSourceExists(key, file))) {
         throw new WorkspaceError("An uploaded CSS or JavaScript file is gone. Upload the files again.", 409);
       }
-      if (flag(input, "dryRun")) await clearProposal(key);
+      if (flag(input, "dryRun")) await clearProposal(key, [input.page]);
     },
   },
 
@@ -459,7 +461,7 @@ export const COMMANDS = {
       if (flag(input, "dryRun")) args.push("--dry-run", `--proposal-out=${PROPOSAL_FILE}`);
       return [script("edit-md.js", args)];
     },
-    prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key) : undefined),
+    prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key, [input.file]) : undefined),
   },
 
   // SEO (scripts/seo.js): every run also saves the audit where the SEO tab reads it (readSeo in seo.js).
@@ -495,7 +497,7 @@ export const COMMANDS = {
       if (flag(input, "dryRun")) args.push("--dry-run", `--proposal-out=${PROPOSAL_FILE}`);
       return [script("seo.js", [...args, `--report=${SEO_REPORT}`])];
     },
-    prepare: (key, input) => (flag(input, "dryRun") && !flag(input, "all") ? clearProposal(key) : undefined),
+    prepare: (key, input) => (flag(input, "dryRun") && !flag(input, "all") ? clearProposal(key, [input.page]) : undefined),
   },
 
   scaffold: {

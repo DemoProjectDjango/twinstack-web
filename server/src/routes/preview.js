@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Router } from "express";
-import { PREVIEW_ROOTS, WorkspaceError, assertRepoRef, previewPath, verifyPreviewSignature, workspaceDir } from "../workspace.js";
+import { PREVIEW_ROOTS, WorkspaceError, assertRepoRef, isAccountSegment, previewPath, verifyPreviewSignature, workspaceDir } from "../workspace.js";
 
 // Serves a workspace's built dist/ (or the site built with a pending Claude proposal) for the preview iframe. The signed URL is
 // the credential (no cookie), because the iframe is sandboxed into an opaque
@@ -47,8 +47,8 @@ function resolveFile(dist, relative) {
 previewRouter.get("/:userId/:owner/:repo/:signature{/*path}", async (req, res) => {
   const { userId, owner, repo, signature } = req.params;
   try {
-    // Account ids are MongoDB ObjectIds (24 hex characters).
-    if (!/^[0-9a-f]{24}$/.test(userId)) throw new WorkspaceError("Not found", 404);
+    // An account id (a MongoDB ObjectId, 24 hex characters), with the browser's editor id for its own copy.
+    if (!isAccountSegment(userId)) throw new WorkspaceError("Not found", 404);
     assertRepoRef(owner, repo);
   } catch {
     return res.status(404).send("Not found");

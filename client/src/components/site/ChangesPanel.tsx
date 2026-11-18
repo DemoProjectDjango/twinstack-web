@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { describeChange, summarizeChanges } from "@/lib/change-labels";
+import { useEffect, useRef, useState } from "react";
+import { describeChange } from "@/lib/change-labels";
 import { confirmModal } from "@/lib/confirm";
-import { api, workspacePath, type FileDiff, type WorkspaceStatus } from "@/lib/site-api";
+import { ApiError, api, workspacePath, type FileDiff, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
 import { DomainSettings } from "./DomainSettings";
 import { markVisited, wasVisited } from "./HomePanel";
-import { confirmSamples } from "./site-hooks";
+import { confirmSamples, publishMessage } from "./site-hooks";
 import { SiteDetailsStep } from "./SiteDetailsStep";
 import { useSite } from "./site-context";
 import { SiteProblems } from "./SiteProblems";
@@ -33,7 +33,7 @@ function lineClass(line: string) {
  * a pull request for review is an option.
  */
 export function ChangesPanel() {
-  const { owner, repo, status, overview, busy, setStatus, refresh, version, publishing, siteCheck } = useSite();
+  const { owner, repo, status, overview, busy, setStatus, refresh, runAndWait, version, publishing, siteCheck, prepareToPublish } = useSite();
   const [files, setFiles] = useState<FileDiff[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [working, setWorking] = useState<"discard" | "commit" | null>(null);
@@ -82,8 +82,36 @@ export function ChangesPanel() {
     void commit();
   }
 
-  async function commit() {
-    const { report, fresh } = siteCheck;
+  // The latest `commit`, for the clash window's "Publish now", which comes after re-renders.
+  const commitRef = useRef<(retried?: boolean) => Promise<void>>(async () => {});
+  async function commit(retried = false) {
+    setError(null);
+    setResult(null);
+    // Going live: what someone else published since comes in first (combined, or settled by the
+    // owner in the clash window, whose "Publish now" comes back here).
+    let changes = status.changes;
+    let check: SiteCheck | null = siteCheck;
+    if (goesLive) {
+      setWorking("commit");
+      try {
+        const latest = await prepareToPublish(() => void commitRef.current());
+        if (!latest) return;
+        changes = latest.changes;
+        if (!changes.length && !latest.ahead) return;
+        // Checked again on the site as it is now, someone else's work included.
+        check = await api<SiteCheck>(workspacePath(owner, repo, "/check"));
+        if (!check.fresh) {
+          await runAndWait("check");
+          check = await api<SiteCheck>(workspacePath(owner, repo, "/check"));
+        }
+      } catch (err) {
+        setError(err);
+        return;
+      } finally {
+        setWorking(null);
+      }
+    }
+    const { report, fresh } = check;
     if (
       fresh &&
       report &&
@@ -96,13 +124,10 @@ export function ChangesPanel() {
     ) {
       return;
     }
-    if (!(await confirmSamples(siteCheck))) return;
+    if (!(await confirmSamples(check))) return;
     setWorking("commit");
-    setError(null);
-    setResult(null);
     try {
-      const note = message.trim() || summarizeChanges(status.changes, overview) || "Update the site";
-      const body = { message: note, mode, ...(mode === "pr" && status.onDefaultBranch && branch.trim() && { branch: branch.trim() }) };
+      const body = { message: publishMessage(changes, overview, message), mode, ...(mode === "pr" && status.onDefaultBranch && branch.trim() && { branch: branch.trim() }) };
       const committed = await api<CommitResult>(workspacePath(owner, repo, "/commit"), { method: "POST", body });
       setResult({ ...committed, mode });
       setStatus(committed.status);
@@ -111,6 +136,13 @@ export function ChangesPanel() {
       publishing.watch();
       await refresh();
     } catch (err) {
+      // Someone published the same places in the moment between: the work is unpublished changes
+      // again, so going round once more shows both versions to choose from.
+      if (err instanceof ApiError && err.code === "publish_clash" && !retried) {
+        await refresh().catch(() => {});
+        setWorking(null);
+        return await commitRef.current(true);
+      }
       setError(err);
       // A failed push may still have committed locally.
       await refresh().catch(() => {});
@@ -118,6 +150,10 @@ export function ChangesPanel() {
       setWorking(null);
     }
   }
+
+  useEffect(() => {
+    commitRef.current = commit;
+  });
 
   const hasChanges = status.changes.length > 0;
   // With nothing new to commit, publishing still retries an earlier failed push.
@@ -267,6 +303,17 @@ export function ChangesPanel() {
             <SiteDetailsStep onDone={detailsDone} onCancel={() => setCheckingDetails(false)} />
           ) : (
             <form onSubmit={submit} className="space-y-4">
+              <Field label="Note (optional)" hint="Added to the description of this version in your site's history: who made the change, or why.">
+                <textarea
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  maxLength={2000}
+                  rows={2}
+                  placeholder="e.g. Added the summer opening hours (Sam)"
+                  className={inputClass}
+                  disabled={disabled}
+                />
+              </Field>
               <div className="flex flex-wrap items-center gap-3">
                 <Button type="submit" variant="primary" className="px-5 py-2" disabled={disabled}>
                   {working === "commit" ? "Publishing…" : goesLive ? "Publish now" : status.onDefaultBranch ? "Send for review" : "Add to the review"}
@@ -280,16 +327,6 @@ export function ChangesPanel() {
 
               <Details summary="More options">
                 <div className="space-y-3">
-                  <Field label="A note about this version (optional)" hint="Kept in your site's history. Made from your changes if you leave it empty.">
-                    <input
-                      value={message}
-                      onChange={(e) => setMessage(e.target.value)}
-                      maxLength={5000}
-                      placeholder={summarizeChanges(status.changes, overview) || "Update the site"}
-                      className={inputClass}
-                      disabled={disabled}
-                    />
-                  </Field>
                   <fieldset className="space-y-1.5 text-sm">
                     <legend className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">How to publish</legend>
                     <label className="flex items-start gap-2">

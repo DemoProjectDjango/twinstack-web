@@ -6,7 +6,7 @@ import { claudeAccess, inEditorWords } from "@/lib/claude";
 import { useCredits } from "@/lib/credits";
 import { confirmModal } from "@/lib/confirm";
 import { siteTitle } from "@/lib/repos";
-import { ApiError, api, setBeforeChange, workspacePath, type IncomingChanges, type Job, type Overview, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
+import { ApiError, api, setBeforeChange, workspacePath, type IncomingChanges, type Job, type Overview, type PublishClash, type PublishSync, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
 import { toast } from "@/lib/toast";
 import { GitHubChangesModal, wasDismissed } from "./GitHubChanges";
 import { AiHelpBadge } from "./AiHelpBadge";
@@ -28,6 +28,8 @@ import { MissingPages } from "./MissingPages";
 import { ModelPanel } from "./ModelPanel";
 import { MORE_TOOLS, MoreToolsPanel } from "./MoreToolsPanel";
 import { PagesPanel } from "./PagesPanel";
+import { PublishClashes } from "./PublishClashes";
+import { PublishNote } from "./PublishNote";
 import { SchedulePanel } from "./SchedulePanel";
 import { SeoPanel } from "./SeoPanel";
 import { SiteContext, useSite, type PageEditMode, type SiteContextValue, type SiteSection } from "./site-context";
@@ -149,7 +151,9 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
   const [openError, setOpenError] = useState<unknown>(null);
   const [incoming, setIncoming] = useState<IncomingChanges | null>(null);
   const [incomingOpen, setIncomingOpen] = useState(false);
-  const [incomingKept, setIncomingKept] = useState<string[]>([]);
+  // Files both this browser and someone's publish changed in the same places: the owner settles them
+  // before publishing (PublishClashes). `then` carries on with the publish that found them.
+  const [clashes, setClashes] = useState<{ sha: string; clashes: PublishClash[]; subjects: string[]; then: () => void } | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
   const credits = useCredits();
   const [job, setJob] = useState<Job | null>(null);
@@ -211,8 +215,10 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
     currentJob.current = job;
   }, [job]);
 
+  // Callers waiting for a job to finish (runAndWait), by job id.
+  const waiters = useRef(new Map<string, (job: Job) => void>());
   const start = useCallback(
-    async (command: string, input: Record<string, unknown>, quiet: boolean) => {
+    async function start(command: string, input: Record<string, unknown>, quiet: boolean, retried = false): Promise<{ job: Job } | { error: unknown }> {
       if (!quiet) setRunError(null);
       try {
         const { job: started } = await api<{ job: Job }>(workspacePath(owner, repo, `/commands/${command}`), {
@@ -225,6 +231,17 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
         setJob(started);
         return { job: started };
       } catch (err) {
+        // The copy's packages are missing or out of date (a new browser's copy, a lockfile that
+        // changed): they're installed first, then what was asked for runs.
+        if (err instanceof ApiError && err.code === "needs_install" && command !== "install" && !retried) {
+          const installing = await start("install", {}, quiet);
+          if ("job" in installing) {
+            const done = await new Promise<Job>((resolve) => waiters.current.set(installing.job.id, resolve));
+            if (done.status === "succeeded") return start(command, input, quiet, true);
+          }
+          if (!quiet) setRunError(err);
+          return { error: err };
+        }
         if (!quiet) setRunError(err);
         return { error: err };
       }
@@ -258,8 +275,6 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
     [start],
   );
 
-  // Callers waiting for a job to finish (runAndWait), by job id.
-  const waiters = useRef(new Map<string, (job: Job) => void>());
   const runAndWait = useCallback(
     async (command: string, input: Record<string, unknown> = {}) => {
       const started = await start(command, input, false);
@@ -326,7 +341,14 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
                   toast.info("Your site had newer changes on GitHub. They're in the editor now.");
                   void incomingAccepted(result);
                 })
-                .catch(ask);
+                .catch((err) => {
+                  if (cancelled) return;
+                  // Both changed the same places: nothing moved, and Publish shows both versions to choose from.
+                  if (err instanceof ApiError && err.code === "incoming_clash") {
+                    setIncoming(null);
+                    toast.info(err.message);
+                  } else ask();
+                });
             })
             .catch(() => {});
         }
@@ -437,7 +459,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
   useEffect(() => {
     if (!canAutoRun) return;
     const timer = setTimeout(async () => {
-      const conflict = (started: { error?: unknown }) => started.error instanceof ApiError && started.error.status === 409;
+      const conflict = (started: { job: Job } | { error: unknown }) => "error" in started && started.error instanceof ApiError && started.error.status === 409;
       if (wantCheck) {
         setCheckedTick(changeTick);
         if (conflict(await start("check", {}, true))) setCheckedTick(-1);
@@ -473,6 +495,33 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
   }, []);
 
   const openPublishScreen = useCallback(() => showSection("publish"), [showSection]);
+
+  /** Asks the server to bring in what others published (publish-sync.js); never changes the copy on a clash. */
+  const syncForPublish = useCallback(async () => {
+    const result = await api<PublishSync>(workspacePath(owner, repo, "/publish/sync"), { method: "POST", body: {} });
+    setStatus(result.status);
+    return result;
+  }, [owner, repo, setStatus]);
+
+  // Every publish that goes live catches up first. Resolves with the copy's status when publishing
+  // can go on; null when the owner must settle clashes first (the window's "Publish now" calls `then`).
+  const prepareToPublish = useCallback(
+    async (then: () => void): Promise<WorkspaceStatus | null> => {
+      const result = await syncForPublish();
+      if (result.clashes?.length) {
+        setClashes({ sha: result.sha!, clashes: result.clashes, subjects: result.subjects, then });
+        return null;
+      }
+      if (result.subjects.length) {
+        const n = result.subjects.length;
+        toast.info(`${n === 1 ? "A change" : `${n} changes`} someone else published ${n === 1 ? "was" : "were"} combined with yours.`);
+        await refresh();
+        if (result.status.needsInstall) await runAndWait("install");
+      }
+      return result.status;
+    },
+    [syncForPublish, refresh, runAndWait],
+  );
   const publishNow = usePublishNow({
     owner,
     repo,
@@ -483,6 +532,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
     refresh: refreshAfterChange,
     watch: publishing.watch,
     openPublishScreen,
+    prepareToPublish,
     onError: setRunError,
   });
 
@@ -531,10 +581,9 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
   }, [confirmDiscardDraft]);
 
   /** GitHub's changes are in: reinstall if they changed the packages, then check the site (which also refreshes the preview). */
-  async function incomingAccepted({ status: latest, kept }: { status: WorkspaceStatus; kept: string[] }) {
+  async function incomingAccepted({ status: latest }: { status: WorkspaceStatus }) {
     setIncoming(null);
     setIncomingOpen(false);
-    setIncomingKept(kept);
     setStatus(latest);
     try {
       await refresh();
@@ -605,6 +654,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
     previewTarget,
     setShownPage,
     publishNow,
+    prepareToPublish,
     publishing,
     tools,
     siteUpdate,
@@ -718,8 +768,56 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
               {incoming && incomingOpen && (
                 <GitHubChangesModal owner={owner} repo={repo} incoming={incoming} onAccepted={(result) => void incomingAccepted(result)} onClose={() => setIncomingOpen(false)} />
               )}
-              {incomingKept.length > 0 && <Notice tone="warning">Your unpublished version was kept for {incomingKept.join(", ")}, because GitHub changed the same lines.</Notice>}
-              <ErrorText error={runError} />
+              {clashes && (
+                <PublishClashes
+                  owner={owner}
+                  repo={repo}
+                  overview={overview}
+                  sha={clashes.sha}
+                  clashes={clashes.clashes}
+                  subjects={clashes.subjects}
+                  onMoved={async () => {
+                    const then = clashes.then;
+                    const result = await syncForPublish();
+                    if (result.clashes?.length) setClashes({ sha: result.sha!, clashes: result.clashes, subjects: result.subjects, then });
+                    else {
+                      setClashes(null);
+                      toast.info("Someone published again, and it combined with your changes by itself. Press Publish when you're ready.");
+                    }
+                  }}
+                  onCombined={(latest) => {
+                    setStatus(latest);
+                    void refresh();
+                    if (latest.needsInstall) void run("install");
+                  }}
+                  onPublish={() => {
+                    const then = clashes.then;
+                    setClashes(null);
+                    then();
+                  }}
+                  onClose={() => setClashes(null)}
+                />
+              )}
+              {runError instanceof ApiError && runError.code === "needs_install" ? (
+                <Notice tone="warning">
+                  <span className="flex flex-wrap items-center gap-3">
+                    <span>Your site&apos;s tools need setting up before the preview and the AI can work. It takes a minute or two.</span>
+                    <Button
+                      variant="primary"
+                      disabled={busy}
+                      onClick={() => {
+                        setRunError(null);
+                        showSection("tools");
+                        void run("install");
+                      }}
+                    >
+                      Set up now
+                    </Button>
+                  </span>
+                </Notice>
+              ) : (
+                <ErrorText error={runError} />
+              )}
               {/* After every build, on every screen: links to pages that don't exist yet, with a way to make them. */}
               {!status.needsInstall && <MissingPages />}
               {TOOL_IDS.has(section) && (
@@ -841,7 +939,7 @@ function TopBar() {
     pill = { text: "✓ Everything is live", tone: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" };
   }
 
-  const { available, working, publish } = publishNow;
+  const { available, working, publish, asking, go, cancel } = publishNow;
   const label = working === "checking" ? "Checking your site…" : working === "publishing" ? "Publishing…" : status.onDefaultBranch ? "Publish" : "Add to the review";
 
   return (
@@ -881,6 +979,7 @@ function TopBar() {
         {working && <Spinner />}
         {label}
       </button>
+      {asking && <PublishNote changes={changes} onPublish={(note) => void go(note)} onCancel={cancel} />}
     </div>
   );
 }

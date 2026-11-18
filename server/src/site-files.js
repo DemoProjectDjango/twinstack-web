@@ -11,7 +11,8 @@ import {
   recentWorkLogLines,
   replaceWorkLogLine,
 } from "./db.js";
-import { PREVIEW_ROOTS, WorkspaceError, acquire, previewPath, siteIdFor, workspaceDir } from "./workspace.js";
+import { syncSiteTree, updateSiteTree } from "./site-tree-sync.js";
+import { PREVIEW_ROOTS, WorkspaceError, acquire, mergeFile, previewPath, siteIdFor, workspaceDir } from "./workspace.js";
 
 // Reads and writes the site's own data files. Everything here parses files
 // directly; repo code is never imported into the server process.
@@ -307,10 +308,50 @@ export async function updateFromTemplate(key, files, label) {
 export const PROPOSAL_FILE = ".git/twinstack-proposal.json";
 const MARKDOWN_PAGE = /^content\/[\w./-]+\.md$/;
 
-export async function clearProposal(key) {
+// What the files a preview may write held when it started (`clearProposal(key, files)`). Someone
+// else working on the same site (another browser, even on the same account) can change them before
+// the preview is kept, and keeping it must not undo their work: applyProposal combines the two.
+const PROPOSAL_BASE = ".git/twinstack-proposal-base.json";
+
+export async function clearProposal(key, files = []) {
   const dir = workspaceDir(key);
   await fs.rm(path.join(dir, PROPOSAL_FILE), { force: true });
+  await fs.rm(path.join(dir, PROPOSAL_BASE), { force: true });
   await clearProposalPreview(dir);
+  const base = {};
+  // Runs before the command checks its input, so a bad path is only left out (the command refuses it).
+  for (const file of files) {
+    if (typeof file !== "string" || !file || file.startsWith(".git")) continue;
+    let full;
+    try {
+      full = inside(dir, file);
+    } catch {
+      continue;
+    }
+    const text = await fs.readFile(full, "utf8").catch(() => null);
+    if (text !== null) base[file] = text;
+  }
+  if (Object.keys(base).length) await fs.writeFile(path.join(dir, PROPOSAL_BASE), JSON.stringify(base));
+}
+
+/**
+ * The proposed text for `file`, combined with changes made to it since the preview started. A clash
+ * is refused rather than silently dropping either side.
+ */
+async function withLaterChanges(dir, base, file, proposed) {
+  const before = base[file];
+  if (typeof before !== "string") return proposed;
+  const now = await fs.readFile(inside(dir, file), "utf8").catch(() => null);
+  const norm = (t) => t.replace(/\r\n/g, "\n");
+  if (now === null || norm(now) === norm(before)) return proposed;
+  const merged = await mergeFile(norm(now), norm(before), norm(proposed), ["now", "before", "proposed"]);
+  if (merged.conflicts) {
+    throw new WorkspaceError(
+      `${file} was changed by someone else while the AI was working on it, in the same places. Nothing was overwritten: ask for the change again so it starts from the latest version.`,
+      409,
+    );
+  }
+  return merged.text.toString("utf8");
 }
 
 // "Preview the page": the copy's build.js --proposal builds the whole site with the proposal
@@ -785,13 +826,18 @@ export async function applyProposal(key, content) {
     const dir = workspaceDir(key);
     const target = inside(dir, proposal.file);
     if (!existsSync(target)) throw new WorkspaceError(`${proposal.file} no longer exists.`, 409);
+    const base = JSON.parse((await readText(path.join(dir, PROPOSAL_BASE))) ?? "{}");
+    // Every merge is worked out before anything is written, so a clash changes nothing.
+    const page = await withLaterChanges(dir, base, proposal.file, content.replace(/\r\n/g, "\n"));
+    const extras = [];
     for (const extra of proposal.files) {
-      const file = inside(dir, extra.file);
-      await fs.mkdir(path.dirname(file), { recursive: true });
-      await fs.writeFile(file, extra.content);
+      extras.push({ file: inside(dir, extra.file), content: await withLaterChanges(dir, base, extra.file, extra.content) });
     }
-    const normalised = content.replace(/\r\n/g, "\n");
-    await fs.writeFile(target, normalised.endsWith("\n") ? normalised : `${normalised}\n`);
+    for (const extra of extras) {
+      await fs.mkdir(path.dirname(extra.file), { recursive: true });
+      await fs.writeFile(extra.file, extra.content);
+    }
+    await fs.writeFile(target, page.endsWith("\n") ? page : `${page}\n`);
     await clearProposal(key);
     const defaultInstruction = {
       generate: "turned the draft into the finished page",
@@ -863,10 +909,14 @@ export function applyUrlPattern(pattern, slug) {
 /** Removes one page's file. Like any change, it can be undone on the Publish screen until it's published. */
 export async function deletePage(key, file) {
   const target = pageFile(key, file);
+  const page = await getOverview(key).then((o) => o.collections.flatMap((c) => c.pages).find((p) => p.file === file), () => null);
   const release = acquire(key, `deleting ${file}`);
   try {
     if (!existsSync(target)) throw new WorkspaceError(`${file} doesn't exist.`, 404);
     await fs.rm(target);
+    // Its line leaves the page plan, unless another page still has that address.
+    const address = page?.address ?? page?.url;
+    if (address && !(await pageAddresses(key).catch(() => [])).includes(address)) await updateSiteTree(workspaceDir(key), { remove: [address] });
   } finally {
     release();
   }
@@ -1025,10 +1075,29 @@ async function addAddressedPage(key, { label, url, names, predefinedPath, skelet
     const content = predefined && declaresUrl(predefined) ? predefined : skeleton(slug, (layout) => existsSync(path.join(dir, `templates/layouts/${layout}.html`)));
     await fs.mkdir(path.dirname(inside(dir, file)), { recursive: true });
     await fs.writeFile(inside(dir, file), content);
+    // The page plan lists every page the site has.
+    await updateSiteTree(dir, { add: [url] });
     return { file };
   } finally {
     release();
   }
+}
+
+/** The address of every page the site has (hidden ones too), for keeping the page plan in step (site-tree-sync.js). */
+export async function pageAddresses(key) {
+  const overview = await getOverview(key);
+  return overview.collections.flatMap((c) => c.pages).map((p) => p.address ?? p.url).filter((a) => typeof a === "string" && a.startsWith("/"));
+}
+
+/** Runs `change` (which may add or remove pages) and brings the page plan in step with what it did. */
+export async function keepingSiteTree(key, change) {
+  const before = await pageAddresses(key).catch(() => null);
+  const result = await change();
+  if (before) {
+    const after = await pageAddresses(key).catch(() => null);
+    if (after) await syncSiteTree(workspaceDir(key), before, after);
+  }
+  return result;
 }
 
 /** site.config.json, parsed. */

@@ -99,7 +99,12 @@ export type PublishNowState = {
   /** Something to publish: changes, an earlier push that didn't reach GitHub, or a review branch. */
   available: boolean;
   working: "checking" | "publishing" | null;
+  /** Opens the note window (or, for a first publish or a review, the Publish screen). */
   publish: () => Promise<void>;
+  /** The note window is open: `go(note)` publishes, `cancel` closes it. */
+  asking: boolean;
+  go: (note: string) => Promise<void>;
+  cancel: () => void;
 };
 
 export type SiteContextValue = {
@@ -138,6 +143,12 @@ export type SiteContextValue = {
   setShownPage: (file: string | null) => void;
   /** Publishes every change straight to the live site, as the Publish button does (see usePublishNow). */
   publishNow: PublishNowState;
+  /**
+   * Before anything goes live: brings in what others published since (server/src/publish-sync.js).
+   * Resolves with the copy's status when publishing can go on, or null when the owner must first
+   * settle files both changed in the same places, in a window whose "Publish now" calls `then`.
+   */
+  prepareToPublish: (then: () => void) => Promise<WorkspaceStatus | null>;
   publishing: PublishingState;
   tools: SiteTools;
   siteUpdate: SiteUpdateState;

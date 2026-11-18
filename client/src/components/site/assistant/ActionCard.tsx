@@ -5,6 +5,7 @@ import { attachmentUrl, type AssistantAction } from "@/lib/assistant-api";
 import { LiveDiff } from "../LiveDiff";
 import { useSite } from "../site-context";
 import { Badge, Button, Details, Spinner } from "../ui";
+import { seeItOf } from "./AiActivity";
 import { useAssistant } from "./AssistantProvider";
 
 // One change Claude proposed, as a card in the chat: what it does in plain words, what exactly
@@ -347,7 +348,7 @@ function StatusBadge({ action, busy }: { action: AssistantAction; busy: boolean 
 
 export function ActionCard({ id }: { id: string }) {
   const { actions, working, apply, retry, skip, keep, throwAway, turn, applyingAll } = useAssistant();
-  const { busy: siteBusy, editFile, showSection } = useSite();
+  const { busy: siteBusy, editFile, showSection, showOnSite, overview } = useSite();
   const action = actions[id];
   if (!action) return null;
 
@@ -422,6 +423,17 @@ export function ActionCard({ id }: { id: string }) {
             )}
           </>
         )}
+        {/* A finished page: open it on Edit site, at any time later too. */}
+        {!busy && (() => {
+          const target = seeItOf(action, overview?.collections.flatMap((c) => c.pages) ?? []);
+          return (
+            target && (
+              <Button variant="primary" className="text-xs" onClick={() => showOnSite(target.url)}>
+                {action.tool === "design_header_and_footer" ? "See it on your site" : "See the page"}
+              </Button>
+            )
+          );
+        })()}
         {(action.status === "failed" || interrupted) && !busy && (
           <>
             <Button className="text-xs" onClick={() => void retry(action)}>

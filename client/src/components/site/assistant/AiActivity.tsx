@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AssistantAction, AssistantPart, DisplayEntry } from "@/lib/assistant-api";
 import { isHomePage, type SitePage } from "@/lib/site-api";
+import { toast } from "@/lib/toast";
 import { useSite } from "../site-context";
 import { Button, inputClass } from "../ui";
 import { useAssistant } from "./AssistantProvider";
@@ -53,6 +54,8 @@ function describe(action: AssistantAction, pages: SitePage[]): { doing: string; 
   // A new page isn't in the action, so it's found by its title (or as the homepage).
   const page =
     pages.find((p) => p.file === input.file) ??
+    // The page a create_page made, recorded once it was written.
+    (action.data?.file ? pages.find((p) => p.file === action.data?.file) : undefined) ??
     (action.tool === "create_page" ? (input.type === "homepage" ? pages.find(isHomePage) : pages.find((p) => p.title === input.title)) : undefined);
   const home = (page ? isHomePage(page) : false) || (action.tool === "create_page" && input.type === "homepage");
   const title = text(page?.title) ?? text(meta.title) ?? text(input.title) ?? "new";
@@ -144,6 +147,16 @@ function describe(action: AssistantAction, pages: SitePage[]): { doing: string; 
   }
 }
 
+// Changes whose result is a page to look at once they're done.
+const PAGE_WORK = new Set<AssistantAction["tool"]>(["edit_page", "create_page", "convert_page_from_html", "design_header_and_footer"]);
+
+/** Where a finished change can be seen on Edit site (its page, or the homepage for the header and footer), or null. */
+export function seeItOf(action: AssistantAction, pages: SitePage[]): { url: string; item: string } | null {
+  if (action.status !== "applied" || !PAGE_WORK.has(action.tool)) return null;
+  const { url, item } = describe(action, pages);
+  return url ? { url, item } : null;
+}
+
 const sinceStart = (ms: number) => {
   const m = Math.floor(ms / 60000);
   return m < 1 ? "Under a minute so far" : `${m} min so far`;
@@ -182,10 +195,52 @@ export function AiActivity() {
   // A stretch with a change that didn't work stays, as the report of what's missing, until closed.
   const failedSteps = (stretch?.ids ?? []).map((id) => actions[id]).filter((a) => a?.status === "failed");
   const hasFailed = failedSteps.length > 0;
+  // The latest changes and pages, for the message when a stretch ends.
+  const recent = useRef({ actions, pages, showOnSite, stretch });
+  useEffect(() => {
+    recent.current = { actions, pages, showOnSite, stretch };
+  });
   useEffect(() => {
     if (!busy) {
       if (hasFailed) return;
-      const timer = setTimeout(() => setStretch(null), STRETCH_GAP_MS);
+      const timer = setTimeout(() => {
+        // The work is finished: each page it made or changed gets a "See it", wherever the owner is.
+        const ids = recent.current.stretch?.ids ?? [];
+        if (ids.length) {
+          const { actions: all, pages: now, showOnSite: show } = recent.current;
+          const seen = new Map<string, string>();
+          for (const id of ids) {
+            const target = all[id] && seeItOf(all[id], now);
+            if (target && !seen.has(target.url)) seen.set(target.url, target.item);
+          }
+          if (seen.size) {
+            toast.success(
+              ({ closeToast }) => (
+                <div className="text-sm">
+                  <p className="font-medium">{seen.size === 1 ? `Your ${[...seen.values()][0].replace(/^Homepage$/, "homepage")} is ready.` : "Your pages are ready."}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {[...seen].slice(0, 4).map(([url, item]) => (
+                      <button
+                        key={url}
+                        type="button"
+                        onClick={() => {
+                          show(url);
+                          closeToast?.();
+                        }}
+                        className="rounded-md bg-foreground px-2.5 py-1 text-xs font-semibold text-background hover:opacity-90"
+                      >
+                        See {seen.size === 1 ? "it" : item}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ),
+              { autoClose: 15000 },
+            );
+          }
+        }
+        setStretch(null);
+      }, STRETCH_GAP_MS);
       return () => clearTimeout(timer);
     }
     const timer = setTimeout(() => {
@@ -244,7 +299,8 @@ export function AiActivity() {
   const shown = loading || Boolean(question) || report;
 
   const stepList = steps.length > (report ? 0 : 1) && (
-    <ol className="mx-auto mt-4 max-w-64 space-y-1.5 text-left text-sm" aria-label="The changes">
+    // Many changes at once scroll inside the card, so its buttons stay on screen.
+    <ol className="mx-auto mt-4 max-h-[35vh] max-w-64 space-y-1.5 overflow-y-auto overscroll-contain pr-1 text-left text-sm" aria-label="The changes">
       {steps.map((a) => {
         const current = working.has(a.id);
         const described = describe(a, pages);
@@ -304,7 +360,7 @@ export function AiActivity() {
           aria-modal={question ? true : undefined}
           aria-labelledby={question ? "ai-question-title" : undefined}
           aria-live={question ? undefined : "polite"}
-          className={`w-full rounded-2xl border border-zinc-200 bg-background shadow-2xl transition-[max-width] dark:border-zinc-800 ${question ? "max-w-lg" : "sticky top-[30vh] my-8 max-w-sm"}`}
+          className={`w-full rounded-2xl border border-zinc-200 bg-background shadow-2xl transition-[max-width] dark:border-zinc-800 ${question ? "max-h-[90vh] max-w-lg overflow-y-auto" : "sticky top-[12vh] my-8 max-h-[76vh] max-w-sm overflow-y-auto overscroll-contain"}`}
         >
           {question && fresh ? (
             <QuestionBody

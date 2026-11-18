@@ -2,12 +2,14 @@ import { execFile } from "node:child_process";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { config } from "./config.js";
 import { GIT_TIMEOUT_MS, MissingScopeError, OWNER_PATTERN, gitEnv, isValidRepoName, summarizeGitError } from "./duplicate.js";
 import { githubFetch } from "./github.js";
 import { activeJobFor } from "./jobs.js";
+import { claimLegacyConversations } from "./db.js";
 import { isSiteCopy, isTemplate } from "./sites.js";
 
 // A workspace is a persistent clone of one site repo, per user, on this
@@ -20,11 +22,33 @@ const execFileAsync = promisify(execFile);
 const SITE_MARKERS = ["site.config.json", "scripts/build.js"];
 const MAX_DIFF_BYTES = 100 * 1024;
 
+/** git merge-file on three versions: `{ text, conflicts }`, with conflict markers when there are any. */
+export async function mergeFile(ours, base, theirs, labels = ["your site", "before", "the update"], markerSize = 7) {
+  const tmp = await fs.mkdtemp(path.join(tmpdir(), "twinstack-merge-"));
+  try {
+    const [o, b, t] = ["ours", "base", "theirs"].map((n) => path.join(tmp, n));
+    await Promise.all([fs.writeFile(o, ours), fs.writeFile(b, base), fs.writeFile(t, theirs)]);
+    const args = ["merge-file", "-p", `--marker-size=${markerSize}`, "-L", labels[0], "-L", labels[1], "-L", labels[2], o, b, t];
+    try {
+      const { stdout } = await execFileAsync("git", args, { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 });
+      return { text: stdout, conflicts: 0 };
+    } catch (err) {
+      // The exit code is the number of conflicts.
+      if (typeof err.code === "number" && err.code > 0 && err.stdout) return { text: err.stdout, conflicts: err.code };
+      throw err;
+    }
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 /** An error whose message is safe to show to the user. */
 export class WorkspaceError extends Error {
-  constructor(message, status = 400) {
+  /** `code` (lower_snake_case) lets the browser tell this refusal apart (sent as `error`, with `message`). */
+  constructor(message, status = 400, code = undefined) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -34,19 +58,34 @@ export function assertRepoRef(owner, repo) {
   }
 }
 
+// Each browser (an "editor": the `twinstack_editor` cookie, 16 hex characters) has its own copy of a
+// site, so people sharing one account keep their unpublished work to themselves until they publish.
+// Its folder is `<userId>.<editor>/<owner>/<repo>`. Copies were one per account before
+// (`<userId>/<owner>/<repo>`): the first browser to open the site takes that one over
+// (`claimLegacy`), with its unpublished work and AI conversation.
+export const EDITOR_ID = /^[0-9a-f]{16}$/;
+const ACCOUNT_DIR = /^[0-9a-f]{24}(?:\.[0-9a-f]{16})?$/;
+
 /** GitHub names are case-insensitive, so one repo always maps to one directory. */
-export function workspaceKey(userId, owner, repo) {
-  return `${userId}/${owner.toLowerCase()}/${repo.toLowerCase()}`;
+export function workspaceKey(userId, owner, repo, editor = null) {
+  if (editor !== null && !EDITOR_ID.test(editor)) throw new WorkspaceError("Reload the page and try again.", 400);
+  return `${editor ? `${userId}.${editor}` : userId}/${owner.toLowerCase()}/${repo.toLowerCase()}`;
 }
+
+/** Whether `segment` can be a key's first part: an account id, with a browser's editor id for per-browser copies. */
+export const isAccountSegment = (segment) => ACCOUNT_DIR.test(segment);
+
+/** The browser's editor id in a key, or null for an account's copy from before. */
+export const editorOfKey = (key) => key.split("/")[0].split(".")[1] ?? null;
 
 export function workspaceDir(key) {
   return path.join(config.workspacesDir, ...key.split("/"));
 }
 
-/** The keys of every account's clone of this repo (collaborators keep their own). */
+/** The keys of every clone of this repo: every account's and every browser's. */
 export async function workspaceKeysFor(owner, repo) {
-  const userIds = await fs.readdir(config.workspacesDir).catch(() => []);
-  return userIds.map((userId) => workspaceKey(userId, owner, repo)).filter((key) => existsSync(workspaceDir(key)));
+  const segments = (await fs.readdir(config.workspacesDir).catch(() => [])).filter(isAccountSegment);
+  return segments.map((segment) => `${segment}/${owner.toLowerCase()}/${repo.toLowerCase()}`).filter((key) => existsSync(workspaceDir(key)));
 }
 
 /** Deletes a clone from this server. Hold its lock (`acquire`) while doing so. */
@@ -101,6 +140,8 @@ export async function tryGit(dir, args) {
 // Kept inside .git so it never shows up as a change in the site repo.
 const metaPath = (dir) => path.join(dir, ".git", "twinstack.json");
 const installStampPath = (dir) => path.join(dir, ".git", "twinstack-install");
+// When the copy was last opened, for removing copies nobody uses (sweepWorkspaces).
+const openedStampPath = (dir) => path.join(dir, ".git", "twinstack-opened");
 
 export async function readMeta(dir) {
   try {
@@ -164,7 +205,7 @@ async function needsInstall(dir) {
  * Clones the repo on first open and fetches on later ones. Local uncommitted
  * work is never touched, so reopening a site picks up where the user left off.
  */
-export async function openWorkspace({ accessToken, userId, owner, repo }) {
+export async function openWorkspace({ accessToken, userId, owner, repo, editor = null }) {
   assertRepoRef(owner, repo);
   const repoPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
   const res = await githubFetch(repoPath, accessToken);
@@ -193,7 +234,8 @@ export async function openWorkspace({ accessToken, userId, owner, repo }) {
     }
   }
 
-  const key = workspaceKey(userId, info.owner.login, info.name);
+  const key = workspaceKey(userId, info.owner.login, info.name, editor);
+  if (editor) await claimLegacy(key, workspaceKey(userId, info.owner.login, info.name), info.id, userId);
 
   // Opens that overlap (a second tab, or React running the effect twice in
   // development) share one sync and all get its result, instead of the later
@@ -202,12 +244,112 @@ export async function openWorkspace({ accessToken, userId, owner, repo }) {
     syncs.set(key, syncWorkspace(key, info, accessToken).finally(() => syncs.delete(key)));
   }
   await syncs.get(key);
+  await fs.writeFile(openedStampPath(workspaceDir(key)), new Date().toISOString()).catch(() => {});
   const status = await getStatus(key);
   // Only on open, since it stats every changed file: the editor rebuilds a preview that's out of date.
   return { ...status, previewFresh: status.build !== "none" && !status.activeJob && (await previewIsFresh(key)) };
 }
 
 const syncs = new Map();
+const claims = new Map();
+
+/**
+ * The account's copy from before copies were per browser becomes this browser's (the first to open
+ * the site since), with its unpublished work and AI conversation. Later browsers start from the
+ * published site. A busy copy is left for a later open.
+ */
+async function claimLegacy(key, legacyKey, siteId, userId) {
+  if (claims.has(legacyKey)) return claims.get(legacyKey);
+  const dir = workspaceDir(key);
+  const legacy = workspaceDir(legacyKey);
+  if (existsSync(dir) || !existsSync(path.join(legacy, ".git")) || busy.has(legacyKey) || activeJobFor(legacyKey)) return;
+  const claim = (async () => {
+    let release;
+    try {
+      // Taken by a command in the meantime: left for a later open (this browser starts afresh only if
+      // it has no copy yet, so nothing is lost either way).
+      release = acquire(legacyKey, "moving to this browser");
+    } catch {
+      return;
+    }
+    try {
+      await fs.mkdir(path.dirname(dir), { recursive: true });
+      await fs.rename(legacy, dir);
+      await claimLegacyConversations(userId, siteId, editorOfKey(key)).catch((err) => console.error(`Couldn't move the AI conversations of ${legacyKey}:`, err.message));
+      console.log(`Workspace ${legacyKey} now belongs to ${key}.`);
+    } catch (err) {
+      console.error(`Couldn't move workspace ${legacyKey} to ${key}:`, err.message);
+    } finally {
+      release();
+    }
+  })().finally(() => claims.delete(legacyKey));
+  claims.set(legacyKey, claim);
+  return claim;
+}
+
+/**
+ * A new clone takes the installed packages of another copy of the same site with the same lockfile
+ * (hard links where the system has them, so they cost no space) instead of a long `npm ci`.
+ */
+async function shareInstalledPackages(key, dir) {
+  try {
+    const [, owner, repo] = key.split("/");
+    const wanted = await lockfileHash(dir);
+    for (const other of await workspaceKeysFor(owner, repo)) {
+      if (other === key || busy.has(other)) continue;
+      const source = workspaceDir(other);
+      if (!existsSync(path.join(source, "node_modules")) || (await needsInstall(source)) || (await lockfileHash(source)) !== wanted) continue;
+      try {
+        if (process.platform === "win32") throw new Error("no cp -al");
+        await execFileAsync("cp", ["-al", path.join(source, "node_modules"), path.join(dir, "node_modules")], { timeout: 5 * 60 * 1000 });
+      } catch {
+        await fs.rm(path.join(dir, "node_modules"), { recursive: true, force: true });
+        await fs.cp(path.join(source, "node_modules"), path.join(dir, "node_modules"), { recursive: true, verbatimSymlinks: true });
+      }
+      await fs.writeFile(installStampPath(dir), wanted);
+      return;
+    }
+  } catch (err) {
+    console.error(`Couldn't share installed packages with ${key}:`, err.message);
+    await fs.rm(path.join(dir, "node_modules"), { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+const UNUSED_DAYS = 30;
+
+/**
+ * Removes per-browser copies nobody has opened for UNUSED_DAYS, only when they hold nothing
+ * unpublished: a copy with changes or unpushed commits is kept however old it is.
+ */
+export async function sweepWorkspaces() {
+  const cutoff = Date.now() - UNUSED_DAYS * 24 * 60 * 60 * 1000;
+  for (const segment of await fs.readdir(config.workspacesDir).catch(() => [])) {
+    if (!isAccountSegment(segment) || !segment.includes(".")) continue;
+    for (const owner of await fs.readdir(path.join(config.workspacesDir, segment)).catch(() => [])) {
+      for (const repo of await fs.readdir(path.join(config.workspacesDir, segment, owner)).catch(() => [])) {
+        const key = `${segment}/${owner}/${repo}`;
+        const dir = workspaceDir(key);
+        try {
+          const stamp = Date.parse(await fs.readFile(openedStampPath(dir), "utf8").catch(() => ""));
+          const opened = Number.isNaN(stamp) ? (await fs.stat(dir)).mtimeMs : stamp;
+          if (opened > cutoff || busy.has(key) || activeJobFor(key)) continue;
+          if ((await listChanges(dir)).length) continue;
+          const unpushed = await tryGit(dir, ["rev-list", "--count", "@{upstream}..HEAD"]);
+          if (unpushed === null || unpushed.trim() !== "0") continue;
+          const release = acquire(key, "removing an unused copy");
+          try {
+            await removeWorkspace(key);
+          } finally {
+            release();
+          }
+          console.log(`Removed ${key}: unused for ${UNUSED_DAYS} days, with nothing unpublished.`);
+        } catch (err) {
+          console.error(`Couldn't check unused workspace ${key}:`, err.message);
+        }
+      }
+    }
+  }
+}
 
 async function syncWorkspace(key, info, accessToken) {
   const dir = workspaceDir(key);
@@ -236,6 +378,7 @@ async function syncWorkspace(key, info, accessToken) {
       await fs.rm(dir, { recursive: true, force: true });
       await fs.mkdir(path.dirname(dir), { recursive: true });
       await git(path.dirname(dir), ["clone", "--quiet", info.clone_url, dir], { accessToken });
+      await shareInstalledPackages(key, dir);
     }
     await fs.writeFile(
       metaPath(dir),
@@ -333,6 +476,9 @@ export async function getStatus(key) {
     // "empty": built, but no homepage (the site has no pages yet), so there's nothing to show.
     build: existsSync(path.join(dir, "dist", "index.html")) ? "ready" : existsSync(path.join(dir, "dist")) ? "empty" : "none",
     previewUrl: existsSync(path.join(dir, "dist", "index.html")) ? previewPath(key) : null,
+    // When the preview was last built: the editor's frame reloads only when this changes, not after
+    // every command (a frame reloading under the AI's ongoing work kept "See it" from settling).
+    builtAt: await fs.stat(path.join(dir, "dist", "index.html")).then((s) => Math.round(s.mtimeMs), () => null),
   };
 }
 
@@ -444,9 +590,14 @@ async function pushCatchingUp(dir, target, accessToken) {
   // Keeps the committers of the commits being moved; the names above are only git's requirement.
   if ((await tryGit(dir, [...user, "rebase", "--quiet", "--committer-date-is-author-date", `origin/${target}`])) === null) {
     await tryGit(dir, ["rebase", "--abort"]);
+    // The work goes back to being unpublished changes on top of where it started, so the editor's
+    // Publish can show both versions and let the owner settle them (publish-sync.js).
+    const base = (await git(dir, ["merge-base", "HEAD", `origin/${target}`])).trim();
+    await git(dir, ["reset", "--quiet", "--mixed", base]);
     throw new WorkspaceError(
-      "Your site on GitHub was changed somewhere else, in the same places as your changes here, so they can't be combined automatically. Nothing was lost: open the site's repository on GitHub to see what changed there, or ask for help.",
+      "Someone else published changes to the same parts of your site while you were working. Press Publish again to look at both versions and choose what to keep.",
       409,
+      "publish_clash",
     );
   }
   await git(dir, [...PUSH_ARGS, `HEAD:refs/heads/${target}`], { accessToken });

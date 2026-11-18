@@ -23,7 +23,8 @@ import { setUpNewSite } from "./new-site.js";
 import { enablePages, getSiteSummary } from "./publishing.js";
 import { ImportError, adoptTemplate, importCandidates, inspectRepo } from "./import-site.js";
 import { DeletePermissionError, deleteSite } from "./site-delete.js";
-import { WorkspaceError, assertRepoRef } from "./workspace.js";
+import { WorkspaceError, assertRepoRef, sweepWorkspaces } from "./workspace.js";
+import { editorCookie } from "./routes/helpers.js";
 
 const app = express();
 
@@ -253,7 +254,7 @@ app.use("/api/admin", adminRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/credits", creditsRouter);
 app.use("/api/setup", setupRouter);
-app.use("/api/workspaces", workspacesRouter);
+app.use("/api/workspaces", editorCookie, workspacesRouter);
 app.use("/api/jobs", jobsRouter);
 app.use("/api/preview", previewRouter);
 
@@ -272,6 +273,10 @@ console.log(`Connected to MongoDB (${config.mongo.dbName})`);
 await startClaudeProxy();
 // Watches the app's provider balances and emails the admins before one runs out.
 startProviderMonitor();
+// Per-browser copies of sites nobody has opened for a month, holding nothing unpublished, are removed.
+const sweep = () => sweepWorkspaces().catch((err) => console.error("Workspace sweep failed:", err.message));
+setTimeout(sweep, 10 * 60 * 1000).unref();
+setInterval(sweep, 24 * 60 * 60 * 1000).unref();
 if (!config.platformAnthropicKey) console.log("PLATFORM_ANTHROPIC_KEY isn't set: only accounts with their own Anthropic key can use Claude.");
 
 app.listen(config.port, config.host, () => {
