@@ -35,8 +35,15 @@ app.set("trust proxy", 1);
 // Stripe signs the exact bytes it sends, so its webhook takes the raw body, before JSON parsing.
 app.post("/api/stripe/webhook", express.raw({ type: "application/json", limit: "1mb" }), stripeWebhook);
 const json = express.json();
+// Keeping a proposal sends the whole page back, and converted pages with their
+// inline styles and scripts pass 100kb. 10mb matches Nginx's client_max_body_size.
+const largeJson = express.json({ limit: "10mb" });
+const LARGE_JSON_PATH = /^\/api\/workspaces\/[^/]+\/[^/]+\/proposal\/apply$/;
 const UPLOAD_PATH = /^\/api\/workspaces\/[^/]+\/[^/]+\/(uploads|files|files\/page|html-source|css\/source|scripts|brand\/image|assistant\/attachments)$/;
-app.use((req, res, next) => (UPLOAD_PATH.test(req.path) ? next() : json(req, res, next)));
+app.use((req, res, next) => {
+  if (UPLOAD_PATH.test(req.path)) return next();
+  return (LARGE_JSON_PATH.test(req.path) ? largeJson : json)(req, res, next);
+});
 app.use(cookieParser());
 
 app.get("/api/health", (req, res) => {
