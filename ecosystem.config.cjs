@@ -14,7 +14,7 @@ module.exports = {
       name: "twinstack-web",
       cwd: "./client",
       script: "node_modules/next/dist/bin/next",
-      args: "start -H 127.0.0.1 -p 3000",
+      args: "start -H 127.0.0.1 -p 3100",
       env: { NODE_ENV: "production" },
       max_memory_restart: "400M",
     },

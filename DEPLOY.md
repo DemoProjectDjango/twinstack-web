@@ -9,7 +9,7 @@ This guide takes a **brand-new Ubuntu 24.04 droplet** to a working Twinstack Web
 Everything runs on that one server:
 
 ```
-builder.mydomain.com ──HTTPS──> Nginx ──> Next.js 127.0.0.1:3000 ──┐
+builder.mydomain.com ──HTTPS──> Nginx ──> Next.js 127.0.0.1:3100 ──┐
                                                                    ├──> Express 127.0.0.1:4000 ──> MongoDB 127.0.0.1:27017
 api.mydomain.com ──────HTTPS──> Nginx ─────────────────────────────┘
 ```
@@ -129,7 +129,7 @@ sudo ufw --force enable
 sudo ufw status
 ```
 
-Only SSH, HTTP and HTTPS are open. The app's ports (3000, 4000) and MongoDB (27017) stay private.
+Only SSH, HTTP and HTTPS are open. The app's ports (3100, 4000) and MongoDB (27017) stay private.
 
 Swap stops `npm run build` running out of memory on small servers:
 
@@ -411,7 +411,7 @@ server {
     client_max_body_size 16m;
 
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:3100;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

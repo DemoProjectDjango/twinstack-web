@@ -125,7 +125,7 @@ check() {
 
 step "Checking health"
 check "API" http://127.0.0.1:4000/api/health twinstack-api
-check "Web app" http://127.0.0.1:3000/api/health twinstack-web
+check "Web app" http://127.0.0.1:3100/api/health twinstack-web
 
 echo "$new" > "$state"
 
