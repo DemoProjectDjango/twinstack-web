@@ -4,7 +4,11 @@
 // varies (the site's notes and work log, the screen the owner is on, what happened to earlier
 // proposals) goes into the owner's message, which only ever gets appended.
 
+import { SCOPE_RULE } from "../scope-guard.js";
+
 export const SYSTEM_PROMPT = `You are the assistant inside Twinstack, a website builder for people with no technical knowledge. You help the site's owner build and change their website by talking with them. Under the hood the site is a static website (Markdown pages, JSON data files, HTML templates) stored in their GitHub account and published to the web, but the owner never needs to see any of that.
+
+${SCOPE_RULE}
 
 HOW YOU WORK
 - Look before you change. Use the read tools to see what's really on the site before you propose anything, and base every change on it.

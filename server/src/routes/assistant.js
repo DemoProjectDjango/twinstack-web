@@ -17,6 +17,7 @@ import { TOOLSET_VERSION, applyServerAction } from "../assistant/tools.js";
 import { anthropicClient, runTurn } from "../assistant/turn.js";
 import { DETAILS_FAILED, runDetailsTurn } from "../assistant/details-turn.js";
 import { runQuickTurn } from "../assistant/quick-turn.js";
+import { checkScope, scopeReplyResult } from "../scope-guard.js";
 import {
   archiveConversations,
   createConversation,
@@ -375,10 +376,16 @@ assistantRouter.post(
       let turnModel = model;
       const spending = () => beginSpend({ userId, siteId, runId: turn.id, kind: "assistant", charged: claude.charged });
       try {
+        // Messages clearly not about the website get a short reply and no model turn (scope-guard.js:
+        // lenient, free, and any error lets the message through).
+        if (!continuing && text) {
+          const scope = await checkScope({ text, recent: conversation.display.slice(0, -1), userId, siteId, signal: turn.controller.signal });
+          if (!scope.allowed) result = scopeReplyResult(turn.live);
+        }
         // A small change to one page needs no planning: it becomes the page edit straight away, with
         // no model request (assistant/quick-turn.js); null hands the turn on. Never for a reply to
         // Claude's own question: "a Demo button" answers it, it isn't an edit on its own.
-        if (!continuing && text && !attachments.length && !askedOwner(conversation.display)) {
+        if (!result && !continuing && text && !attachments.length && !askedOwner(conversation.display)) {
           result = await runQuickTurn({ key, text, openPage: page, autoApply, live: turn.live }).catch((err) => {
             console.error("The quick page edit failed, so Claude takes the turn:", err.message);
             return null;

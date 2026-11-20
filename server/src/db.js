@@ -98,6 +98,9 @@ export async function connectDb() {
     workLogForgotten().createIndex({ siteId: 1, line: 1 }, { unique: true }),
     conversations().createIndex({ userId: 1, siteId: 1, archived: 1, updatedAt: -1 }),
     claudeUsage().createIndex({ userId: 1, createdAt: -1 }),
+    scopeBlocks().createIndex({ userId: 1, createdAt: -1 }),
+    // Kept 180 days: enough to spot someone using the assistant as a general chatbot.
+    scopeBlocks().createIndex({ createdAt: 1 }, { expireAfterSeconds: 180 * 24 * 60 * 60 }),
     creditPurchases().createIndex({ userId: 1, createdAt: -1 }),
     creditPurchases().createIndex({ createdAt: -1 }),
     creditPurchases().createIndex({ stripeSessionId: 1 }, { unique: true, partialFilterExpression: { stripeSessionId: { $type: "string" } } }),
@@ -162,6 +165,7 @@ const analyticsSalts = () => db.collection("analyticsSalts");
 const pendingSignups = () => db.collection("pendingSignups");
 const passwordResets = () => db.collection("passwordResets");
 const freeCreditGrants = () => db.collection("freeCreditGrants");
+const scopeBlocks = () => db.collection("scopeBlocks");
 
 /** How long a site's visits are kept (the TTL index on analyticsEvents.at). */
 export const ANALYTICS_RETENTION_DAYS = 365;
@@ -895,6 +899,11 @@ export async function grantGithubCredits(id, githubId) {
   // Granted meanwhile by another request: give the GitHub account back.
   await freeCreditGrants().deleteOne({ _id: githubId, userId: id });
   return null;
+}
+
+/** A message the scope guard (scope-guard.js) turned away as not about the website. */
+export async function recordScopeBlock({ userId, siteId = null, where, text, reason }) {
+  await scopeBlocks().insertOne({ userId, siteId, where, text: String(text).slice(0, 2000), reason: String(reason ?? "").slice(0, 300), createdAt: new Date() });
 }
 
 /**

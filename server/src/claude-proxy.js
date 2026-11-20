@@ -6,6 +6,7 @@ import { OUT_OF_CREDITS, beginSpend, countableRequest } from "./credits.js";
 import { fastModelKey } from "./fast-model.js";
 import { sendToOpenAI } from "./openai-bridge.js";
 import { noteProviderError } from "./provider-health.js";
+import { PROXY_SCOPE_NOTE } from "./scope-guard.js";
 
 // The site's Claude scripts never see the app's Anthropic key: a copy is a repo its owner can
 // change, so its scripts could print any key they're given. Instead a Claude command run on
@@ -94,6 +95,16 @@ function parseEvent(raw) {
   }
 }
 
+/** The request with PROXY_SCOPE_NOTE as the first block of its system prompt. */
+function withScopeNote(request) {
+  const note = { type: "text", text: PROXY_SCOPE_NOTE };
+  const system = request.system;
+  if (system == null || system === "") return { ...request, system: [note] };
+  if (typeof system === "string") return { ...request, system: [note, { type: "text", text: system }] };
+  if (Array.isArray(system)) return { ...request, system: [note, ...system] };
+  return request;
+}
+
 const sse = (event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 
 async function handle(req, res) {
@@ -117,6 +128,11 @@ async function handle(req, res) {
   const requestedModel = request.model ?? null;
   const provider = providerOf(requestedModel);
   if (provider !== "claude" && !fastModelKey(requestedModel)) return sendError(res, 400, "invalid_request_error", `${requestedModel} isn't available on this server.`);
+
+  // Every request the site's scripts make is about the website (scope-guard.js): the note goes first
+  // in the system prompt, whatever the copy's scripts say. The same text every time, so caching holds.
+  request = withScopeNote(request);
+  body = Buffer.from(JSON.stringify(request));
 
   const spend = await beginSpend({ ...grant, kind: "command" });
   if (!spend) return sendError(res, 402, "billing_error", OUT_OF_CREDITS);
