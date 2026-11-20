@@ -130,7 +130,10 @@ export function HomePanel() {
 
 /** The fixed steps, folded like the loaded ones, until those load (or while the AI isn't set up). */
 function FallbackSteps({ steps }: { steps: Step[] }) {
-  const [open, setOpen] = useState(false);
+  const { publishing } = useSite();
+  // Open until the site has gone live, so new owners see where to start; then one line.
+  const [chosen, setOpen] = useState<boolean | null>(null);
+  const open = chosen ?? !publishing.publishing?.enabled;
   const left = steps.filter((s) => !s.done).length;
   return open ? (
     <div className="space-y-3">
@@ -420,6 +423,7 @@ function Preview({
   return (
     <section aria-label="Your site" className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span data-tour="sizes">
         <Segmented
           label="Preview size"
           value={width}
@@ -429,6 +433,7 @@ function Preview({
             { value: "phone", label: "Phone" },
           ]}
         />
+        </span>
         {updating && (
           <span className="flex items-center gap-2 text-sm text-zinc-500">
             <Spinner /> Updating…
@@ -448,7 +453,7 @@ function Preview({
           )}
         </span>
       </div>
-      <div>{steps}</div>
+      <div data-tour="steps">{steps}</div>
 
       {empty && !updating ? (
         <EmptyState
@@ -465,7 +470,9 @@ function Preview({
           Start with the pages the site plan lists (home, about, contact and so on), or add your own one at a time.
         </EmptyState>
       ) : status.previewUrl ? (
-        <EditablePreview dimmed={updating} phone={width === "phone"} onPath={setShownPath} />
+        <div data-tour="preview">
+          <EditablePreview dimmed={updating} phone={width === "phone"} onPath={setShownPath} />
+        </div>
       ) : (
         <div className="flex h-60 items-center justify-center gap-3 rounded-md border border-dashed border-zinc-300 text-sm text-zinc-500 dark:border-zinc-700">
           {updating ? (

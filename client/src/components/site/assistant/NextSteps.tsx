@@ -316,14 +316,16 @@ const OPEN_LABELS: Partial<Record<SiteSection, string>> = { design: "Open Look &
 
 /** The steps with a progress bar, or `fallback` until they're loaded (and when Claude isn't set up, since most steps ask Claude). */
 export function HomeNextSteps({ fallback }: { fallback: ReactNode }) {
-  const { claude, showSection } = useSite();
+  const { claude, showSection, publishing } = useSite();
   const { actions, send, fillDraft } = useAssistant();
   const data = useNextSteps(true, Object.values(actions).filter((a) => a.status === "applied").length);
   const { skipped, toggle } = useSkipped();
   const { workingOn, setWorkingOn, running } = useWorkingOn();
   const [all, setAll] = useState(false);
-  // Only the progress until the owner opens the steps.
-  const [open, setOpen] = useState(false);
+  // Open until the site has gone live, so new owners see where to start; after that one line
+  // until the owner opens it.
+  const [chosen, setOpen] = useState<boolean | null>(null);
+  const open = chosen ?? !publishing.publishing?.enabled;
   if (!data || !data.steps.length || !claude.ready) return <>{fallback}</>;
 
   const { todo, done, putOff, doneCount, total, percent } = arrange(data, skipped);

@@ -40,6 +40,7 @@ import { FilesPanel } from "./FilesPanel";
 import { ScriptsPanel } from "./ScriptsPanel";
 import { StylesPanel } from "./StylesPanel";
 import { TreePanel } from "./TreePanel";
+import { Tour, startTour } from "./Tour";
 import { Button, ErrorText, Notice, ScreenHeader, Spinner } from "./ui";
 
 const MAIN: { id: SiteSection; label: string; hint: string }[] = [
@@ -692,7 +693,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
                 <h1 className="mt-0.5 line-clamp-2 text-xl font-bold tracking-tight">{siteTitle(overview?.site.name, overview?.displayName, repo)}</h1>
               </div>
             </div>
-          <nav aria-label="Site editor" className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
+          <nav aria-label="Site editor" data-tour="menu" className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
             {/* Small screens: one button opens the list, so the menu doesn't push the page down. */}
             <button
               type="button"
@@ -722,7 +723,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
               </div>
               <ul className="space-y-0.5">
                 {main.map((item) => (
-                  <li key={item.id}>
+                  <li key={item.id} data-tour={`nav-${item.id}`}>
                     <NavButton
                       active={section === item.id}
                       // Pages again, while a page is open: back to the list.
@@ -747,6 +748,22 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
                 >
                   More tools
                 </NavButton>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    startTour();
+                  }}
+                  title={navCollapsed ? "Take a tour" : "A quick look at everything the builder can do"}
+                  aria-label={navCollapsed ? "Take a tour" : undefined}
+                  className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-foreground dark:text-zinc-400 dark:hover:bg-zinc-900 ${navCollapsed ? "lg:justify-center lg:px-0" : ""}`}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" className="size-[19px] shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="m15.5 8.5-2 5-5 2 2-5 5-2Z" />
+                  </svg>
+                  <span className={navCollapsed ? "lg:sr-only" : ""}>Take a tour</span>
+                </button>
               </div>
             </div>
           </nav>
@@ -763,7 +780,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
             {/* The screen on its white card; the AI bar floats below it on the page's grey. The AI's
                 loader covers only this card, so the header and the menu stay usable while it works. */}
             <div className="relative">
-            <div className="space-y-6 rounded-2xl bg-background p-4 shadow-sm sm:p-6">
+            <div data-tour="screen" className="space-y-6 rounded-2xl bg-background p-4 shadow-sm sm:p-6">
               <SiteNotices onReset={resetToDefault} onShowIncoming={incoming ? () => setIncomingOpen(true) : null} />
               {incoming && incomingOpen && (
                 <GitHubChangesModal owner={owner} repo={repo} incoming={incoming} onAccepted={(result) => void incomingAccepted(result)} onClose={() => setIncomingOpen(false)} />
@@ -882,6 +899,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
       </Frame>
       <AssistantPanel />
       <FirstRunSetup />
+      <Tour active={section === "home"} />
       </AssistantProvider>
     </SiteContext.Provider>
   );
@@ -915,7 +933,7 @@ function AiBar() {
 }
 
 function TopBar() {
-  const { status, busy, publishing: state, publishNow, showSection } = useSite();
+  const { owner, repo, status, busy, publishing: state, publishNow, showSection } = useSite();
   const { open: chatOpen, setOpen: setChatOpen, turn } = useAssistant();
   const aiWorking = turn?.status === "running";
   const publishing = state.publishing;
@@ -940,6 +958,25 @@ function TopBar() {
   }
 
   const { available, working, publish, asking, go, cancel } = publishNow;
+  // The first time a site has unpublished changes, say once that Publish is what makes them live.
+  const nudgeKey = `twinstack:publish-nudge:${owner}/${repo}`;
+  const [nudgeDismissed, setNudgeDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(nudgeKey) === "1";
+    } catch {
+      return true;
+    }
+  });
+  const dismissNudge = () => {
+    setNudgeDismissed(true);
+    try {
+      localStorage.setItem(nudgeKey, "1");
+    } catch {
+      // Shown again next visit.
+    }
+  };
+  const showNudge = changes > 0 && status.onDefaultBranch && !nudgeDismissed && !asking && working === null && !chatOpen;
+
   const label = working === "checking" ? "Checking your site…" : working === "publishing" ? "Publishing…" : status.onDefaultBranch ? "Publish" : "Add to the review";
 
   return (
@@ -958,6 +995,7 @@ function TopBar() {
         type="button"
         onClick={() => setChatOpen(!chatOpen)}
         aria-pressed={chatOpen}
+        data-tour="chat"
         className={`flex h-10 items-center gap-2 rounded-xl px-3.5 text-sm font-semibold transition-colors ${
           chatOpen
             ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200"
@@ -970,15 +1008,31 @@ function TopBar() {
         {chatOpen ? "Hide chat" : "Chat with the AI"}
         {aiWorking && !chatOpen && <span className="size-2 animate-pulse rounded-full bg-indigo-500 motion-reduce:animate-none" aria-label="The AI is working" />}
       </button>
+      <div className="relative">
       <button
         type="button"
+        data-tour="publish"
         disabled={!available || busy || working !== null}
-        onClick={() => void publish()}
+        onClick={() => {
+          dismissNudge();
+          void publish();
+        }}
         className="flex h-10 items-center gap-2 rounded-xl bg-indigo-700 px-5 text-sm font-bold text-white hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {working && <Spinner />}
         {label}
       </button>
+      {showNudge && (
+        <div role="status" className="absolute right-0 top-12 z-40 w-72 rounded-2xl bg-zinc-900 p-4 text-sm text-white shadow-xl dark:bg-zinc-100 dark:text-zinc-900">
+          <span aria-hidden="true" className="absolute -top-1.5 right-8 size-3 rotate-45 bg-zinc-900 dark:bg-zinc-100" />
+          <p className="font-semibold">Your changes aren&apos;t on your website yet</p>
+          <p className="mt-1 opacity-80">They&apos;re saved here, but visitors only see them once you press Publish.</p>
+          <button type="button" onClick={dismissNudge} className="mt-3 font-semibold underline">
+            Got it
+          </button>
+        </div>
+      )}
+      </div>
       {asking && <PublishNote changes={changes} onPublish={(note) => void go(note)} onCancel={cancel} />}
     </div>
   );
