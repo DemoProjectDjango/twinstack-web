@@ -126,7 +126,7 @@ function PageList() {
         .filter((c) => c.pages.length > 0)
         .map((collection) => (
           <section key={collection.name} aria-label={collection.label}>
-            <h3 className="mb-2 text-sm font-medium text-zinc-500">{collection.label}</h3>
+            <h3 className="mb-2 text-sm font-medium text-zinc-500">{collectionHeading(collection.label, collections.length)}</h3>
             <ul className="divide-y overflow-y-auto max-h-[25rem] divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
               {sortPages(collection.pages).map((page) => (
                 <PageRow key={page.file} page={page} unlinked={unlinkedFiles.has(page.file)} nav={nav} onNavChanged={() => setNavTick((t) => t + 1)} />
@@ -515,4 +515,12 @@ function PageEditor({ file, mode, onClose }: { file: string; mode: PageEditMode;
       )}
     </div>
   );
+}
+
+/** A collection's heading in words an owner uses: its label is often just its folder ("pages", "blog"). */
+function collectionHeading(label: string, count: number) {
+  const name = label.trim().toLowerCase();
+  if (count === 1 || name === "pages" || name === "page") return "Your pages";
+  if (["blog", "posts", "post", "articles", "news"].includes(name)) return "Blog posts";
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }

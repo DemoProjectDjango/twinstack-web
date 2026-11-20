@@ -58,6 +58,8 @@ export function reasonOf(output: string) {
 }
 
 export function OriginalPages() {
+  // Once everything is in and live, the list folds to one line; this opens it again.
+  const [showDone, setShowDone] = useState(false);
   const { owner, repo, version, overview, busy, claude, runAndWait, setStatus, refresh, showOnSite, publishing, publishNow } = useSite();
   const [pages, setPages] = useState<OriginalPage[] | null>(null);
   const [working, setWorking] = useState<string | null>(null);
@@ -262,18 +264,32 @@ export function OriginalPages() {
     }
   }
 
+  // Nothing left to do here: every page is in, nothing is running or failed, and the new site is live.
+  const finished = left.length === 0 && !progress && !oldSiteLive && Object.keys(failed).length === 0;
+  if (finished && !showDone) {
+    return (
+      <button type="button" onClick={() => setShowDone(true)} aria-expanded={false} className="text-sm text-zinc-500 hover:text-foreground hover:underline">
+        ✓ All {pages.length} {pages.length === 1 ? "page" : "pages"} from your old site are brought in ›
+      </button>
+    );
+  }
+
   return (
     <section aria-label="Your existing pages" className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h3 className="font-medium">Your existing pages</h3>
+          <h3 className="font-medium">Pages from your old site</h3>
           <p className="mt-0.5 text-sm text-zinc-500">
             {left.length
               ? `${left.length} of ${pages.length} pages from your repository still need bringing in. Each keeps its look and can then be changed on every screen.`
               : "Every page from your repository is in your site."}
           </p>
         </div>
-        {progress ? (
+        {finished ? (
+          <Button variant="ghost" onClick={() => setShowDone(false)}>
+            Hide
+          </Button>
+        ) : progress ? (
           <Button variant="ghost" disabled={stopping} onClick={stop} title="The page being brought in now finishes first.">
             {stopping ? "Stopping after this page…" : "Stop"}
           </Button>
