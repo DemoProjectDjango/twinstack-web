@@ -94,6 +94,36 @@ html {
   --toastify-font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
+/* Wide enough that a sentence or two fits in the two lines below (react-toastify's own CSS loads later). */
+.Toastify .Toastify__toast-container {
+  --toastify-toast-width: min(420px, calc(100vw - 32px));
+  width: var(--toastify-toast-width);
+}
+
+/*
+ * A toast's text is at most two lines; longer text ends in "…" and shows in full while the pointer
+ * is on the toast or it has focus (it pauses then too, so there's time to read it).
+ */
+.Toastify__toast {
+  font-size: 0.875rem;
+  line-height: 1.35;
+}
+.toast-text {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.Toastify__toast:hover .toast-text,
+.Toastify__toast:focus-within .toast-text {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

@@ -5,6 +5,7 @@ import { describeChange } from "@/lib/change-labels";
 import { confirmModal } from "@/lib/confirm";
 import { ApiError, api, workspacePath, type FileDiff, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
 import { DomainSettings } from "./DomainSettings";
+import { PreviousVersions } from "./PreviousVersions";
 import { markVisited, wasVisited } from "./HomePanel";
 import { confirmSamples, publishMessage } from "./site-hooks";
 import { SiteDetailsStep } from "./SiteDetailsStep";
@@ -361,6 +362,8 @@ export function ChangesPanel() {
           )}
         </Section>
       )}
+
+      <PreviousVersions />
 
       {publishing.publishing?.enabled && publishing.publishing.canConfigure && (
         <Section title="Your web address" description="Your site is on a free github.io address. You can use your own domain name instead (also on the menu's Your domain).">

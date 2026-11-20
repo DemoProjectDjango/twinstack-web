@@ -82,6 +82,7 @@ import { readMissingPages } from "../missing-pages.js";
 import { editPreviewText } from "../text-edit.js";
 import { claudeResolver, getUpdateStatus, siteUpdateSteps, undoSiteUpdate } from "../site-update.js";
 import { readTemplateFile, templateToken } from "../sites.js";
+import { listVersions, restoreVersion } from "../versions.js";
 import {
   WorkspaceError,
   acquire,
@@ -840,6 +841,34 @@ workspacesRouter.post(
     let result;
     try {
       result = await undoSiteUpdate({ key, accessToken });
+    } finally {
+      release();
+    }
+    res.json({ ...result, status: await getStatus(key) });
+  }),
+);
+
+/* Earlier published versions, and restoring one as unpublished changes (versions.js). */
+
+workspacesRouter.get(
+  "/:owner/:repo/versions",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const accessToken = await getAccessToken(req, res);
+    // Only reads (and fetches), so it doesn't wait for the preview build.
+    res.json(await listVersions({ key, accessToken }));
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/versions/restore",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const accessToken = await getAccessToken(req, res);
+    const release = acquire(key, "restoring an earlier version");
+    let result;
+    try {
+      result = await restoreVersion({ key, accessToken, sha: req.body?.sha });
     } finally {
       release();
     }

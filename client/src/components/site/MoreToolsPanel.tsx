@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, workspacePath, type StaticSection } from "@/lib/site-api";
 import { useSite, type SiteSection } from "./site-context";
+import { showEarlierVersions } from "./PreviousVersions";
 import { ScreenHeader } from "./ui";
 
 /** The tools most owners never need, each one click from the menu's "More tools". */
@@ -57,6 +58,17 @@ export function MoreToolsPanel() {
             </button>
           </li>
         ))}
+        {/* Lives on What's changed (not a tool screen of its own), so it isn't in MORE_TOOLS. */}
+        <li>
+          <button
+            type="button"
+            onClick={() => showEarlierVersions(showSection)}
+            className="h-full w-full rounded-lg border border-zinc-200 p-4 text-left transition hover:border-zinc-400 hover:shadow-sm dark:border-zinc-800 dark:hover:border-zinc-600"
+          >
+            <span className="block font-medium">Earlier versions</span>
+            <span className="mt-1 block text-sm text-zinc-600 dark:text-zinc-400">Go back to one of the last 5 versions of your site you published</span>
+          </button>
+        </li>
       </ul>
     </div>
   );

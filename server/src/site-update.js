@@ -160,7 +160,7 @@ function globPattern(glob) {
   return new RegExp(`^${re}$`);
 }
 
-function readManifest(text) {
+export function readManifest(text) {
   const raw = safeJson(text);
   if (!raw || typeof raw !== "object") throw new Error(`The update's ${MANIFEST} isn't valid JSON.`);
   const list = (value) => (Array.isArray(value) ? value.filter((v) => typeof v === "string" && v) : []);
@@ -173,7 +173,7 @@ function readManifest(text) {
   };
 }
 
-function ownerOf(manifest, file) {
+export function ownerOf(manifest, file) {
   if (manifest.keepDesigned.has(file)) return "designed";
   if (file === manifest.packages) return "packages";
   if (manifest.site.some((re) => re.test(file))) return "site";
