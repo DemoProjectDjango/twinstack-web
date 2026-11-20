@@ -75,6 +75,8 @@ export type SitePage = {
   address?: string | null;
   draft: boolean;
   date: string | null;
+  /** When the page last changed (ISO): its last commit, or its file's time with unsaved changes. Absent from older servers. */
+  changed?: string | null;
 };
 
 /**

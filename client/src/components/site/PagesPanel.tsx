@@ -122,18 +122,9 @@ function PageList() {
 
       {pageCount > 0 && <PageHealth health={health} onOpen={(file) => void editFile(file, "generate")} />}
 
-      {collections
-        .filter((c) => c.pages.length > 0)
-        .map((collection) => (
-          <section key={collection.name} aria-label={collection.label}>
-            <h3 className="mb-2 text-sm font-medium text-zinc-500">{collectionHeading(collection.label, collections.length)}</h3>
-            <ul className="divide-y overflow-y-auto max-h-[25rem] divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-              {sortPages(collection.pages).map((page) => (
-                <PageRow key={page.file} page={page} unlinked={unlinkedFiles.has(page.file)} nav={nav} onNavChanged={() => setNavTick((t) => t + 1)} />
-              ))}
-            </ul>
-          </section>
-        ))}
+      {pageCount > 0 && (
+        <FindablePages collections={collections} nav={nav} unlinkedFiles={unlinkedFiles} onNavChanged={() => setNavTick((t) => t + 1)} onAdd={() => setAdding(true)} />
+      )}
 
       {pageCount > 0 && (
         <p className="text-sm text-zinc-500">
@@ -148,12 +139,375 @@ function PageList() {
   );
 }
 
-/** The homepage first, then by title. */
-function sortPages(pages: SitePage[]) {
-  return [...pages].sort((a, b) => Number(isHomePage(b)) - Number(isHomePage(a)) || a.title.localeCompare(b.title));
+type Collection = { name: string; label: string; pages: SitePage[] };
+type PageFilter = "all" | "pages" | "posts" | "hidden";
+type PageSort = "az" | "za" | "recent" | "newest";
+
+/** A list of dated articles (a blog, news), rather than the site's main pages. */
+function isPostList(collection: Collection) {
+  const words = `${collection.name} ${collection.label}`.toLowerCase();
+  return /blog|post|news|article|insight/.test(words) || (collection.pages.length > 0 && collection.pages.every((p) => p.date));
 }
 
-function pageAddress(page: SitePage) {
+/** A date range over one of the page's dates: "changed" (last change) or "date" (a post's date). Days as YYYY-MM-DD, "" for open. */
+type DateRange = { field: "changed" | "date"; from: string; to: string };
+const NO_RANGE: DateRange = { field: "changed", from: "", to: "" };
+
+/** YYYY-MM-DD of today minus `days`, in the owner's own time zone. */
+function daysAgo(days: number) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return localDay(d);
+}
+function localDay(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Whether the page's chosen date is inside the range (both ends included). A page without that date is left out. */
+function inRange(page: SitePage, range: DateRange) {
+  if (!range.from && !range.to) return true;
+  const value = range.field === "changed" ? page.changed : page.date;
+  if (!value) return false;
+  // A post's date may be just "2026-08-25"; a change is a full time, compared as the owner's own day.
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : Number.isNaN(Date.parse(value)) ? value.slice(0, 10) : localDay(new Date(value));
+  return (!range.from || day >= range.from) && (!range.to || day <= range.to);
+}
+
+// A long list of posts shows this many until "Show all".
+const FOLDED = 10;
+
+const time = (iso: string | null | undefined) => (iso ? Date.parse(iso) || 0 : 0);
+
+/**
+ * Name A–Z or Z–A (the homepage first either way), the page changed most recently first, or posts by
+ * their date, newest first (undated pages after them, A–Z).
+ */
+function sortPages(pages: SitePage[], sort: PageSort = "az") {
+  const home = (a: SitePage, b: SitePage) => Number(isHomePage(b)) - Number(isHomePage(a));
+  const az = (a: SitePage, b: SitePage) => a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true });
+  const sorted = [...pages];
+  if (sort === "recent") return sorted.sort((a, b) => time(b.changed) - time(a.changed) || az(a, b));
+  if (sort === "newest") return sorted.sort((a, b) => time(b.date) - time(a.date) || az(a, b));
+  if (sort === "za") return sorted.sort((a, b) => home(a, b) || az(b, a));
+  return sorted.sort((a, b) => home(a, b) || az(a, b));
+}
+
+/** Whether a search matches the page: every word in its title or address. */
+function matches(page: SitePage, query: string) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const text = `${page.title} ${pageAddress(page)} ${page.slug}`.toLowerCase();
+  return words.every((word) => text.includes(word));
+}
+
+/** `text` with the parts the search matched in bold. */
+export function Highlight({ text, query }: { text: string; query: string }) {
+  const words = query.trim().split(/\s+/).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!words.length) return <>{text}</>;
+  const parts = text.split(new RegExp(`(${words.join("|")})`, "gi"));
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <mark key={i} className="rounded-sm bg-amber-200 px-0.5 text-inherit dark:bg-amber-500/40">
+            {part}
+          </mark>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
+/** The header's button (like "Contact us") links to the page. */
+function isMenuButton(page: SitePage, nav: NavigationInfo | null) {
+  const cta = nav?.navigation.header.cta;
+  if (!nav || !cta?.url) return false;
+  const navPage = nav.pages.find((p) => p.file === page.file);
+  return sameAddress(cta.url, navPage?.url ?? pageAddress(page));
+}
+
+
+/**
+ * Every list of pages, with a search over all of them, filters (main pages, posts, hidden, not in
+ * the menu) and a sort. A long list of posts shows its first ten until "Show all".
+ */
+function FindablePages({
+  collections,
+  nav,
+  unlinkedFiles,
+  onNavChanged,
+  onAdd,
+}: {
+  collections: Collection[];
+  nav: NavigationInfo | null;
+  unlinkedFiles: Set<string>;
+  onNavChanged: () => void;
+  onAdd: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<PageFilter>("all");
+  const [sort, setSort] = useState<PageSort>("az");
+  const [unfolded, setUnfolded] = useState<Set<string>>(new Set());
+  const [range, setRange] = useState<DateRange>(NO_RANGE);
+  const [rangeOpen, setRangeOpen] = useState(false);
+
+  const lists = collections.filter((c) => c.pages.length > 0);
+  const total = lists.reduce((n, c) => n + c.pages.length, 0);
+  const hasPosts = lists.some(isPostList);
+  const hasMain = lists.some((c) => !isPostList(c));
+  const hasHidden = lists.some((c) => c.pages.some((p) => p.draft));
+  const canDate = lists.some((c) => c.pages.some((p) => p.changed));
+  const hasDated = lists.some((c) => c.pages.some((p) => p.date));
+  // Short sites don't need the tools.
+  const showTools = total > 6 || query !== "" || filter !== "all";
+
+  const shown = lists
+    .filter((c) => (filter === "pages" ? !isPostList(c) : filter === "posts" ? isPostList(c) : true))
+    .map((c) => {
+      const pages = c.pages.filter(
+        (p) =>
+          (!query.trim() || matches(p, query)) &&
+          inRange(p, range) &&
+          (filter !== "hidden" || p.draft),
+      );
+      return { collection: c, pages: sortPages(pages, sort) };
+    })
+    .filter((l) => l.pages.length > 0);
+  const found = shown.reduce((n, l) => n + l.pages.length, 0);
+  const ranged = Boolean(range.from || range.to);
+  const narrowed = query.trim() !== "" || filter !== "all" || ranged;
+  const canRange = canDate || hasDated;
+  // The words on the Dates button: the range chosen, or just "Dates".
+  const short = (day: string) => new Date(`${day}T00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  const rangeLabel = ranged ? (range.from && range.to ? `${short(range.from)} – ${short(range.to)}` : range.from ? `From ${short(range.from)}` : `Until ${short(range.to)}`) : "Dates";
+  const presets = [
+    { label: "Last 7 days", from: daysAgo(7) },
+    { label: "Last 30 days", from: daysAgo(30) },
+    { label: "Last 3 months", from: daysAgo(91) },
+    { label: "This year", from: `${new Date().getFullYear()}-01-01` },
+  ];
+
+  const filters: { value: PageFilter; label: string; hint: string; when: boolean }[] = [
+    { value: "all", label: "All pages", hint: "Every page of your site.", when: true },
+    { value: "pages", label: "Main pages", hint: "Your main pages, like Home, About and Contact, without the blog posts.", when: hasPosts && hasMain },
+    { value: "posts", label: "Blog posts", hint: "Only your blog posts and articles.", when: hasPosts && hasMain },
+    { value: "hidden", label: "Hidden", hint: "Pages you've hidden from visitors: they're not on your live site.", when: hasHidden || filter === "hidden" },
+  ];
+  const chosen = filters.find((f) => f.value === filter);
+  const visibleFilters = filters.filter((f) => f.when);
+
+  return (
+    <div className="space-y-5">
+      {showTools && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-0 flex-1 basis-60">
+              <svg viewBox="0 0 24 24" aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
+              </svg>
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+                placeholder="Search your pages by title or address"
+                aria-label="Search your pages"
+                className={`${inputClass} pl-9`}
+              />
+            </div>
+            {canRange && (
+              <button
+                type="button"
+                aria-expanded={rangeOpen}
+                onClick={() => setRangeOpen(!rangeOpen)}
+                className={`flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm ${
+                  ranged ? "border-indigo-300 bg-indigo-50 text-indigo-800 dark:border-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200" : "border-zinc-300 text-zinc-600 hover:border-zinc-400 dark:border-zinc-700 dark:text-zinc-300"
+                }`}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="5" width="18" height="16" rx="2" />
+                  <path d="M3 10h18M8 3v4M16 3v4" />
+                </svg>
+                {rangeLabel}
+              </button>
+            )}
+            <label className="flex items-center gap-2 text-sm text-zinc-500">
+              Sort
+              <select value={sort} onChange={(e) => setSort(e.target.value as PageSort)} className={`${inputClass} w-auto py-1.5`}>
+                <option value="az">Name, A to Z</option>
+                <option value="za">Name, Z to A</option>
+                {canDate && <option value="recent">Last changed first</option>}
+                {hasDated && <option value="newest">Newest posts first</option>}
+              </select>
+            </label>
+          </div>
+          {rangeOpen && canRange && (
+            <div className="space-y-3 rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+              {canDate && hasDated && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-zinc-500">Pages by</span>
+                  <Segmented
+                    label="Which date"
+                    value={range.field}
+                    onChange={(field) => setRange({ ...range, field })}
+                    options={[
+                      { value: "changed", label: "When they were last changed" },
+                      { value: "date", label: "Post date" },
+                    ]}
+                  />
+                </div>
+              )}
+              <div className="flex flex-wrap gap-1.5">
+                {presets.map((preset) => {
+                  const active = range.from === preset.from && !range.to;
+                  return (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setRange({ field: canDate ? range.field : "date", from: preset.from, to: "" })}
+                      className={`rounded-full px-3 py-1 text-xs font-medium ${
+                        active ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="space-y-1">
+                  <span className="block text-xs text-zinc-500">From</span>
+                  <input
+                    type="date"
+                    value={range.from}
+                    max={range.to || undefined}
+                    onChange={(e) => setRange({ ...range, field: canDate ? range.field : "date", from: e.target.value })}
+                    className={`${inputClass} w-auto py-1.5`}
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="block text-xs text-zinc-500">To</span>
+                  <input
+                    type="date"
+                    value={range.to}
+                    min={range.from || undefined}
+                    onChange={(e) => setRange({ ...range, field: canDate ? range.field : "date", to: e.target.value })}
+                    className={`${inputClass} w-auto py-1.5`}
+                  />
+                </label>
+                {ranged && (
+                  <Button variant="ghost" onClick={() => setRange({ ...NO_RANGE, field: range.field })}>
+                    Clear dates
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-zinc-500">
+                {(canDate ? range.field : "date") === "changed"
+                  ? "Shows the pages changed between these days, published or not."
+                  : "Shows the blog posts dated between these days. Pages without a date are left out."}
+              </p>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Show">
+            {/* "All pages" alone isn't a choice: the buttons show only when there's another one. */}
+            {visibleFilters.length > 1 &&
+              visibleFilters.map((f) => (
+                <button
+                  key={f.value}
+                  type="button"
+                  aria-pressed={filter === f.value}
+                  title={f.hint}
+                  onClick={() => setFilter(f.value)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    filter === f.value
+                      ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                      : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            {narrowed && (
+              <span role="status" className="ml-auto text-xs text-zinc-500">
+                {found} of {total} {total === 1 ? "page" : "pages"}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showTools && filter !== "all" && chosen && <p className="-mt-2 text-xs text-zinc-500">{chosen.hint}</p>}
+
+      {found === 0 && (
+        <div className="rounded-lg border border-dashed border-zinc-300 p-6 text-center text-sm text-zinc-500 dark:border-zinc-700">
+          {query.trim() ? <>No page matches “{query.trim()}”.</> : ranged ? "No pages in those dates." : "No pages here."}{" "}
+          <button
+            type="button"
+            className="underline"
+            onClick={() => {
+              setQuery("");
+              setFilter("all");
+              setRange({ ...NO_RANGE, field: range.field });
+            }}
+          >
+            Show all pages
+          </button>
+          {query.trim() && (
+            <>
+              {" or "}
+              <button type="button" className="underline" onClick={onAdd}>
+                add a new page
+              </button>
+            </>
+          )}
+          .
+        </div>
+      )}
+
+      {shown.map(({ collection, pages }) => {
+        const posts = isPostList(collection);
+        // Searching or filtering shows every match; otherwise a long list of posts is folded.
+        const folded = posts && !narrowed && !unfolded.has(collection.name) && pages.length > FOLDED;
+        const visible = folded ? pages.slice(0, FOLDED) : pages;
+        return (
+          <section key={collection.name} aria-label={collection.label}>
+            <h3 className="mb-2 flex items-baseline gap-2 text-sm font-medium text-zinc-500">
+              {collectionHeading(collection.label, collections.length)}
+              <span className="text-xs font-normal text-zinc-400">{pages.length}</span>
+            </h3>
+            <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+              {visible.map((page) => (
+                <PageRow key={page.file} page={page} query={query} unlinked={unlinkedFiles.has(page.file)} nav={nav} onNavChanged={onNavChanged} />
+              ))}
+            </ul>
+            {posts && !narrowed && pages.length > FOLDED && (
+              <button
+                type="button"
+                className="mt-2 text-sm font-medium text-zinc-600 hover:underline dark:text-zinc-400"
+                aria-expanded={!folded}
+                onClick={() =>
+                  setUnfolded((current) => {
+                    const next = new Set(current);
+                    if (next.has(collection.name)) next.delete(collection.name);
+                    else next.add(collection.name);
+                    return next;
+                  })
+                }
+              >
+                {folded ? `Show all ${pages.length} ▾` : "Show fewer ▴"}
+              </button>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+export function pageAddress(page: SitePage) {
   if (isHomePage(page)) return "/";
   return page.address ?? page.url ?? `/${page.slug}`;
 }
@@ -194,7 +548,7 @@ function navigationWith(nav: NavigationInfo, items: NavItem[]) {
  * header menu or take it out, hide it from visitors or show it again, delete it. Each change is an
  * ordinary unpublished change, undone on What's changed until it's published.
  */
-function PageRow({ page, unlinked, nav, onNavChanged }: { page: SitePage; unlinked: boolean; nav: NavigationInfo | null; onNavChanged: () => void }) {
+function PageRow({ page, query = "", unlinked, nav, onNavChanged }: { page: SitePage; query?: string; unlinked: boolean; nav: NavigationInfo | null; onNavChanged: () => void }) {
   const { owner, repo, overview, busy, editFile, showOnSite, setStatus, refresh } = useSite();
   const [open, setOpen] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
@@ -267,14 +621,19 @@ function PageRow({ page, unlinked, nav, onNavChanged }: { page: SitePage; unlink
     <li className="px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1">
-          <span className="mr-2 font-medium">{page.title}</span>
+          <span className="mr-2 font-medium">
+            <Highlight text={page.title} query={query} />
+          </span>
           <span className="inline-flex flex-wrap items-center gap-1.5 align-middle">
             {home && <Badge>Homepage</Badge>}
             {page.draft && <Badge>Hidden</Badge>}
             {inMenu && <Badge>In the menu</Badge>}
+            {!inMenu && isMenuButton(page, nav) && <Badge>Menu button</Badge>}
             {unlinked && <Badge>Not linked from anywhere</Badge>}
           </span>
-          <span className="block truncate text-xs text-zinc-500">{address}</span>
+          <span className="block truncate text-xs text-zinc-500">
+            <Highlight text={address} query={query} />
+          </span>
         </div>
         <Button onClick={() => showOnSite(address)}>Edit on site</Button>
         <Button onClick={() => void editFile(page.file, "generate")}>Edit page</Button>

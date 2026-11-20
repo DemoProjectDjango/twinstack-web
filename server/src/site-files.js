@@ -12,7 +12,7 @@ import {
   replaceWorkLogLine,
 } from "./db.js";
 import { syncSiteTree, updateSiteTree } from "./site-tree-sync.js";
-import { PREVIEW_ROOTS, WorkspaceError, acquire, mergeFile, previewPath, siteIdFor, workspaceDir } from "./workspace.js";
+import { PREVIEW_ROOTS, WorkspaceError, acquire, mergeFile, previewPath, siteIdFor, tryGit, workspaceDir } from "./workspace.js";
 
 // Reads and writes the site's own data files. Everything here parses files
 // directly; repo code is never imported into the server process.
@@ -109,6 +109,32 @@ export async function listFiles(dir, extension, base = dir) {
   return out.sort();
 }
 
+/**
+ * When each file under `dirs` last changed, as ISO dates by repo path: the newest commit that touched
+ * it, or its modified time when it has changes not yet committed. Empty when git can't tell.
+ */
+async function lastChanged(dir, dirs) {
+  const out = new Map();
+  if (!dirs.length) return out;
+  const log = await tryGit(dir, ["log", "--max-count=3000", "--format=%x00%cI", "--name-only", "--", ...dirs]);
+  let date = null;
+  for (const line of (log ?? "").split("\n")) {
+    if (line.startsWith("\0")) date = line.slice(1).trim();
+    else if (line.trim() && date && !out.has(line.trim())) out.set(line.trim(), date);
+  }
+  const status = await tryGit(dir, ["status", "--porcelain", "--untracked-files=all", "--", ...dirs]);
+  for (const line of (status ?? "").split("\n")) {
+    const file = line.slice(3).trim().replace(/^"|"$/g, "");
+    if (!file || line.startsWith(" D") || line.startsWith("D ")) continue;
+    try {
+      out.set(file.split(" -> ").pop(), (await fs.stat(path.join(dir, file.split(" -> ").pop()))).mtime.toISOString());
+    } catch {
+      // Gone since: the log's date stands.
+    }
+  }
+  return out;
+}
+
 /** Collections, their pages and the files Claude may edit. (The header and footer are in navigation.js.) */
 export async function getOverview(key) {
   const dir = workspaceDir(key);
@@ -122,6 +148,12 @@ export async function getOverview(key) {
   }
 
   const collections = [];
+  const changedAt = await lastChanged(
+    dir,
+    Object.values(site.collections ?? {})
+      .map((c) => c?.dir)
+      .filter((d) => typeof d === "string"),
+  );
   for (const [name, collection] of Object.entries(site.collections ?? {})) {
     if (typeof collection?.dir !== "string") continue;
     const collectionDir = inside(dir, collection.dir);
@@ -142,6 +174,8 @@ export async function getOverview(key) {
         address: fields.url || (typeof collection.urlPattern === "string" ? applyUrlPattern(collection.urlPattern, builtSlug) : null),
         draft: fields.draft === "true",
         date: fields.date || null,
+        // When the page was last changed (its last commit, or now-ish when it has unsaved changes), for sorting.
+        changed: changedAt.get(`${collection.dir}/${file}`) ?? null,
       });
     }
     collections.push({ name, dir: collection.dir, label: collection.index?.label ?? name, pages });

@@ -41,6 +41,7 @@ import { ScriptsPanel } from "./ScriptsPanel";
 import { StylesPanel } from "./StylesPanel";
 import { TreePanel } from "./TreePanel";
 import { Tour, startTour } from "./Tour";
+import { PageFinder, finderShortcut, openPageFinder } from "./PageFinder";
 import { Button, ErrorText, Notice, ScreenHeader, Spinner } from "./ui";
 
 const MAIN: { id: SiteSection; label: string; hint: string }[] = [
@@ -737,6 +738,25 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
                   </li>
                 ))}
               </ul>
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  openPageFinder();
+                }}
+                title={`Find any page of your site (${finderShortcut()})`}
+                aria-label={navCollapsed ? "Find a page" : undefined}
+                className={`mt-2 flex h-10 w-full items-center gap-3 rounded-xl border border-zinc-200 px-3 text-left text-sm text-zinc-500 transition-colors hover:border-zinc-300 hover:text-foreground dark:border-zinc-800 dark:hover:border-zinc-700 ${navCollapsed ? "lg:justify-center lg:px-0" : ""}`}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" className="size-[17px] shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.5-3.5" />
+                </svg>
+                <span className={`flex-1 ${navCollapsed ? "lg:sr-only" : ""}`}>Find a page</span>
+                <kbd suppressHydrationWarning className={`rounded border border-zinc-200 px-1 text-[10px] dark:border-zinc-700 ${navCollapsed ? "lg:hidden" : ""}`}>
+                  {finderShortcut()}
+                </kbd>
+              </button>
               <div className="mt-3 border-t border-zinc-100 pt-2 lg:mt-auto dark:border-zinc-800">
                 <NavButton
                   active={section === "more" || TOOL_IDS.has(section)}
@@ -900,6 +920,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
       <AssistantPanel />
       <FirstRunSetup />
       <Tour active={section === "home"} />
+      <PageFinder />
       </AssistantProvider>
     </SiteContext.Provider>
   );
