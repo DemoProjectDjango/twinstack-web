@@ -1,5 +1,6 @@
 "use client";
 
+import { noteFeature } from "./FeatureGuide";
 import { useEffect, useState } from "react";
 import { api, workspacePath, type StaticSection } from "@/lib/site-api";
 import { useSite, type SiteSection } from "./site-context";
@@ -47,7 +48,7 @@ export function MoreToolsPanel() {
       <ScreenHeader title="More tools" description="Most owners never need these. Nothing here is required, and each one has a link back here." />
       <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {tools.map((tool) => (
-          <li key={tool.id}>
+          <li key={tool.id} data-tour={`tool-${tool.id}`}>
             <button
               type="button"
               onClick={() => showSection(tool.id)}
@@ -59,10 +60,13 @@ export function MoreToolsPanel() {
           </li>
         ))}
         {/* Lives on What's changed (not a tool screen of its own), so it isn't in MORE_TOOLS. */}
-        <li>
+        <li data-tour="tool-versions">
           <button
             type="button"
-            onClick={() => showEarlierVersions(showSection)}
+            onClick={() => {
+              noteFeature("versions");
+              showEarlierVersions(showSection);
+            }}
             className="h-full w-full rounded-lg border border-zinc-200 p-4 text-left transition hover:border-zinc-400 hover:shadow-sm dark:border-zinc-800 dark:hover:border-zinc-600"
           >
             <span className="block font-medium">Earlier versions</span>

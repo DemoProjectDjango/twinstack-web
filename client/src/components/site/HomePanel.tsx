@@ -8,6 +8,7 @@ import { useSite, type SiteSection } from "./site-context";
 import { Button, EmptyState, ErrorText, Notice, Segmented, Spinner, StepList, type Step } from "./ui";
 import { HomeNextSteps } from "./assistant/NextSteps";
 import { EditablePreview } from "./EditablePreview";
+import { noteFeature } from "./FeatureGuide";
 
 /** Remembers, per browser, that someone has looked at a screen (for ticking off "check your details"). */
 function visitedKey(owner: string, repo: string, section: SiteSection) {
@@ -427,7 +428,10 @@ function Preview({
         <Segmented
           label="Preview size"
           value={width}
-          onChange={setWidth}
+          onChange={(next) => {
+            setWidth(next);
+            if (next === "phone") noteFeature("phone");
+          }}
           options={[
             { value: "desktop", label: "Computer" },
             { value: "phone", label: "Phone" },
@@ -445,6 +449,8 @@ function Preview({
               href={shownPath && isInPreview(shownPath, status.previewUrl) ? shownPath : status.previewUrl}
               target="_blank"
               rel="noreferrer"
+              data-tour="full-size"
+              onClick={() => noteFeature("full-size")}
               className="text-sm text-zinc-500 hover:underline"
               title="This page in a tab of its own, with your latest changes (pages you've hidden too). Reload that tab to see later changes."
             >

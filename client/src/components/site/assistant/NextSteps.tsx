@@ -1,5 +1,6 @@
 "use client";
 
+import { noteFeature } from "../FeatureGuide";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { type NextStep, type NextSteps as NextStepsData, api, workspacePath } from "@/lib/site-api";
 import { type SiteSection, useSite } from "../site-context";
@@ -403,7 +404,10 @@ export function HomeNextSteps({ fallback }: { fallback: ReactNode }) {
     return (
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setOpen(true);
+          noteFeature("todo");
+        }}
         aria-expanded={false}
         className="group flex items-center gap-2 text-sm font-medium hover:underline"
       >

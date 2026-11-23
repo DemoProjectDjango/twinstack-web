@@ -1,5 +1,6 @@
 "use client";
 
+import { noteFeature } from "../FeatureGuide";
 import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, assistantApi, attachmentUrl, type Attachment } from "@/lib/assistant-api";
 import { useSite } from "../site-context";
@@ -86,6 +87,7 @@ export function useAttachmentUploads() {
   const add = useCallback(
     (files: FileList | File[]) => {
       const list = Array.from(files);
+      if (list.length) noteFeature("ai-attach");
       const taken = list.slice(0, Math.max(0, MAX_ATTACHMENTS - count.current));
       const uploads: [PendingAttachment, File][] = [];
       const added: PendingAttachment[] = taken.map((file) => {

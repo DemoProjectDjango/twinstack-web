@@ -14,6 +14,7 @@ import {
 } from "@/lib/assistant-api";
 import { confirmModal } from "@/lib/confirm";
 import { api, workspacePath, type HtmlSource, type Overview, type Proposal, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
+import { noteFeature } from "../FeatureGuide";
 import { useSite } from "../site-context";
 
 // "Ask Claude": the site's conversation, shared by the side panel and the boxes on each screen.
@@ -283,7 +284,10 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
   );
 
   const send = useCallback(
-    (text: string, attachments: Attachment[] = []) => sendBody({ text, attachments: attachments.map((a) => a.id) }),
+    (text: string, attachments: Attachment[] = []) => {
+      noteFeature("ai");
+      return sendBody({ text, attachments: attachments.map((a) => a.id) });
+    },
     [sendBody],
   );
 

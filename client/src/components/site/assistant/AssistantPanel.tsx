@@ -106,6 +106,7 @@ export function AssistantPanel() {
   return (
     <aside
       aria-label="Ask the AI"
+      data-tour="chat-panel"
       {...drop.handlers}
       inert={!open}
       className={`fixed inset-0 z-50 flex flex-col overflow-hidden border-zinc-200 bg-background transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none sm:inset-auto sm:bottom-4 sm:right-4 sm:top-4 sm:w-[27rem] sm:rounded-2xl sm:border sm:shadow-2xl dark:border-zinc-800 ${

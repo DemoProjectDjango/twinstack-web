@@ -143,6 +143,11 @@ export default async function Home() {
             </li>
           ))}
         </ul>
+        <p className="mt-8 text-center">
+          <Link href="/features" className="text-sm font-medium underline">
+            Try the features yourself, in 2 minutes →
+          </Link>
+        </p>
       </section>
 
       <section id="help" aria-labelledby="help-heading" className="mt-20 scroll-mt-20 border-t border-zinc-200 pt-12 dark:border-zinc-800">

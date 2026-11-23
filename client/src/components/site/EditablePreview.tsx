@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, isHomePage, workspacePath, type WorkspaceStatus } from "@/lib/site-api";
 import { useAssistant } from "./assistant/AssistantProvider";
+import { noteFeature } from "./FeatureGuide";
 import { useSite } from "./site-context";
 import { Button, ErrorText, Notice, Spinner } from "./ui";
 
@@ -214,6 +215,7 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
         if (result.file) {
           setStatus(result.status);
           setNote({ tone: "saved", text: savedText(result) });
+          noteFeature("edit-text");
         } else {
           setNote(null);
         }
@@ -252,6 +254,7 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
         if (editingRef.current) void save(data);
       } else if (data.type === "ask-section") {
         askAbout.current(data);
+        noteFeature("ask-section");
       } else if (data.type === "not-editable") {
         setNote({ tone: "info", text: "That part can't be typed into. Click a heading, a paragraph or a button's words, or ask the AI below to change it." });
       }
@@ -267,11 +270,15 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {pages.length > 0 && (
-          <label className="flex min-w-0 items-center gap-2 text-sm">
+          <label data-tour="page-picker" className="flex min-w-0 items-center gap-2 text-sm">
             <span className="text-zinc-500">Page</span>
             <select
               value={shownPage?.url ?? ""}
-              onChange={(e) => e.target.value && go(e.target.value)}
+              onChange={(e) => {
+                if (!e.target.value) return;
+                go(e.target.value);
+                noteFeature("preview-page");
+              }}
               className="max-w-[16rem] truncate rounded-md border border-zinc-300 bg-background px-2 py-1 text-sm font-medium dark:border-zinc-700"
             >
               {!shownPage && <option value="">Another page</option>}
@@ -291,9 +298,11 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
         </p>
         <Button
           variant="ghost"
+          data-tour="try-links"
           aria-pressed={!editing}
           onClick={() => {
             setEditing(!editing);
+            if (editing) noteFeature("try-links");
             if (editing) setTyping(false);
             setNote(null);
           }}
