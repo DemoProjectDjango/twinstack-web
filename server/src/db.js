@@ -696,6 +696,11 @@ export async function replaceWorkLogLine(siteId, line, replacement) {
   await workLogForgotten().deleteMany({ siteId, line: { $in: [replacement] } });
 }
 
+/** Rewrites a stored line in place without forgetting the old wording (an entry that grows, logOwnerEdit). */
+export async function updateWorkLogLine(siteId, line, replacement) {
+  await workLog().updateMany({ siteId, line }, { $set: { line: replacement } });
+}
+
 /** The lines removed from this site's memory. */
 export async function forgottenWorkLogLines(siteId) {
   const docs = await workLogForgotten().find({ siteId }, { projection: { line: 1 } }).toArray();

@@ -381,7 +381,7 @@ const STEPS: Step[] = [
     id: "memory",
     chapter: "tools",
     title: "AI notes about your site",
-    text: "What the AI remembers from earlier work, plus standing notes it always follows, like “write in British English”.",
+    text: "Standing notes the AI always follows, like “write in British English”, and a work log of every change, yours and the AI's, so it builds on your edits instead of undoing them.",
     todo: "Open AI notes about your site in More tools.",
     section: "more",
     target: ["tool-memory"],

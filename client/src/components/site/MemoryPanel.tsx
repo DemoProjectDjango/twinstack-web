@@ -1,16 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api, workspacePath, type Memory, type WorkspaceStatus } from "@/lib/site-api";
-import { confirmModal } from "@/lib/confirm";
+import { api, workspacePath, type Memory } from "@/lib/site-api";
 import { LiveDiff } from "./LiveDiff";
 import { useSite } from "./site-context";
 import { Button, ErrorText, Notice, Section, inputClass } from "./ui";
 
 type DataFile = { content: string; exists: boolean; path: string };
-type MemoryResult = Memory & { status: WorkspaceStatus };
-
-const MAX_SUMMARY_POINTS = 5;
 
 /** An entry's summary: the "  - " points under its line, without the dashes. */
 function summaryOf(entry: string) {
@@ -30,12 +26,6 @@ function parseLine(entry: string) {
   const parts = line.slice(2).split(" · ");
   if (parts.length < 3 || !/^\d{4}-\d{2}-\d{2}$/.test(parts[0])) return null;
   return { date: parts[0], command: parts[1], file: parts[2], what: parts.slice(3).join(" · "), summary: summaryOf(entry) };
-}
-
-function buildLine({ date, command, file, what, summary }: NonNullable<ReturnType<typeof parseLine>>) {
-  const text = what.replace(/\s+/g, " ").trim();
-  const points = summary.map((p) => p.replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, MAX_SUMMARY_POINTS);
-  return [`- ${date} · ${command} · ${file}${text ? ` · ${text}` : ""}`, ...points.map((p) => `  - ${p}`)].join("\n");
 }
 
 export function MemoryPanel() {
@@ -156,61 +146,31 @@ function NotesSection() {
 
 /* --------------------------------------------------------------- work log */
 
+/** Who made an entry's change: the owner's own edits are logged as "owner:…", everything else is the AI's. */
+const byOwner = (command: string) => command.startsWith("owner:");
+
+/** Read-only: entries are written by the app, so what the AI reads is what actually happened. */
 function WorkLogSection() {
-  const { owner, repo, busy, version, setStatus } = useSite();
+  const { owner, repo, version } = useSite();
   const [memory, setMemory] = useState<Memory | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [working, setWorking] = useState(false);
-  // `summary` is edited as text, one point per line.
-  const [editing, setEditing] = useState<{ line: string; what: string; summary: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     api<Memory>(workspacePath(owner, repo, "/memory"))
-      .then((result) => !cancelled && setMemory(result))
+      .then((result) => {
+        if (cancelled) return;
+        setMemory(result);
+        setError(null);
+      })
       .catch((err) => !cancelled && setError(err));
     return () => {
       cancelled = true;
     };
-    // Every Claude command may add lines, so reload after commands.
+    // Every change (the AI's or the owner's) may add an entry, so reload after each one.
   }, [owner, repo, version]);
 
-  async function change(action: "forget" | "replace" | "clear", body: Record<string, string> = {}) {
-    setWorking(true);
-    setError(null);
-    try {
-      const result = await api<MemoryResult>(workspacePath(owner, repo, `/memory/${action}`), { method: "POST", body });
-      const { status, ...next } = result;
-      setMemory(next);
-      setStatus(status);
-      setEditing(null);
-    } catch (err) {
-      setError(err);
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  function saveEdit() {
-    if (!editing) return;
-    const parsed = parseLine(editing.line);
-    if (!parsed) return;
-    change("replace", { line: editing.line, replacement: buildLine({ ...parsed, what: editing.what, summary: editing.summary.split("\n") }) });
-  }
-
-  async function clearAll() {
-    const ok = await confirmModal("Clear the AI's memory of earlier work on this site? The AI's next requests start without it. Your notes stay.", {
-      confirmLabel: "Clear memory",
-      danger: true,
-    });
-    if (!ok) {
-      return;
-    }
-    change("clear");
-  }
-
-  const disabled = busy || working;
-  // Newest first; only the newest `sent` lines go to Claude.
+  // Newest first; only the newest `sent` lines go to the AI.
   const lines = memory ? [...memory.lines].reverse() : [];
 
   return (
@@ -218,29 +178,37 @@ function WorkLogSection() {
       title="Work log"
       description={
         <>
-          One entry per change the AI made that was kept, newest first: what was asked, and the AI&apos;s summary of what it
-          changed. The AI reads the newest {memory?.sent ?? 60} before every request, including changes that aren&apos;t
-          published or merged yet. Edit an entry to correct what it says, or remove one that&apos;s wrong or was undone.
-          Removed entries stay forgotten even if an older branch still has them.
+          Every change made to your site, newest first: what the AI changed for you, and the edits you made yourself. The AI
+          reads the newest {memory?.sent ?? 60} before every request, including changes that aren&apos;t published yet, so it
+          builds on your work instead of undoing it. The log is written automatically and can&apos;t be edited.
         </>
       }
     >
       <ErrorText error={error} />
       {!memory && !error && <p className="text-sm text-zinc-500">Loading…</p>}
       {memory && lines.length === 0 && (
-        <p className="text-sm text-zinc-500">Nothing yet. Each change the AI makes that you keep adds an entry here.</p>
+        <p className="text-sm text-zinc-500">Nothing yet. Each change you or the AI make adds an entry here.</p>
       )}
       {lines.length > 0 && (
-        <ol className="divide-y divide-zinc-200 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+        <ol className="h-96 divide-y divide-zinc-200 overflow-y-auto overscroll-contain rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
           {lines.map((line, index) => {
             const parsed = parseLine(line);
             const sent = memory !== null && index < memory.sent;
-            const isEditing = editing?.line === line;
+            const summary = parsed?.summary ?? summaryOf(line);
             return (
               <li key={line} className={`px-3 py-2 text-sm ${sent ? "" : "opacity-60"}`}>
                 {parsed ? (
                   <div className="flex flex-wrap items-center gap-x-2 text-xs text-zinc-500">
                     <span>{parsed.date}</span>
+                    <span
+                      className={`rounded px-1.5 py-px font-medium ${
+                        byOwner(parsed.command)
+                          ? "bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300"
+                          : "bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300"
+                      }`}
+                    >
+                      {byOwner(parsed.command) ? "You" : "AI"}
+                    </span>
                     <span className="font-mono">{parsed.command}</span>
                     <span className="truncate font-mono">{parsed.file}</span>
                     {!sent && <span>· older than the newest {memory?.sent}, not sent</span>}
@@ -248,80 +216,20 @@ function WorkLogSection() {
                 ) : (
                   <div className="text-xs text-zinc-500">Written by hand{!sent && ` · older than the newest ${memory?.sent}, not sent`}</div>
                 )}
-                {isEditing ? (
-                  <div className="mt-1.5 space-y-2">
-                    <input
-                      value={editing.what}
-                      onChange={(e) => setEditing({ ...editing, what: e.target.value })}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") saveEdit();
-                        if (e.key === "Escape") setEditing(null);
-                      }}
-                      className={inputClass}
-                      maxLength={400}
-                      disabled={working}
-                      aria-label="What was asked"
-                      autoFocus
-                    />
-                    <label className="block text-xs text-zinc-500">
-                      Summary of what changed, one point per line (up to {MAX_SUMMARY_POINTS})
-                      <textarea
-                        value={editing.summary}
-                        onChange={(e) => setEditing({ ...editing, summary: e.target.value })}
-                        onKeyDown={(e) => e.key === "Escape" && setEditing(null)}
-                        rows={Math.min(6, Math.max(2, editing.summary.split("\n").length + 1))}
-                        className={`${inputClass} mt-1 text-sm`}
-                        maxLength={1100}
-                        disabled={working}
-                      />
-                    </label>
-                    <div className="flex gap-2">
-                      <Button variant="primary" disabled={working} onClick={saveEdit}>
-                        Save
-                      </Button>
-                      <Button variant="ghost" disabled={working} onClick={() => setEditing(null)}>
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-0.5 flex items-start gap-2">
-                    <div className="min-w-0 flex-1 break-words">
-                      <p>{parsed ? parsed.what || <span className="text-zinc-500">(no instruction)</span> : line.split("\n")[0].slice(2)}</p>
-                      {(parsed?.summary ?? summaryOf(line)).length > 0 && (
-                        <ul className="mt-1 list-disc space-y-0.5 pl-5 text-zinc-600 dark:text-zinc-400">
-                          {(parsed?.summary ?? summaryOf(line)).map((point, i) => (
-                            <li key={i}>{point}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                    {parsed && (
-                      <Button
-                        variant="ghost"
-                        className="px-2 py-0.5 text-xs"
-                        disabled={disabled}
-                        onClick={() => setEditing({ line, what: parsed.what, summary: parsed.summary.join("\n") })}
-                      >
-                        Edit
-                      </Button>
-                    )}
-                    <Button variant="ghost" className="px-2 py-0.5 text-xs" disabled={disabled} onClick={() => change("forget", { line })}>
-                      Remove
-                    </Button>
-                  </div>
-                )}
+                <div className="mt-0.5 break-words">
+                  <p>{parsed ? parsed.what || <span className="text-zinc-500">(no instruction)</span> : line.split("\n")[0].slice(2)}</p>
+                  {summary.length > 0 && (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-5 text-zinc-600 dark:text-zinc-400">
+                      {summary.map((point, i) => (
+                        <li key={i}>{point}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </li>
             );
           })}
         </ol>
-      )}
-      {lines.length > 0 && (
-        <div className="mt-3">
-          <Button variant="danger" disabled={disabled} onClick={clearAll}>
-            Clear memory
-          </Button>
-        </div>
       )}
     </Section>
   );

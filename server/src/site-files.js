@@ -5,11 +5,9 @@ import path from "node:path";
 import { ANALYTICS_MARKER } from "./analytics.js";
 import {
   addWorkLogLines,
-  clearWorkLog,
-  forgetWorkLogLines,
   forgottenWorkLogLines,
   recentWorkLogLines,
-  replaceWorkLogLine,
+  updateWorkLogLine,
 } from "./db.js";
 import { syncSiteTree, updateSiteTree } from "./site-tree-sync.js";
 import { PREVIEW_ROOTS, WorkspaceError, acquire, mergeFile, previewPath, siteIdFor, tryGit, workspaceDir } from "./workspace.js";
@@ -673,20 +671,14 @@ async function mergedWorkLog(dir, siteId, limit) {
     .slice(-limit);
 }
 
-/* ----------------------------------------------------- editing the memory */
+/* ---------------------------------------------------------- the memory */
 
-// The Claude memory tab lists the work log and lets the user change or remove
-// lines, or clear it. Each change is made in the database and in the
-// checked-out committed log (an ordinary uncommitted change), so runs from a
-// terminal agree once it's published. Removed lines are recorded as forgotten,
-// so another branch's committed copy can't bring them back.
+// The memory screen lists the work log, read-only: entries are written only by
+// the app (Claude's kept changes, and the owner's own edits below), so what the
+// AI reads is always what happened. Lines removed before it became read-only
+// stay forgotten (workLogForgotten), so another branch's committed copy can't
+// bring them back.
 const MEMORY_LIST_LIMIT = 500;
-
-function requireMemory(dir) {
-  if (!existsSync(path.join(dir, KNOWLEDGE_SCRIPT))) {
-    throw new WorkspaceError("This site's scripts predate Claude's memory. Update them from the template first.", 409);
-  }
-}
 
 /** Whether the site has memory, and its lines (oldest first). */
 export async function readMemory(key) {
@@ -703,70 +695,6 @@ async function rewriteCommittedWorkLog(dir, change) {
   const parts = segmentsOf(text);
   const next = parts.flatMap((s) => (s.entry !== undefined ? change(s.entry).map((entry) => ({ entry })) : [s]));
   if (joinSegments(next) !== joinSegments(parts)) await fs.writeFile(logPath, joinSegments(next));
-}
-
-/** Runs a memory change under the workspace lock and returns the updated memory. */
-async function changeMemory(key, label, fn) {
-  const release = acquire(key, label);
-  try {
-    const dir = workspaceDir(key);
-    requireMemory(dir);
-    await fn(dir, await siteIdFor(key));
-  } finally {
-    release();
-  }
-  return readMemory(key);
-}
-
-// An entry as the memory tab sends it: its line, plus summary points.
-const MAX_ENTRY_CHARS = MAX_LINE_CHARS + MAX_SUMMARY_LINES * (MAX_SUMMARY_CHARS + 5);
-
-function memoryLine(value, label) {
-  if (typeof value !== "string" || !value || value.length > MAX_ENTRY_CHARS || /\r/.test(value)) {
-    throw new WorkspaceError(`${label} must be a work-log entry of at most ${MAX_ENTRY_CHARS} characters.`, 400);
-  }
-  return value;
-}
-
-/** Removes one entry (with its summary) from the memory. */
-export async function forgetMemoryLine(key, line) {
-  const target = memoryLine(line, "The entry");
-  return changeMemory(key, "removing a memory line", async (dir, siteId) => {
-    await forgetWorkLogLines(siteId, [target]);
-    await rewriteCommittedWorkLog(dir, (entry) => (entry === target ? [] : [entry]));
-  });
-}
-
-/** Rewrites one entry of the memory in place: its line, its summary or both. */
-export async function replaceMemoryLine(key, line, replacement) {
-  const target = memoryLine(line, "The entry");
-  const [head, ...points] = memoryLine(replacement, "The new entry").trim().split("\n");
-  const next = [head.trim(), ...cleanSummary(points).map((p) => `  - ${p}`)].join("\n");
-  if (!WELL_FORMED.test(next) || head.trim().length > MAX_LINE_CHARS) {
-    throw new WorkspaceError(`A memory entry must start with "- YYYY-MM-DD · ", on one line of at most ${MAX_LINE_CHARS} characters.`, 400);
-  }
-  if (points.filter((p) => p.trim()).length > MAX_SUMMARY_LINES) {
-    throw new WorkspaceError(`A summary has at most ${MAX_SUMMARY_LINES} points.`, 400);
-  }
-  return changeMemory(key, "editing a memory line", async (dir, siteId) => {
-    if (!(await mergedWorkLog(dir, siteId, MEMORY_LIST_LIMIT)).includes(target)) {
-      throw new WorkspaceError("That line isn't in the memory any more. Reload and try again.", 409);
-    }
-    if (next === target) return;
-    await replaceWorkLogLine(siteId, target, next);
-    await rewriteCommittedWorkLog(dir, (entry) => [entry === target ? next : entry]);
-  });
-}
-
-/** Empties the memory: every stored line, and every committed one this branch has. */
-export async function clearMemory(key) {
-  return changeMemory(key, "clearing Claude's memory", async (dir, siteId) => {
-    const visible = await mergedWorkLog(dir, siteId, MEMORY_LIST_LIMIT);
-    const committed = entriesOf(await readText(path.join(dir, WORK_LOG)));
-    await clearWorkLog(siteId);
-    await forgetWorkLogLines(siteId, [...new Set([...visible, ...committed])]);
-    await rewriteCommittedWorkLog(dir, () => []);
-  });
 }
 
 /** Saves the lines the run appended to WORK_LOG_FOR_RUN. Never throws. */
@@ -835,6 +763,49 @@ async function logAppliedChange(key, change) {
 export async function logWork(key, change) {
   await logAppliedChange(key, change);
 }
+
+// The owner's own edits (text typed into the preview, Business info, the menu, a page edited by
+// hand…) are logged too, so the AI knows about them and doesn't undo them. They're many and small,
+// so one entry per kind of edit, file and day: a repeat adds its point to that day's entry, if it's
+// still the newest, keeping the latest MAX_SUMMARY_LINES points.
+const OWNER_LOG_POINT_CHARS = 90;
+
+/** Text for a log point: one line, cut to `max` characters. */
+export function logQuote(text, max = OWNER_LOG_POINT_CHARS) {
+  const one = String(text ?? "").replace(/\s+/g, " ").trim();
+  return one.length > max ? `${one.slice(0, max - 1).trimEnd()}…` : one;
+}
+
+/**
+ * Logs an edit the owner made in the editor: `command` (owner:…), `file`, `instruction` (what was
+ * done, in a few words) and an optional `point`. Never throws, so a log failure never fails the edit.
+ */
+export async function logOwnerEdit(key, { command, file, instruction, point }) {
+  try {
+    const dir = workspaceDir(key);
+    if (!file || !existsSync(path.join(dir, KNOWLEDGE_SCRIPT)) || file.startsWith("knowledge/")) return;
+    const fresh = workLogEntry({ command, file, instruction, summary: point ? [point] : [] });
+    const siteId = await siteIdFor(key);
+    const [latest] = await recentWorkLogLines(siteId, 1);
+    const [line] = fresh.split("\n");
+    if (latest && latest.split("\n")[0] === line) {
+      if (!point) return;
+      const points = [...summaryPoints(latest), point];
+      const grown = workLogEntry({ command, file, instruction, summary: points.slice(-MAX_SUMMARY_LINES) });
+      if (grown === latest) return;
+      await updateWorkLogLine(siteId, latest, grown);
+      await rewriteCommittedWorkLog(dir, (entry) => [entry === latest ? grown : entry]);
+      return;
+    }
+    await appendCommittedWorkLog(dir, fresh);
+    await addWorkLogLines(siteId, [fresh]);
+  } catch (err) {
+    console.error(`Couldn't log the owner's edit: ${err.message}`);
+  }
+}
+
+/** An entry's summary points, without their dashes. */
+const summaryPoints = (entry) => entry.split("\n").slice(1).map((p) => p.replace(/^ {2}- /, ""));
 
 /**
  * The site's latest work log as Claude gets it before every request (the newest LOG_ROTATE_AT

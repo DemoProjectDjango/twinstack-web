@@ -34,14 +34,12 @@ import { assistantRouter } from "./assistant.js";
 import { handle, keyFor, requireJson } from "./helpers.js";
 import {
   applyProposal,
-  clearMemory,
   clearProposal,
   collectWorkLog,
   createHomepage,
   createListingPage,
   createPageAt,
   deletePage,
-  forgetMemoryLine,
   MD_EDIT_FILES,
   getOverview,
   installMdEdit,
@@ -57,7 +55,6 @@ import {
   readSchedule,
   savePage,
   prepareWorkLog,
-  replaceMemoryLine,
   saveCss,
   saveScripts,
   saveHtmlSource,
@@ -67,10 +64,12 @@ import {
   WORK_LOG_FOR_RUN,
   writeDataFile,
   writeSchedule,
+  logOwnerEdit,
+  logQuote,
   logWork,
   pageAddresses,
 } from "../site-files.js";
-import { getStaticInfo, saveStaticInfo } from "../static-info.js";
+import { getStaticInfo, saveStaticInfo, staticInfoSection } from "../static-info.js";
 import { getBrand, saveBrand, saveBrandImage } from "../brand.js";
 import { fileUsage, listRepoFiles, prepareUploadedPage, removeConvertedPage, removeRepoFile, uploadRepoFile } from "../repo-files.js";
 import { planSetup, saveSetup } from "../site-setup.js";
@@ -405,7 +404,12 @@ workspacesRouter.get(
 
 workspacesRouter.put(
   "/:owner/:repo/files/:name",
-  handle(async (req, res) => res.json(await writeDataFile(keyFor(req), req.params.name, req.body?.content))),
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const file = await writeDataFile(key, req.params.name, req.body?.content);
+    await logOwnerEdit(key, { command: "owner:edit-file", file: file.path, instruction: "The owner edited the file by hand" });
+    res.json(file);
+  }),
 );
 
 /*
@@ -459,6 +463,7 @@ workspacesRouter.put(
     const key = keyFor(req);
     const { file, content, version } = req.body ?? {};
     const page = await savePage(key, file, content, version);
+    await logOwnerEdit(key, { command: "owner:edit-page", file, instruction: "The owner edited the page by hand" });
     res.json({ page, status: await getStatus(key) });
   }),
 );
@@ -471,6 +476,12 @@ workspacesRouter.post(
     const key = keyFor(req);
     const { address, before, after, index, count } = req.body ?? {};
     const { file } = await editPreviewText(key, { address, before, after, index, count });
+    await logOwnerEdit(key, {
+      command: "owner:edit-text",
+      file,
+      instruction: "The owner changed text on the site",
+      point: `“${logQuote(before, 60)}” → “${logQuote(after, 60)}”`,
+    });
     res.json({ file, status: await getStatus(key) });
   }),
 );
@@ -482,6 +493,11 @@ workspacesRouter.put(
   handle(async (req, res) => {
     const key = keyFor(req);
     await setPageDraft(key, req.body?.file, req.body?.draft);
+    await logOwnerEdit(key, {
+      command: "owner:page-visibility",
+      file: req.body?.file,
+      instruction: req.body?.draft ? "The owner hid the page from visitors" : "The owner showed the page to visitors again",
+    });
     res.json({ status: await getStatus(key) });
   }),
 );
@@ -493,6 +509,7 @@ workspacesRouter.post(
   handle(async (req, res) => {
     const key = keyFor(req);
     const { file } = await createHomepage(key, { title: req.body?.title });
+    await logOwnerEdit(key, { command: "owner:new-page", file, instruction: "The owner made the homepage" });
     res.json({ file, status: await getStatus(key) });
   }),
 );
@@ -502,6 +519,7 @@ workspacesRouter.post(
   handle(async (req, res) => {
     const key = keyFor(req);
     const { file } = await createListingPage(key, req.body?.collection, { title: req.body?.title });
+    await logOwnerEdit(key, { command: "owner:new-page", file, instruction: "The owner made the listing page" });
     res.json({ file, status: await getStatus(key) });
   }),
 );
@@ -513,6 +531,7 @@ workspacesRouter.post(
   handle(async (req, res) => {
     const key = keyFor(req);
     const { file } = await createPageAt(key, { url: req.body?.url, title: req.body?.title });
+    await logOwnerEdit(key, { command: "owner:new-page", file, instruction: `The owner made a page at ${logQuote(req.body?.url, 120)}` });
     res.json({ file, status: await getStatus(key) });
   }),
 );
@@ -540,6 +559,7 @@ workspacesRouter.delete(
   handle(async (req, res) => {
     const key = keyFor(req);
     await deletePage(key, req.query.file);
+    await logOwnerEdit(key, { command: "owner:delete-page", file: String(req.query.file ?? ""), instruction: "The owner deleted the page" });
     res.json({ status: await getStatus(key) });
   }),
 );
@@ -590,6 +610,7 @@ workspacesRouter.put(
     const key = keyFor(req);
     const { file, content, version } = req.body ?? {};
     const css = await saveCss(key, file, content, version);
+    await logOwnerEdit(key, { command: "owner:edit-css", file, instruction: "The owner edited the stylesheet by hand" });
     res.json({ css, status: await getStatus(key) });
   }),
 );
@@ -608,6 +629,11 @@ workspacesRouter.post(
   handle(async (req, res) => {
     const key = keyFor(req);
     const saved = await uploadRepoFile(key, req.body ?? {});
+    await logOwnerEdit(key, {
+      command: "owner:upload",
+      file: saved.file,
+      instruction: saved.replaced ? "The owner replaced the file" : "The owner added the file",
+    });
     res.status(201).json({ saved, status: await getStatus(key) });
   }),
 );
@@ -624,6 +650,7 @@ workspacesRouter.delete(
   handle(async (req, res) => {
     const key = keyFor(req);
     await removeRepoFile(key, req.query.file);
+    await logOwnerEdit(key, { command: "owner:remove-file", file: String(req.query.file ?? ""), instruction: "The owner removed the file" });
     res.json({ status: await getStatus(key) });
   }),
 );
@@ -633,6 +660,7 @@ workspacesRouter.delete(
   handle(async (req, res) => {
     const key = keyFor(req);
     await removeConvertedPage(key, req.query.file);
+    await logOwnerEdit(key, { command: "owner:delete-page", file: String(req.query.file ?? ""), instruction: "The owner deleted the page" });
     res.json({ status: await getStatus(key) });
   }),
 );
@@ -664,6 +692,7 @@ workspacesRouter.put(
   handle(async (req, res) => {
     const key = keyFor(req);
     const scripts = await saveScripts(key, req.body?.items, req.body?.version);
+    await logOwnerEdit(key, { command: "owner:scripts", file: "content/data/scripts.json", instruction: "The owner changed the scripts on the site" });
     res.json({ scripts, status: await getStatus(key) });
   }),
 );
@@ -924,33 +953,6 @@ workspacesRouter.get(
   handle(async (req, res) => res.json(await readMemory(keyFor(req)))),
 );
 
-workspacesRouter.post(
-  "/:owner/:repo/memory/forget",
-  handle(async (req, res) => {
-    const key = keyFor(req);
-    const memory = await forgetMemoryLine(key, req.body?.line);
-    res.json({ ...memory, status: await getStatus(key) });
-  }),
-);
-
-workspacesRouter.post(
-  "/:owner/:repo/memory/replace",
-  handle(async (req, res) => {
-    const key = keyFor(req);
-    const memory = await replaceMemoryLine(key, req.body?.line, req.body?.replacement);
-    res.json({ ...memory, status: await getStatus(key) });
-  }),
-);
-
-workspacesRouter.post(
-  "/:owner/:repo/memory/clear",
-  handle(async (req, res) => {
-    const key = keyFor(req);
-    const memory = await clearMemory(key);
-    res.json({ ...memory, status: await getStatus(key) });
-  }),
-);
-
 workspacesRouter.delete(
   "/:owner/:repo/proposal",
   handle(async (req, res) => {
@@ -1003,6 +1005,7 @@ workspacesRouter.put(
   handle(async (req, res) => {
     const key = keyFor(req);
     const brand = await saveBrand(key, req.body?.brand);
+    await logOwnerEdit(key, { command: "owner:logo", file: "site.config.json", instruction: "The owner changed the logo and tab icon" });
     res.json({ ...brand, status: await getStatus(key) });
   }),
 );
@@ -1067,6 +1070,7 @@ workspacesRouter.put(
   handle(async (req, res) => {
     const key = keyFor(req);
     const navigation = await saveNavigation(key, req.body?.navigation, req.body?.version);
+    await logOwnerEdit(key, { command: "owner:menu", file: "content/data/navigation.json", instruction: "The owner changed the menu, header or footer" });
     res.json({ ...navigation, status: await getStatus(key) });
   }),
 );
@@ -1078,6 +1082,11 @@ workspacesRouter.put(
   handle(async (req, res) => {
     const key = keyFor(req);
     await setPageMenu(key, req.body?.file, req.body?.menu ?? null);
+    await logOwnerEdit(key, {
+      command: "owner:menu",
+      file: req.body?.file,
+      instruction: req.body?.menu ? `The owner put the page in the ${req.body.menu === "both" ? "header and footer" : req.body.menu} menu` : "The owner took the page out of the menus",
+    });
     res.json({ status: await getStatus(key) });
   }),
 );
@@ -1112,7 +1121,13 @@ workspacesRouter.get(
 
 workspacesRouter.put(
   "/:owner/:repo/static-info/:section",
-  handle(async (req, res) => res.json(await saveStaticInfo(keyFor(req), req.params.section, req.body?.data))),
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const info = await saveStaticInfo(key, req.params.section, req.body?.data);
+    const section = staticInfoSection(req.params.section);
+    await logOwnerEdit(key, { command: "owner:business-info", file: section.file, instruction: `The owner updated ${section.label}` });
+    res.json(info);
+  }),
 );
 
 workspacesRouter.get(

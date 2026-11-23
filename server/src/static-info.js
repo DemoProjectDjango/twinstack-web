@@ -188,6 +188,12 @@ function withLinks(id, next) {
   return out;
 }
 
+/** A section's file and label, for the work log; null for an unknown id. */
+export function staticInfoSection(id) {
+  const section = SECTIONS.find((s) => s.id === id);
+  return section ? { file: section.file, label: section.label } : null;
+}
+
 export async function saveStaticInfo(key, id, value) {
   const section = SECTIONS.find((s) => s.id === id);
   if (!section) throw new WorkspaceError("Unknown section.", 404);
