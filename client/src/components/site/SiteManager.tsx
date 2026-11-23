@@ -30,6 +30,7 @@ import { MORE_TOOLS, MoreToolsPanel } from "./MoreToolsPanel";
 import { PagesPanel } from "./PagesPanel";
 import { PublishClashes } from "./PublishClashes";
 import { PublishNote } from "./PublishNote";
+import { PublishedPages } from "./PublishedPages";
 import { SchedulePanel } from "./SchedulePanel";
 import { SeoPanel } from "./SeoPanel";
 import { SiteContext, useSite, type PageEditMode, type SiteContextValue, type SiteSection } from "./site-context";
@@ -1002,7 +1003,7 @@ function TopBar() {
     pill = { text: "✓ Everything is live", tone: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" };
   }
 
-  const { available, working, publish, asking, go, cancel } = publishNow;
+  const { available, working, publish, asking, go, cancel, published, closePublished } = publishNow;
   // The first time a site has unpublished changes, say once that Publish is what makes them live.
   const nudgeKey = `twinstack:publish-nudge:${owner}/${repo}`;
   const [nudgeDismissed, setNudgeDismissed] = useState(() => {
@@ -1082,6 +1083,7 @@ function TopBar() {
       )}
       </div>
       {asking && <PublishNote changes={changes} onPublish={(note) => void go(note)} onCancel={cancel} />}
+      {published && <PublishedPages pages={published} siteUrl={publishing?.url ?? null} onClose={closePublished} />}
     </div>
   );
 }

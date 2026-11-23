@@ -6,7 +6,7 @@ import { confirmModal } from "@/lib/confirm";
 import { ApiError, api, workspacePath, type Change, type Job, type NavigationInfo, type Overview, type Publishing, type SiteCheck, type SiteUpdateInfo, type WorkspaceStatus } from "@/lib/site-api";
 import { toast } from "@/lib/toast";
 import { wasVisited } from "./HomePanel";
-import type { PublishNowState, PublishingState, SiteTools, SiteUpdateState } from "./site-context";
+import type { PublishedPage, PublishNowState, PublishingState, SiteTools, SiteUpdateState } from "./site-context";
 
 // While a deploy runs, and for a while after anything changes (a push starts a
 // run a few seconds later), GitHub is asked again every few seconds.
@@ -339,6 +339,21 @@ export function publishMessage(changes: Change[], overview: Overview | null, not
 ${extra}` : summary;
 }
 
+/** The pages a publish changed (added or edited, not removed), by title and site address, for the "Published" window. */
+export function pagesWorkedOn(changes: Change[], overview: Overview | null): PublishedPage[] {
+  const pages = overview?.collections.flatMap((c) => c.pages) ?? [];
+  const seen = new Set<string>();
+  const out: PublishedPage[] = [];
+  for (const change of changes) {
+    if (change.status === "deleted") continue;
+    const page = pages.find((p) => p.file === change.path);
+    if (!page || page.draft || seen.has(page.file)) continue;
+    seen.add(page.file);
+    out.push({ file: page.file, title: page.title || page.slug, address: page.address ?? page.url ?? null });
+  }
+  return out;
+}
+
 export function usePublishNow({
   owner,
   repo,
@@ -366,6 +381,7 @@ export function usePublishNow({
 }): PublishNowState {
   const [working, setWorking] = useState<"checking" | "publishing" | null>(null);
   const [asking, setAsking] = useState(false);
+  const [published, setPublished] = useState<PublishedPage[] | null>(null);
   const available = Boolean(status && (status.changes.length > 0 || status.ahead || !status.onDefaultBranch));
 
   const publish = useCallback(async () => {
@@ -411,6 +427,7 @@ export function usePublishNow({
         }
         if (!(await confirmSamples(check))) return;
         setWorking("publishing");
+        const worked = pagesWorkedOn(latest.changes, overview);
         const committed = await api<{ status: WorkspaceStatus }>(workspacePath(owner, repo, "/commit"), {
           method: "POST",
           body: { message: publishMessage(latest.changes, overview, note), mode: "direct" },
@@ -418,7 +435,8 @@ export function usePublishNow({
         setStatus(committed.status);
         watch();
         await refresh();
-        toast.success("Published. Your live site updates in about a minute.");
+        if (worked.length) setPublished(worked);
+        else toast.success("Published. Your live site updates in about a minute.");
       } catch (err) {
         // Someone published the same places in the moment between: the work is unpublished changes
         // again, so going round once more shows both versions to choose from.
@@ -441,5 +459,5 @@ export function usePublishNow({
   }, [go]);
 
   const cancel = useCallback(() => setAsking(false), []);
-  return { available, working, publish, asking, go, cancel };
+  return { available, working, publish, asking, go, cancel, published, closePublished: () => setPublished(null) };
 }

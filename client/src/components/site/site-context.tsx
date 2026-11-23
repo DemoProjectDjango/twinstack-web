@@ -96,6 +96,9 @@ export type SiteUpdateState = {
  * branch. A first publish (site details not looked at yet) or a site on a review branch opens the
  * Publish screen instead, which has the details step and the review options.
  */
+/** A page a publish changed: `address` is where the site builds it (null when unknown). */
+export type PublishedPage = { file: string; title: string; address: string | null };
+
 export type PublishNowState = {
   /** Something to publish: changes, an earlier push that didn't reach GitHub, or a review branch. */
   available: boolean;
@@ -106,6 +109,9 @@ export type PublishNowState = {
   asking: boolean;
   go: (note: string) => Promise<void>;
   cancel: () => void;
+  /** After a publish that changed pages: those pages, for the "Published" window; null otherwise. */
+  published: PublishedPage[] | null;
+  closePublished: () => void;
 };
 
 export type SiteContextValue = {
