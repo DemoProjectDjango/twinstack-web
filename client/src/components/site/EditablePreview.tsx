@@ -270,26 +270,17 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {pages.length > 0 && (
-          <label data-tour="page-picker" className="flex min-w-0 items-center gap-2 text-sm">
+          <div data-tour="page-picker" className="flex min-w-0 items-center gap-2 text-sm">
             <span className="text-zinc-500">Page</span>
-            <select
-              value={shownPage?.url ?? ""}
-              onChange={(e) => {
-                if (!e.target.value) return;
-                go(e.target.value);
+            <PagePicker
+              pages={pages}
+              shown={shownPage ?? null}
+              onPick={(url) => {
+                go(url);
                 noteFeature("preview-page");
               }}
-              className="max-w-[16rem] truncate rounded-md border border-zinc-300 bg-background px-2 py-1 text-sm font-medium dark:border-zinc-700"
-            >
-              {!shownPage && <option value="">Another page</option>}
-              {pages.map((p) => (
-                <option key={p.url} value={p.url}>
-                  {p.title}
-                  {p.draft ? " (hidden)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
+            />
+          </div>
         )}
         <p className="min-w-0 flex-1 text-sm text-zinc-500">
           {editing
@@ -360,6 +351,129 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
           }
         />
       </div>
+    </div>
+  );
+}
+
+type PickerPage = { file: string; title: string; url: string; home: boolean; draft?: boolean };
+
+/**
+ * Edit site's "Page": the page shown, and a search over every page to show another. Type part of a
+ * title or address; arrow keys move, Enter shows it, Escape or a click outside closes.
+ */
+function PagePicker({ pages, shown, onPick }: { pages: PickerPage[]; shown: PickerPage | null; onPick: (url: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const box = useRef<HTMLDivElement>(null);
+  const listId = "page-picker-list";
+
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const found = pages.filter((p) => words.every((w) => p.title.toLowerCase().includes(w) || p.url.toLowerCase().includes(w)));
+  const at = Math.min(active, Math.max(0, found.length - 1));
+
+  // A click anywhere else closes it.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!box.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open]);
+
+  function pick(page: PickerPage) {
+    setOpen(false);
+    setQuery("");
+    if (page.url !== shown?.url) onPick(page.url);
+  }
+
+  return (
+    <div ref={box} className="relative">
+      <button
+        type="button"
+        onClick={() => {
+          setOpen(!open);
+          setQuery("");
+          setActive(Math.max(0, pages.findIndex((p) => p.url === shown?.url)));
+        }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title="Show another page: search by its name or address"
+        className="flex h-8 max-w-[16rem] cursor-pointer items-center gap-2 rounded-md border border-zinc-300 bg-background px-2 text-sm font-medium hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-600"
+      >
+        <span className="truncate">{shown ? shown.title : "Another page"}</span>
+        {shown?.draft && <span className="text-xs font-normal text-zinc-500">(hidden)</span>}
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="size-3.5 shrink-0 text-zinc-500" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-zinc-200 bg-background shadow-xl dark:border-zinc-800">
+          <div className="relative border-b border-zinc-100 dark:border-zinc-800">
+            <svg viewBox="0 0 24 24" aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              autoFocus
+              type="search"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setActive(0);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setActive(Math.min(at + 1, found.length - 1));
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setActive(Math.max(at - 1, 0));
+                } else if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (found[at]) pick(found[at]);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setOpen(false);
+                }
+              }}
+              placeholder="Search pages…"
+              aria-label="Search your pages"
+              role="combobox"
+              aria-expanded
+              aria-controls={listId}
+              aria-activedescendant={found[at] ? `page-picker-${at}` : undefined}
+              className="h-10 w-full bg-transparent pl-9 pr-3 text-sm outline-none"
+            />
+          </div>
+          <ul id={listId} role="listbox" aria-label="Your pages" className="max-h-72 overflow-y-auto p-1">
+            {found.length === 0 && <li className="px-3 py-2 text-sm text-zinc-500">No page matches “{query}”.</li>}
+            {found.map((p, i) => (
+              <li
+                key={p.url}
+                id={`page-picker-${i}`}
+                role="option"
+                aria-selected={i === at}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => pick(p)}
+                className={`flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${i === at ? "bg-indigo-50 text-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-100" : ""}`}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">
+                    {p.title}
+                    {p.draft && <span className="ml-1 font-normal text-zinc-500">(hidden)</span>}
+                  </span>
+                  <span className="block truncate text-xs text-zinc-500">{p.url}</span>
+                </span>
+                {p.home && <span className="shrink-0 rounded-full border border-zinc-200 px-1.5 text-[11px] text-zinc-500 dark:border-zinc-700">Homepage</span>}
+                {p.url === shown?.url && <span className="shrink-0 text-xs text-indigo-600 dark:text-indigo-300">Showing</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
