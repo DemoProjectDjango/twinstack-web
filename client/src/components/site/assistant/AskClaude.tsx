@@ -44,10 +44,16 @@ export function AskClaude({ placeholder, suggestions }: { placeholder?: string; 
   const preset = SUGGESTIONS[context.page && context.screen === "pages" ? "page" : (context.screen as keyof typeof SUGGESTIONS)] ?? SUGGESTIONS.home;
   const items = suggestions ?? preset.items;
   const running = turn?.status === "running";
+  // Small by default, so it covers less of the screen; full size while in use, or while it holds
+  // something unsent.
+  const open = expanded || Boolean(text) || uploads.pending.length > 0 || drop.over;
 
   // The ✦ in its tinted square, at the start of the box.
   const mark = (
-    <span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-[10px] bg-indigo-50 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-300">
+    <span
+      aria-hidden="true"
+      className={`grid size-8 shrink-0 place-items-center rounded-[10px] ${open ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-300" : "bg-indigo-600 text-white motion-safe:animate-pulse"}`}
+    >
       ✦
     </span>
   );
@@ -78,7 +84,7 @@ export function AskClaude({ placeholder, suggestions }: { placeholder?: string; 
       ref={boxRef}
       {...drop.handlers}
       onFocus={() => setExpanded(true)}
-      className={`mx-auto w-full max-w-3xl rounded-[18px] bg-background p-3 shadow-[0_1px_2px_rgba(0,0,0,.06),0_10px_30px_rgba(21,21,26,.08)] ${drop.over ? "outline-2 outline-dashed outline-indigo-400" : ""}`}
+      className={`mx-auto w-full rounded-[18px] bg-background shadow-[0_1px_2px_rgba(0,0,0,.06),0_10px_30px_rgba(21,21,26,.08)] transition-[max-width,padding] duration-300 ease-out motion-reduce:transition-none ${open ? "max-w-3xl p-3" : "max-w-md cursor-text p-2 ring-2 ring-indigo-400/70 shadow-[0_0_0_6px_rgba(99,102,241,.12),0_10px_30px_rgba(79,70,229,.25)] hover:ring-indigo-500 dark:ring-indigo-500/70"} ${drop.over ? "outline-2 outline-dashed outline-indigo-400" : ""}`}
     >
       {/* Opens upward (the bar sits at the foot of the window) by its row growing from 0 to its height. */}
       <div
@@ -107,7 +113,7 @@ export function AskClaude({ placeholder, suggestions }: { placeholder?: string; 
           value={text}
           onChange={(e) => setText(e.target.value)}
           maxLength={8000}
-          placeholder={placeholder ?? preset.placeholder}
+          placeholder={open ? (placeholder ?? preset.placeholder) : "Ask the AI to change anything…"}
           aria-label="Tell the AI what to change"
           onPaste={(e) => {
             if (e.clipboardData.files.length) {
@@ -115,8 +121,9 @@ export function AskClaude({ placeholder, suggestions }: { placeholder?: string; 
               if (!e.clipboardData.getData("text")) e.preventDefault();
             }
           }}
-          className="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] text-foreground outline-none placeholder:text-zinc-500"
+          className={`min-w-0 flex-1 truncate bg-transparent text-foreground outline-none placeholder:text-zinc-500 ${open ? "py-1.5 text-[15px]" : "py-1 text-sm"}`}
         />
+        {open && (
         <AttachButton
           onFiles={uploads.add}
           disabled={running}
@@ -127,13 +134,16 @@ export function AskClaude({ placeholder, suggestions }: { placeholder?: string; 
             </svg>
           }
         />
+        )}
+        {open && (
         <button
           type="submit"
           disabled={(!text.trim() && !uploads.ready.length) || running || uploads.uploading}
-          className="h-9 shrink-0 rounded-[10px] bg-zinc-900 px-4 text-[13px] font-semibold text-white hover:bg-zinc-800 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+          className="h-9 shrink-0 cursor-pointer rounded-[10px] bg-zinc-900 px-4 text-[13px] font-semibold text-white hover:bg-zinc-800 disabled:cursor-default disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
         >
           {uploads.uploading ? "Uploading…" : "Send"}
         </button>
+        )}
       </form>
       {uploads.pending.length > 0 && (
         <div className="mt-2 pl-[2.625rem]">
@@ -141,7 +151,7 @@ export function AskClaude({ placeholder, suggestions }: { placeholder?: string; 
         </div>
       )}
       {drop.over && <p className="mt-2 pl-[2.625rem] text-xs font-medium">Drop files to attach them</p>}
-      {items.length > 0 && !text && (
+      {open && items.length > 0 && !text && (
         // Under the message, lined up with it; one row that scrolls sideways, so the box stays small.
         <div className="mt-2.5 flex gap-1.5 overflow-x-auto [scrollbar-width:none]">
           {items.map((s) => (
@@ -154,7 +164,7 @@ export function AskClaude({ placeholder, suggestions }: { placeholder?: string; 
                 if (uploads.ready.length) setText(s);
                 else fillDraft(s);
               }}
-              className="shrink-0 rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs text-zinc-700 hover:bg-zinc-200 hover:text-foreground disabled:opacity-50 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="shrink-0 cursor-pointer rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs text-zinc-700 hover:bg-zinc-200 hover:text-foreground disabled:opacity-50 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               {s}
             </button>
