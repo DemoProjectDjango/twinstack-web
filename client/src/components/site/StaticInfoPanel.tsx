@@ -1,5 +1,6 @@
 "use client";
 
+import { noteFeature } from "./FeatureGuide";
 import { useEffect, useState } from "react";
 import { api, workspacePath, type Json, type StaticSection } from "@/lib/site-api";
 import { confirmModal } from "@/lib/confirm";
@@ -197,6 +198,7 @@ export function StaticInfoPanel({ view }: { view: StaticInfoView }) {
       setDrafts((prev) => without(prev, tab.section));
     }
     setSelected(next.id);
+    noteFeature("details-tab");
     setError(null);
     setSaved(false);
   }

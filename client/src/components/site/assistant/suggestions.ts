@@ -80,4 +80,8 @@ export const SUGGESTIONS: Record<SiteSection | "page", { placeholder: string; it
     placeholder: "Ask the AI about your site…",
     items: ["Why might my site not be updating?"],
   },
+  learn: {
+    placeholder: "Ask the AI how to do anything in the builder…",
+    items: ["What should I do next to finish my site?", "How do I add a page?", "How do I use my own domain?"],
+  },
 };

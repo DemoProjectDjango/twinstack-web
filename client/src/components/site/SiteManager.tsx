@@ -41,6 +41,7 @@ import { ScriptsPanel } from "./ScriptsPanel";
 import { StylesPanel } from "./StylesPanel";
 import { TreePanel } from "./TreePanel";
 import { Tour, startTour } from "./Tour";
+import { FeatureGuide, LearnPanel, ProgressRing, noteFeature, noteScreen, useFeatureProgress } from "./FeatureGuide";
 import { PageFinder, finderShortcut, openPageFinder } from "./PageFinder";
 import { Button, ErrorText, Notice, ScreenHeader, Spinner } from "./ui";
 
@@ -56,7 +57,12 @@ const MAIN: { id: SiteSection; label: string; hint: string }[] = [
 const ANALYTICS = { id: "analytics" as const, label: "Visitors", hint: "Who visits your site" };
 
 // Screens reached from elsewhere, for the small-screen menu button's label.
-const OTHER: { id: SiteSection; label: string }[] = [{ id: "publish", label: "What's changed" }, { id: "more", label: "More tools" }, ...MORE_TOOLS];
+const OTHER: { id: SiteSection; label: string }[] = [
+  { id: "publish", label: "What's changed" },
+  { id: "more", label: "More tools" },
+  { id: "learn", label: "Learn the features" },
+  ...MORE_TOOLS,
+];
 const TOOL_IDS = new Set<SiteSection>(MORE_TOOLS.map((tool) => tool.id));
 
 // The menu's icons (24×24 stroke paths), by screen.
@@ -490,6 +496,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
     // Opening a screen from the menu shows the site from its homepage, not the last page asked for.
     setPreviewTarget(null);
     setSection(next);
+    noteScreen(next);
     setMenuOpen(false);
     if (next === "pages") setPagesOpened(true);
     if (next === "design") setDesignOpened(true);
@@ -541,6 +548,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
   const showOnSite = useCallback(
     (url: string) => {
       showSection("home");
+      noteFeature("page-on-site");
       setPreviewTarget({ url, n: ++previewRequests.current });
     },
     [showSection],
@@ -569,6 +577,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
   const editFile = useCallback(
     async (file: string, mode: PageEditMode = "edit") => {
       if (!(await confirmDiscardDraft())) return;
+      noteFeature("page-open");
       unsavedDraft.current = false;
       setOpenPage({ file, mode });
       showSection("pages");
@@ -685,12 +694,13 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
         <div className={`grid grid-cols-[minmax(0,1fr)] gap-5 transition-[grid-template-columns] duration-300 lg:-mb-24 ${navCollapsed ? "lg:grid-cols-[4.25rem_minmax(0,1fr)]" : "lg:grid-cols-[14rem_minmax(0,1fr)]"}`}>
           {/* Wide screens: the logo, the site's name and the menu fill the window's height and stay put. */}
           <div className="min-w-0 lg:sticky lg:top-4 lg:flex lg:h-[calc(100dvh-2rem)] lg:min-h-96 lg:flex-col lg:self-start">
-            <div className={`mb-3 ${navCollapsed ? "lg:flex lg:justify-center" : ""}`}>
+            {/* Wide screens: as tall as the top bar beside it (h-10) with the same gap below (the screen
+                column's space-y-4), so the menu's card and the screen's card start on one line. */}
+            <div className={`mb-3 lg:mb-4 lg:flex lg:h-10 lg:items-center ${navCollapsed ? "lg:justify-center" : ""}`}>
               <Brand collapsed={navCollapsed} />
-              <div className={navCollapsed ? "lg:hidden" : ""}>
-                <Link href="/dashboard" className="mt-3 inline-block text-sm text-zinc-500 hover:text-foreground">
-                  ← Your sites
-                </Link>
+              {/* Small screens: above the menu button. Wide screens: at the top of the menu's card, below. */}
+              <div className="mt-3 lg:hidden">
+                <BackToSites collapsed={false} />
                 <h1 className="mt-0.5 line-clamp-2 text-xl font-bold tracking-tight">{siteTitle(overview?.site.name, overview?.displayName, repo)}</h1>
               </div>
             </div>
@@ -706,6 +716,11 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
               <span aria-hidden="true">{menuOpen ? "▴" : "▾"}</span>
             </button>
             <div className={`${menuOpen ? "mt-2 flex" : "hidden"} flex-col rounded-2xl bg-background p-2.5 shadow-sm lg:mt-0 lg:flex lg:min-h-0 lg:flex-1 lg:overflow-y-auto`}>
+              {/* The site's name heads the menu's card on wide screens, so the menu is one block. */}
+              <div className={`mb-2 hidden border-b border-zinc-100 pb-3 lg:block dark:border-zinc-800 ${navCollapsed ? "" : "px-1"}`}>
+                <BackToSites collapsed={navCollapsed} />
+                {!navCollapsed && <h1 className="mt-2 line-clamp-2 px-1.5 text-xl font-bold tracking-tight">{siteTitle(overview?.site.name, overview?.displayName, repo)}</h1>}
+              </div>
               <div className={`mb-1 hidden items-center lg:flex ${navCollapsed ? "justify-center" : "justify-between pl-2.5"}`}>
                 {!navCollapsed && <span className="text-xs font-semibold tracking-wider text-zinc-500">YOUR SITE</span>}
                 <button
@@ -738,8 +753,10 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
                   </li>
                 ))}
               </ul>
+
               <button
                 type="button"
+                data-tour="find"
                 onClick={() => {
                   setMenuOpen(false);
                   openPageFinder();
@@ -768,6 +785,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
                 >
                   More tools
                 </NavButton>
+                <LearnFeaturesButton collapsed={navCollapsed} isCreator={isCreator} active={section === "learn"} onClick={() => showSection("learn")} />
                 <button
                   type="button"
                   onClick={() => {
@@ -872,8 +890,12 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
               {designOpened && (
                 <div hidden={section !== "design"} className="space-y-6">
                   <ScreenHeader title="Look & logo" description="Your logo, colours, menu and footer. They appear on every page of your site." />
-                  <BrandPanel />
-                  <HeaderFooterPanel />
+                  <div data-tour="brand">
+                    <BrandPanel />
+                  </div>
+                  <div data-tour="header-footer">
+                    <HeaderFooterPanel />
+                  </div>
                 </div>
               )}
               {section === "details" && <StaticInfoPanel view="business" />}
@@ -881,6 +903,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
               {section === "publish" && <ChangesPanel />}
               {section === "analytics" && isCreator && <AnalyticsPanel />}
               {section === "more" && <MoreToolsPanel />}
+              {section === "learn" && <LearnPanel isCreator={isCreator} />}
               {section === "seo" && (
                 <>
                   <SeoPanel />
@@ -920,6 +943,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
       <AssistantPanel />
       <FirstRunSetup />
       <Tour active={section === "home"} />
+      <FeatureGuide section={section} isCreator={isCreator} />
       <PageFinder />
       </AssistantProvider>
     </SiteContext.Provider>
@@ -946,7 +970,7 @@ function AiBar() {
       }`}
     >
       {/* Clipped only while hidden, so the bar's shadow shows when it's there. */}
-      <div className={`min-h-0 ${open ? "overflow-hidden" : ""}`}>
+      <div data-tour="ai-bar" className={`min-h-0 ${open ? "overflow-hidden" : ""}`}>
         <AskClaude />
       </div>
     </div>
@@ -1008,13 +1032,16 @@ function TopBar() {
         </a>
       )}
       {/* The pill is also the way to what's changed. */}
-      <button type="button" onClick={() => showSection("publish")} title="See what changed" className={`rounded-full px-3 py-1 text-xs font-medium hover:opacity-80 ${pill.tone}`}>
+      <button type="button" data-tour="changes" onClick={() => showSection("publish")} title="See what changed" className={`rounded-full px-3 py-1 text-xs font-medium hover:opacity-80 ${pill.tone}`}>
         {pill.text}
       </button>
       {/* <AiHelpBadge /> */}
       <button
         type="button"
-        onClick={() => setChatOpen(!chatOpen)}
+        onClick={() => {
+          if (!chatOpen) noteFeature("chat-panel");
+          setChatOpen(!chatOpen);
+        }}
         aria-pressed={chatOpen}
         data-tour="chat"
         className={`flex h-10 items-center gap-2 rounded-xl px-3.5 text-sm font-semibold transition-colors ${
@@ -1147,6 +1174,25 @@ function Frame({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** The way back to the list of sites: a button with its words, or just the arrow while the menu is folded. */
+function BackToSites({ collapsed }: { collapsed: boolean }) {
+  return (
+    <Link
+      href="/dashboard"
+      title="Back to your sites"
+      aria-label={collapsed ? "Back to your sites" : undefined}
+      className={`inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-200 text-sm font-medium text-zinc-600 transition-colors hover:border-zinc-300 hover:bg-zinc-50 hover:text-foreground dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-900 ${
+        collapsed ? "mx-auto flex w-9 justify-center" : "pl-2 pr-3"
+      }`}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M15 18l-6-6 6-6" />
+      </svg>
+      {!collapsed && "Your sites"}
+    </Link>
+  );
+}
+
 function Brand({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <Link href="/dashboard" title="Your sites" className="flex items-center gap-2 font-semibold tracking-tight">
@@ -1175,3 +1221,35 @@ function Shell({ title, account, children }: { title: string; account: React.Rea
   );
 }
 
+
+/** The menu's "Learn the features" screen, with how far the owner has got. */
+function LearnFeaturesButton({ collapsed, isCreator, active, onClick }: { collapsed: boolean; isCreator: boolean; active: boolean; onClick: () => void }) {
+  const { done, total } = useFeatureProgress(isCreator);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`Learn the features: ${done} of ${total} tried`}
+      aria-label={collapsed ? "Learn the features" : undefined}
+      aria-current={active ? "page" : undefined}
+      className={`flex h-11 w-full cursor-pointer items-center gap-3 rounded-xl px-3 text-left text-sm transition-colors ${collapsed ? "lg:justify-center lg:px-0" : ""} ${
+        active
+          ? "bg-indigo-50 font-semibold text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200"
+          : "text-zinc-600 hover:bg-zinc-100 hover:text-foreground dark:text-zinc-400 dark:hover:bg-zinc-900"
+      }`}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="size-[19px] shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="9" />
+        <circle cx="12" cy="12" r="5" />
+        <circle cx="12" cy="12" r="1" />
+      </svg>
+      <span className={`min-w-0 flex-1 truncate whitespace-nowrap ${collapsed ? "lg:sr-only" : ""}`}>Learn the features</span>
+      <span className={collapsed ? "lg:hidden" : ""}>
+        <ProgressRing done={done} total={total} size={16} />
+      </span>
+      <span className="sr-only">
+        ({done} of {total} tried)
+      </span>
+    </button>
+  );
+}

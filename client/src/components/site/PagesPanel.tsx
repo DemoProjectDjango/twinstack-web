@@ -1,5 +1,6 @@
 "use client";
 
+import { noteFeature } from "./FeatureGuide";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { confirmModal } from "@/lib/confirm";
@@ -79,7 +80,14 @@ function PageList() {
     <div className="space-y-6">
       <ScreenHeader title="Pages" description="Every page on your site. Open one to write or change it.">
         {!adding && (
-          <Button variant="primary" onClick={() => setAdding(true)}>
+          <Button
+            variant="primary"
+            data-tour="add-page"
+            onClick={() => {
+              setAdding(true);
+              noteFeature("page-add");
+            }}
+          >
             + Add a page
           </Button>
         )}
@@ -259,8 +267,8 @@ function FindablePages({
   const hasHidden = lists.some((c) => c.pages.some((p) => p.draft));
   const canDate = lists.some((c) => c.pages.some((p) => p.changed));
   const hasDated = lists.some((c) => c.pages.some((p) => p.date));
-  // Short sites don't need the tools.
-  const showTools = total > 6 || query !== "" || filter !== "all";
+  // The search is always there once the site has a page, so owners find it where they expect it.
+  const showTools = total > 0 || query !== "" || filter !== "all";
 
   const shown = lists
     .filter((c) => (filter === "pages" ? !isPostList(c) : filter === "posts" ? isPostList(c) : true))
@@ -635,7 +643,9 @@ function PageRow({ page, query = "", unlinked, nav, onNavChanged }: { page: Site
             <Highlight text={address} query={query} />
           </span>
         </div>
-        <Button onClick={() => showOnSite(address)}>Edit on site</Button>
+        <Button data-tour="page-on-site" onClick={() => showOnSite(address)}>
+          Edit on site
+        </Button>
         <Button onClick={() => void editFile(page.file, "generate")}>Edit page</Button>
         <Button variant="ghost" aria-expanded={open} aria-label={`More for ${page.title}`} onClick={() => setOpen(!open)}>
           ⋯

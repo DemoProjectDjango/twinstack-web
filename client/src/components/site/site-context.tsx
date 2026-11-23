@@ -27,7 +27,8 @@ export type SiteSection =
   | "files"
   | "styles"
   | "models"
-  | "tools";
+  | "tools"
+  | "learn";
 
 /** How a page editor opens: "convert" replaces the page with an uploaded web page. */
 export type PageEditMode = EditMode | "convert";

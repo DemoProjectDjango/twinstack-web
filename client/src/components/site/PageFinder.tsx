@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { isHomePage, type SitePage } from "@/lib/site-api";
 import { Highlight, pageAddress } from "./PagesPanel";
+import { noteFeature } from "./FeatureGuide";
 import { useSite } from "./site-context";
 
 // "Find a page": a search over every page of the site from any screen, opened with Ctrl+K (⌘K on a
@@ -26,6 +27,11 @@ const SHOWN = 50;
 
 export function PageFinder() {
   const [open, setOpen] = useState(false);
+
+  // "Learn the features" ticks Find a page off however it was opened (button or shortcut).
+  useEffect(() => {
+    if (open) noteFeature("find");
+  }, [open]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
