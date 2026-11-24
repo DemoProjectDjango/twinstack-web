@@ -1,6 +1,7 @@
-// Shared by the Pages screen's "Copy a website" (components/site/CopyWebsite.tsx), which owns the
-// queue that brings copied pages into the site, and the AI's copy_website action
-// (AssistantProvider), which copies a website and then hands the bringing-in to that queue.
+// Shared by the editor's copied-website builder (components/site/CopyWebsite.tsx, CopyWebsiteRunner:
+// no screen of its own), which owns the queue that builds copied pages into the site, and the AI's
+// copy_website action (AssistantProvider, ActionCard), which makes the prototype and, on "Build it",
+// hands the building to that queue.
 
 /** Ask the Pages screen to bring in the copied pages now waiting in the saved queue. */
 export const COPY_BRING_IN_EVENT = "twinstack:copy-website-bring-in";
@@ -8,6 +9,10 @@ export const COPY_BRING_IN_EVENT = "twinstack:copy-website-bring-in";
 export const COPY_DONE_EVENT = "twinstack:copy-website-done";
 
 export type CopyDone = { broughtIn: number; total: number; missing: string[]; stopped: string | null };
+
+/** The build's progress while it runs, for the prototype card in the chat. */
+export const COPY_PROGRESS_EVENT = "twinstack:copy-website-progress";
+export type CopyProgress = { done: number; total: number; working: string | null; retryPass: number | null };
 
 // What's left of a "Bring in", per site and tab, so a reload carries on where it stopped.
 const queueKey = (owner: string, repo: string) => `twinstack:copy-website-queue:${owner}/${repo}`;

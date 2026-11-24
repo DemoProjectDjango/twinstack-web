@@ -152,7 +152,7 @@ const tail = (output: string) => output.trim().split("\n").slice(-OUTPUT_TAIL_LI
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export function AssistantProvider({ context, children }: { context: AssistantContext; children: ReactNode }) {
-  const { owner, repo, runAndWait, runJobAt, showSection, setStatus, refresh, siteCheck, busy: siteBusy } = useSite();
+  const { owner, repo, runAndWait, runJobAt, setStatus, refresh, siteCheck, busy: siteBusy } = useSite();
   // The latest check found problems that would keep the live site from updating.
   const problemsLeft = siteCheck.fresh && siteCheck.report?.ok === false;
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -491,25 +491,14 @@ ${tail(job.output)}`);
           return;
         }
         case "copy_website": {
-          // Copy the website (a server job), then let the Pages screen's queue bring every page in,
-          // the same way the owner's "Bring in all" does, and wait for its report.
+          // Step 1, the prototype: the website's pages are opened and kept, with their pictures and
+          // fonts (a server job, no credits), and the card shows them. Nothing is in the site until the
+          // owner presses "Build it" (keep, below), even when changes are made automatically.
           const job = await runJobAt("/copy-website", { url: input.url, maxPages: input.maxPages, permission: true });
           if (job.status !== "succeeded") throw new Error(`The website couldn't be copied.\n${tail(job.output)}`);
-          const { copy } = await api<{ copy: { host: string; pages: { id: string; broughtIn: boolean }[] } | null }>(workspacePath(owner, repo, "/copy-website"));
-          if (!copy?.pages.length) throw new Error("No pages were copied.");
-          saveCopyQueue(owner, repo, copy.pages.filter((p) => !p.broughtIn).map((p) => p.id));
-          const finished = waitForCopyDone(3 * 60 * 60_000);
-          showSection("pages");
-          window.dispatchEvent(new Event(COPY_BRING_IN_EVENT));
-          const result = await finished;
-          if (!result) throw new Error("Bringing the pages in is taking too long. The Pages screen shows how far it got.");
-          const report = [
-            `Copied ${copy.pages.length} page${copy.pages.length === 1 ? "" : "s"} of ${copy.host}; ${result.broughtIn} of ${result.total} brought into the site, looking as they did.`,
-            result.missing.length ? `Not brought in, so links to them go to the old website: ${result.missing.join(", ")}.` : "",
-            result.stopped ? `It stopped early: ${result.stopped}` : "",
-          ].filter(Boolean).join(" ");
-          if (!result.broughtIn && result.total) throw new Error(report);
-          await record(action, "applied", report.slice(0, 1000));
+          const { copy } = await api<{ copy: { host: string; pages: { id: string }[] } | null }>(workspacePath(owner, repo, "/copy-website"));
+          if (!copy?.pages.length) throw new Error("No pages could be copied from that website.");
+          await record(action, "ready", `The prototype is ready: ${copy.pages.length} page${copy.pages.length === 1 ? "" : "s"} of ${copy.host}, waiting for the owner to build it.`);
           return;
         }
         case "check_site": {
@@ -559,7 +548,7 @@ ${tail(job.output)}`);
           throw new Error("This change can't be run from here.");
       }
     },
-    [actions, owner, repo, record, runAndWait, runJobAt, showSection, writePage, sitePaths, setStatus],
+    [actions, owner, repo, record, runAndWait, runJobAt, writePage, sitePaths, setStatus],
   );
 
   const apply = useCallback(
@@ -635,6 +624,29 @@ ${tail(job.output)}`);
     async (action: AssistantAction, { showIt = false }: { showIt?: boolean } = {}) => {
       setBusy(action.id, true);
       try {
+        if (action.tool === "copy_website") {
+          // Step 2, "Build it": the editor's builder (CopyWebsiteRunner) brings every page in and reports back.
+          const { copy } = await api<{ copy: { host: string; pages: { id: string; broughtIn: boolean }[] } | null }>(workspacePath(owner, repo, "/copy-website"));
+          if (!copy?.pages.length) {
+            await record(action, "failed", "The prototype isn't there any more. Ask me to copy the website again.");
+            return;
+          }
+          saveCopyQueue(owner, repo, copy.pages.filter((p) => !p.broughtIn).map((p) => p.id));
+          const finished = waitForCopyDone(3 * 60 * 60_000);
+          window.dispatchEvent(new Event(COPY_BRING_IN_EVENT));
+          const result = await finished;
+          if (!result) throw new Error("Building the pages is taking too long. Try again in a while.");
+          const mode = action.meta.mode === "upgrade" ? "upgrade" : "same";
+          const report = [
+            `Built ${result.broughtIn} of ${result.total} page${result.total === 1 ? "" : "s"} of ${copy.host}, looking as they did.`,
+            result.missing.length ? `Not built, so links to them go to the old website: ${result.missing.join(", ")}.` : "",
+            result.stopped ? `It stopped early: ${result.stopped}` : "",
+            mode === "upgrade" ? `The owner chose an upgraded copy: now make the upgrades listed (${((action.meta.upgrades as string[]) ?? []).join("; ")}).` : "The owner chose the same design.",
+          ].filter(Boolean).join(" ");
+          await record(action, result.broughtIn || !result.total ? "applied" : "failed", report.slice(0, 1500));
+          await refresh();
+          return;
+        }
         const { proposal } = await api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal"));
         if (!proposal) {
           await record(action, "failed", "The new version isn't there any more (it may have been kept or thrown away in the page editor).");
@@ -663,6 +675,11 @@ ${tail(job.output)}`);
     async (action: AssistantAction) => {
       setBusy(action.id, true);
       try {
+        if (action.tool === "copy_website") {
+          await api(workspacePath(owner, repo, "/copy-website"), { method: "DELETE" });
+          await record(action, "skipped", "The owner chose not to build the copy.");
+          return;
+        }
         await api(workspacePath(owner, repo, "/proposal"), { method: "DELETE" });
         await record(action, "skipped", "Threw away the new version.");
       } catch (err) {
@@ -764,7 +781,9 @@ ${tail(job.output)}`);
     return null;
   }, [queued, actions]);
   const unattended = queueKind === "all" || (queueKind === "auto" && autoApply);
-  const applyingAll = queueHead !== null && queueHead.status !== "failed" && (queueHead.status !== "ready" || unattended);
+  // A copied website's prototype always waits for the owner's "Build it", even when changes are made automatically.
+  const waitsForOwner = queueHead?.tool === "copy_website" && queueHead.status === "ready";
+  const applyingAll = queueHead !== null && queueHead.status !== "failed" && !waitsForOwner && (queueHead.status !== "ready" || unattended);
   useEffect(() => {
     // Also waits out a command still running from before a reload, which would refuse the next one.
     if (!queueHead || working.size || siteBusy) return;
@@ -778,7 +797,7 @@ ${tail(job.output)}`);
       rerun.current.add(queueHead.id);
       next = () => apply(queueHead, { confirmed: unattended });
     }
-    else if (queueHead.status === "ready" && unattended) next = () => keep(queueHead, { showIt: more });
+    else if (queueHead.status === "ready" && unattended && queueHead.tool !== "copy_website") next = () => keep(queueHead, { showIt: more });
     if (!next) return;
     const timer = setTimeout(() => void next(), 0);
     return () => clearTimeout(timer);

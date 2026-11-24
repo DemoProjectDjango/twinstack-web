@@ -13,6 +13,7 @@ import { AiHelpBadge } from "./AiHelpBadge";
 import { AnalyticsPanel } from "./AnalyticsPanel";
 import { AiActivity } from "./assistant/AiActivity";
 import { SiteBuildActivity } from "./assistant/SiteBuildActivity";
+import { CopyWebsiteRunner } from "./CopyWebsite";
 import { DomainPanel } from "./DomainPanel";
 import { FirstRunSetup } from "./FirstRunSetup";
 import { AskClaude } from "./assistant/AskClaude";
@@ -946,6 +947,8 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
               {section === "tools" && <BuildPanel />}
             </div>
             <AiActivity />
+            {/* Builds a copied website's pages after the AI's prototype card says "Build it" (no screen of its own). */}
+            <CopyWebsiteRunner />
             <SiteBuildActivity />
             </div>
 

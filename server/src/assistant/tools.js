@@ -468,10 +468,12 @@ const TOOLS = [
   ),
   tool(
     "copy_website",
-    "Proposes copying another website into this site: its pages (the start page, then those its menus lead to) come in looking the same, with their pictures, fonts and styles, and its header and footer become the site's. Takes a few minutes and some credits per page. Only after the owner has said the website is theirs or they have permission to copy it: ask with offer_choices first. Pages at the same addresses are replaced. Afterwards look at the result (view_page) and offer improvements.",
+    "Copies another website into this site, in two steps. First it makes a prototype (no credits): the pages it will build (the start page, then those its menus lead to), each pictured on a computer and a phone, shown to the owner in the chat with what you'll upgrade. Nothing is added until the owner presses Build it; then each page comes in looking the same, with its pictures, fonts and styles, and its header and footer become the site's (a few minutes and some credits per page). Only after the owner said the website is theirs or they may copy it, and chose the same design or an upgraded one: ask with offer_choices first. Pages at the same addresses are replaced.",
     {
       url: { type: "string", description: "The website's start page." },
       max_pages: { type: "integer", description: `How many pages at most (default ${DEFAULT_PAGES}, at most ${MAX_PAGES}).` },
+      mode: { type: "string", enum: ["same", "upgrade"], description: "same: build it as it is. upgrade: build it, then you carry out the upgrades listed." },
+      upgrades: { type: "array", items: { type: "string" }, description: "With mode upgrade: 2 to 6 concrete improvements you'll make once it's built, in the owner's words (e.g. \"A bolder homepage hero with one clear button\")." },
       owner_confirmed_permission: { type: "boolean", description: "true only when the owner said in this conversation that the website is theirs or they may copy it." },
       ...summaryField,
       ...continueField,
@@ -1263,8 +1265,11 @@ async function prepareChange(name, input, key, context) {
         throw new ToolInputError("This site's tools are too old to bring pages in. Ask the owner to update them (Technical log, under More tools).");
       }
       const maxPages = Math.min(MAX_PAGES, Math.max(1, Math.trunc(Number(input?.max_pages)) || DEFAULT_PAGES));
-      // Always carries on, so the AI looks at what came in and offers improvements.
-      return { ...base, continueAfter: true, input: { url, maxPages }, meta: { host: new URL(url).hostname.replace(/^www\./, "") } };
+      const mode = input?.mode === "upgrade" ? "upgrade" : "same";
+      const upgrades = (Array.isArray(input?.upgrades) ? input.upgrades : []).filter((u) => typeof u === "string" && u.trim()).map((u) => u.trim().slice(0, 200)).slice(0, 6);
+      if (mode === "upgrade" && upgrades.length < 1) throw new ToolInputError("For an upgraded copy, list the upgrades you'll make (upgrades), so the owner sees them on the prototype.");
+      // Always carries on once built, so the AI makes the upgrades or looks at what came in and offers some.
+      return { ...base, continueAfter: true, input: { url, maxPages, mode, upgrades }, meta: { host: new URL(url).hostname.replace(/^www\./, ""), mode, upgrades } };
     }
     case "create_missing_pages":
       return { ...base, input: {}, meta: {} };

@@ -130,7 +130,10 @@ function describe(action: AssistantAction, pages: SitePage[]): { doing: string; 
       case "check_site":
         return { doing: "Checking your site", item: "Site check" };
       case "copy_website":
-        return { doing: `Copying ${text(meta.host) ?? "the website"}`, item: `Copy ${text(meta.host) ?? "a website"}` };
+        return {
+          doing: action.status === "ready" ? "Your prototype is ready: look at it in the chat, then Build it" : action.result ? `Building your copy of ${text(meta.host) ?? "the website"}` : `Making a prototype of ${text(meta.host) ?? "the website"}`,
+          item: `Copy ${text(meta.host) ?? "a website"}`,
+        };
       case "create_missing_pages":
         return {
           doing: "Creating the pages in your plan",

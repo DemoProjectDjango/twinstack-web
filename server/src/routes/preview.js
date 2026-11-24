@@ -34,6 +34,8 @@ function rebase(text, prefix) {
     .replace(/url\((["']?)\/(?!\/)/g, `url($1${prefix}/`);
 }
 
+const FONT = /^\.(woff2?|ttf|otf|eot)$/;
+
 function resolveFile(dist, relative) {
   const candidates = [relative, `${relative}.html`, path.join(relative, "index.html")];
   for (const candidate of candidates) {
@@ -72,6 +74,11 @@ previewRouter.get("/:userId/:owner/:repo/:signature{/*path}", async (req, res) =
     const text = rebase(await fs.readFile(file, "utf8"), prefix);
     return res.type(extension).send(extension === ".html" && kind === "site" ? withInlineEdit(text) : text);
   }
+  // The preview frame is sandboxed without allow-same-origin, so its origin is "null", and browsers
+  // only load web fonts across origins with this header: without it every font a page brings (a copied
+  // website's, Font Awesome's) was blocked in the preview and the text fell back to system fonts.
+  // Fonts are public parts of the site, and this URL is signed.
+  if (FONT.test(extension)) res.set("Access-Control-Allow-Origin", "*");
   // Relative to `root`, so the dot-file check sees only the path inside the built site: a proposal
   // build lives under the workspace's .git/, which an absolute path would always be refused for.
   res.sendFile(path.relative(dist, file), { root: dist, dotfiles: "deny" });
