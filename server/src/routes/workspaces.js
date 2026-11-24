@@ -5,6 +5,7 @@ import express, { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
 import { describeTaskSize, taskSize } from "../task-size.js";
 import { listOriginalPages, prepareOriginalPage } from "../original-pages.js";
+import { DEFAULT_PAGES, MAX_PAGES, clearCopiedWebsite, copiedPageShot, copyWebsiteStep, finishCopiedWebsite, normaliseStartUrl, prepareCopiedPage, readCopiedWebsite } from "../copy-website.js";
 import { config } from "../config.js";
 import { getClaudeModel, getSiteDisplayName, noteSetupPublished, noteSetupSignal } from "../db.js";
 import { issueProxyToken } from "../claude-proxy.js";
@@ -549,6 +550,83 @@ workspacesRouter.post(
     const key = keyFor(req);
     const prepared = await prepareOriginalPage(key, req.body?.file);
     res.json({ ...prepared, status: await getStatus(key) });
+  }),
+);
+
+/*
+ * Copy a website (copy-website.js): a job opens the website's pages in a browser and keeps them,
+ * with their pictures, fonts and styles; each page is then brought in with page-convert, like an
+ * original page, and "finish" points links to pages that didn't come in back at the old website.
+ */
+
+workspacesRouter.get(
+  "/:owner/:repo/copy-website",
+  handle(async (req, res) => res.json({ copy: await readCopiedWebsite(keyFor(req)), limits: { pages: DEFAULT_PAGES, maxPages: MAX_PAGES } })),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/copy-website",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const url = normaliseStartUrl(req.body?.url);
+    // The owner says the website is theirs, or that they may copy it: its words, pictures and
+    // design belong to someone.
+    if (req.body?.permission !== true) throw new WorkspaceError("Confirm that the website is yours or that you have permission to copy it.", 400);
+    const maxPages = Math.min(MAX_PAGES, Math.max(1, Number(req.body?.maxPages) || DEFAULT_PAGES));
+    const release = acquire(key, "copying a website");
+    try {
+      const job = startJob({
+        key,
+        userId: req.user.id,
+        command: "copy-website",
+        label: "Copy a website",
+        steps: [copyWebsiteStep(key, { url, maxPages })],
+        cwd: workspaceDir(key),
+        env: jobEnv(null, null),
+        release,
+      });
+      res.status(202).json({ job });
+    } catch (err) {
+      release();
+      throw err;
+    }
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/copy-website/prepare",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const id = String(req.body?.id ?? "");
+    if (!/^\d{2}$/.test(id)) throw new WorkspaceError("Which copied page?", 400);
+    const prepared = await prepareCopiedPage(key, id);
+    res.json({ ...prepared, status: await getStatus(key) });
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/copy-website/finish",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const result = await finishCopiedWebsite(key);
+    res.json({ ...result, status: await getStatus(key) });
+  }),
+);
+
+workspacesRouter.get(
+  "/:owner/:repo/copy-website/shots/:id/:screen",
+  handle(async (req, res) => {
+    const bytes = await copiedPageShot(keyFor(req), req.params.id, req.params.screen);
+    if (!bytes) throw new WorkspaceError("There's no picture of that page.", 404);
+    res.set("cache-control", "private, max-age=300").type("image/jpeg").send(bytes);
+  }),
+);
+
+workspacesRouter.delete(
+  "/:owner/:repo/copy-website",
+  handle(async (req, res) => {
+    await clearCopiedWebsite(keyFor(req));
+    res.json({ ok: true });
   }),
 );
 

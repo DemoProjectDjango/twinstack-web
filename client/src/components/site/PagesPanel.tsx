@@ -7,6 +7,7 @@ import { confirmModal } from "@/lib/confirm";
 import { api, isHomePage, workspacePath, type NavigationInfo, type NavItem, type SitePage, type WorkspaceStatus } from "@/lib/site-api";
 import { PageContentEditor } from "./EditPanel";
 import { markVisited } from "./HomePanel";
+import { CopyWebsite } from "./CopyWebsite";
 import { OriginalPages } from "./OriginalPages";
 import { PageHealth, usePageHealth } from "./PageHealth";
 import { PageSeo } from "./SeoPanel";
@@ -127,6 +128,8 @@ function PageList() {
       )}
 
       <OriginalPages />
+
+      <CopyWebsite />
 
       {pageCount > 0 && <PageHealth health={health} onOpen={(file) => void editFile(file, "generate")} />}
 

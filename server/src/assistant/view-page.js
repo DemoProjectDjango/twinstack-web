@@ -35,9 +35,11 @@ const TYPES = {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function findChrome() {
+export function findChrome() {
   const candidates = [
     process.env.CHROME_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
     "C:/Program Files/Google/Chrome/Application/chrome.exe",
     "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
     "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
@@ -96,7 +98,7 @@ function serve(root) {
 }
 
 /** Starts the browser and returns a small DevTools client for one page. */
-async function launch(executable) {
+export async function launch(executable) {
   const profile = await fs.mkdtemp(path.join(os.tmpdir(), "twinstack-view-"));
   const browser = spawn(executable, ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: "ignore", env: jobEnv(null, null) });
   const close = () => {

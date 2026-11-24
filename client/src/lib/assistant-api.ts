@@ -31,6 +31,7 @@ export type ActionTool =
   | "update_site_scripts"
   | "undo_changes"
   | "convert_page_from_html"
+  | "copy_website"
   | "update_site_plan"
   | "check_site"
   | "create_missing_pages"

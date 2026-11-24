@@ -293,12 +293,12 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
     [start],
   );
 
-  // A job started by a route of its own rather than a command (the site update): followed like
-  // any command, and resolves with the finished job.
+  // A job started by a route of its own rather than a command (the site update, copying a website):
+  // followed like any command, and resolves with the finished job.
   const runJobAt = useCallback(
-    async (rest: string) => {
+    async (rest: string, body: Record<string, unknown> = {}) => {
       setRunError(null);
-      const { job: started } = await api<{ job: Job }>(workspacePath(owner, repo, rest), { method: "POST", body: {} });
+      const { job: started } = await api<{ job: Job }>(workspacePath(owner, repo, rest), { method: "POST", body });
       dryRunJob.current = null;
       autoJob.current = null;
       setAutoJobId(null);
@@ -656,6 +656,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
     version,
     run,
     runAndWait,
+    runJobAt,
     setStatus,
     refresh: refreshAfterChange,
     editFile,

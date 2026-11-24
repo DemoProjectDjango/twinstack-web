@@ -1,5 +1,6 @@
 "use client";
 
+import { COPY_BRING_IN_EVENT, saveQueue as saveCopyQueue, waitForCopyDone } from "@/lib/copy-website";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   assistantApi,
@@ -151,7 +152,7 @@ const tail = (output: string) => output.trim().split("\n").slice(-OUTPUT_TAIL_LI
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export function AssistantProvider({ context, children }: { context: AssistantContext; children: ReactNode }) {
-  const { owner, repo, runAndWait, setStatus, refresh, siteCheck, busy: siteBusy } = useSite();
+  const { owner, repo, runAndWait, runJobAt, showSection, setStatus, refresh, siteCheck, busy: siteBusy } = useSite();
   // The latest check found problems that would keep the live site from updating.
   const problemsLeft = siteCheck.fresh && siteCheck.report?.ok === false;
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -489,6 +490,28 @@ ${tail(job.output)}`);
           await record(action, "ready", "The converted page is ready to look at.");
           return;
         }
+        case "copy_website": {
+          // Copy the website (a server job), then let the Pages screen's queue bring every page in,
+          // the same way the owner's "Bring in all" does, and wait for its report.
+          const job = await runJobAt("/copy-website", { url: input.url, maxPages: input.maxPages, permission: true });
+          if (job.status !== "succeeded") throw new Error(`The website couldn't be copied.\n${tail(job.output)}`);
+          const { copy } = await api<{ copy: { host: string; pages: { id: string; broughtIn: boolean }[] } | null }>(workspacePath(owner, repo, "/copy-website"));
+          if (!copy?.pages.length) throw new Error("No pages were copied.");
+          saveCopyQueue(owner, repo, copy.pages.filter((p) => !p.broughtIn).map((p) => p.id));
+          const finished = waitForCopyDone(3 * 60 * 60_000);
+          showSection("pages");
+          window.dispatchEvent(new Event(COPY_BRING_IN_EVENT));
+          const result = await finished;
+          if (!result) throw new Error("Bringing the pages in is taking too long. The Pages screen shows how far it got.");
+          const report = [
+            `Copied ${copy.pages.length} page${copy.pages.length === 1 ? "" : "s"} of ${copy.host}; ${result.broughtIn} of ${result.total} brought into the site, looking as they did.`,
+            result.missing.length ? `Not brought in, so links to them go to the old website: ${result.missing.join(", ")}.` : "",
+            result.stopped ? `It stopped early: ${result.stopped}` : "",
+          ].filter(Boolean).join(" ");
+          if (!result.broughtIn && result.total) throw new Error(report);
+          await record(action, "applied", report.slice(0, 1000));
+          return;
+        }
         case "check_site": {
           const checkPath = workspacePath(owner, repo, "/check");
           let check = await api<SiteCheck>(checkPath);
@@ -536,7 +559,7 @@ ${tail(job.output)}`);
           throw new Error("This change can't be run from here.");
       }
     },
-    [actions, owner, repo, record, runAndWait, writePage, sitePaths, setStatus],
+    [actions, owner, repo, record, runAndWait, runJobAt, showSection, writePage, sitePaths, setStatus],
   );
 
   const apply = useCallback(

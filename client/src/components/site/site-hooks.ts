@@ -219,7 +219,7 @@ export function useSiteUpdate({
   owner: string;
   repo: string;
   version: number;
-  runJobAt: (rest: string) => Promise<Job>;
+  runJobAt: (rest: string, body?: Record<string, unknown>) => Promise<Job>;
   run: (command: string) => Promise<boolean>;
   setStatus: (status: WorkspaceStatus) => void;
   watch: () => void;

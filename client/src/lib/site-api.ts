@@ -215,6 +215,8 @@ export type Overview = {
     pageConvertChrome?: boolean;
     /** A conversion can keep the page's own header and footer on that page alone (edit-page.js --own-chrome). */
     pageConvertOwnChrome?: boolean;
+    /** The conversion can keep a copied page's own breadcrumbs and sidebars (--keep-sidebars). */
+    pageConvertSidebars?: boolean;
     /** A page can add itself to the menu or footer (frontmatter `menu`, set with /navigation/page-menu). */
     pageMenus?: boolean;
     /** Its base.html loads the visit counter (assets/js/analytics.js) when site.config.json → analytics has a key. */
