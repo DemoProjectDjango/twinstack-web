@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import dns from "node:dns/promises";
 import { MongoClient, ObjectId } from "mongodb";
-import { DEFAULT_ASSISTANT_MODEL, DEFAULT_MODEL, isClaudeModel } from "./claude-models.js";
+import { DEFAULT_ASSISTANT_MODEL, DEFAULT_MODEL, isClaudeModel, USER_MODEL_CHOICE } from "./claude-models.js";
 import { PROVIDERS, providerOf } from "./ai-providers.js";
 import { config } from "./config.js";
 
@@ -484,6 +484,7 @@ export async function setClaudeModel(id, model) {
 
 /** The account's chosen Claude model, or the default when it hasn't chosen one (or chose one no longer offered). */
 export async function getClaudeModel(id) {
+  if (!USER_MODEL_CHOICE) return DEFAULT_MODEL;
   const doc = await users().findOne({ _id: objectId(id) }, { projection: { claudeModel: 1 } });
   return isClaudeModel(doc?.claudeModel) ? doc.claudeModel : DEFAULT_MODEL;
 }
@@ -494,6 +495,7 @@ export async function setAssistantModel(id, model) {
 
 /** The model the "Ask Claude" assistant answers with: the account's choice, or DEFAULT_ASSISTANT_MODEL. */
 export async function getAssistantModel(id) {
+  if (!USER_MODEL_CHOICE) return DEFAULT_ASSISTANT_MODEL;
   const doc = await users().findOne({ _id: objectId(id) }, { projection: { assistantModel: 1 } });
   return isClaudeModel(doc?.assistantModel) ? doc.assistantModel : DEFAULT_ASSISTANT_MODEL;
 }

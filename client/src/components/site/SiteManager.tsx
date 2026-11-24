@@ -66,6 +66,11 @@ const OTHER: { id: SiteSection; label: string }[] = [
 ];
 const TOOL_IDS = new Set<SiteSection>(MORE_TOOLS.map((tool) => tool.id));
 
+/** A screen's name as the menu shows it ("Edit site", "Pages", "Google & sharing"…). */
+function screenLabel(id: SiteSection) {
+  return [...MAIN, ANALYTICS, ...OTHER].find((s) => s.id === id)?.label ?? "Edit site";
+}
+
 // The menu's icons (24×24 stroke paths), by screen.
 const NAV_ICONS: Partial<Record<SiteSection, React.ReactNode>> = {
   home: (
@@ -171,6 +176,12 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
   const [runError, setRunError] = useState<unknown>(null);
   const [version, setVersion] = useState(0);
   const [section, setSection] = useState<SiteSection>("home");
+  // The screen the publish screen was opened from (What's changed, Earlier versions), for its back link.
+  const [cameFrom, setCameFrom] = useState<SiteSection>("home");
+  const sectionRef = useRef<SiteSection>("home");
+  useEffect(() => {
+    sectionRef.current = section;
+  }, [section]);
   const [openPage, setOpenPage] = useState<{ file: string; mode: PageEditMode } | null>(null);
   const [previewTarget, setPreviewTarget] = useState<{ url: string; n: number } | null>(null);
   // The page Edit site's preview shows, so "this page" means it there too.
@@ -496,6 +507,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
   const showSection = useCallback((next: SiteSection) => {
     // Opening a screen from the menu shows the site from its homepage, not the last page asked for.
     setPreviewTarget(null);
+    if (next === "publish" && sectionRef.current !== "publish") setCameFrom(sectionRef.current);
     setSection(next);
     noteScreen(next);
     setMenuOpen(false);
@@ -880,6 +892,12 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
               {TOOL_IDS.has(section) && (
                 <button type="button" onClick={() => showSection("more")} className="text-sm text-zinc-500 hover:underline">
                   ← More tools
+                </button>
+              )}
+              {/* What's changed and Earlier versions open from the top bar and More tools, not the menu: a way back. */}
+              {section === "publish" && (
+                <button type="button" onClick={() => showSection(cameFrom === "publish" ? "home" : cameFrom)} className="text-sm text-zinc-500 hover:underline">
+                  ← Back to {screenLabel(cameFrom === "publish" ? "home" : cameFrom)}
                 </button>
               )}
 

@@ -27,6 +27,18 @@ type FrameMessage =
   | { type: "scroll"; path: string; y: number }
   | { type: "typing"; on: boolean }
   | { type: "edit"; id: number; path: string; before: string; after: string; index: number; count: number }
+  // The style bar (bold/italic/underline on picked words, alignment or colour): POST …/pages/style, no AI.
+  | {
+      type: "style";
+      id: number;
+      path: string;
+      text: string;
+      index: number;
+      count: number;
+      tag: string;
+      selection: { start: number; end: number } | null;
+      style: { kind: "bold" | "italic" | "underline" | "align" | "color"; value?: string };
+    }
   | { type: "not-editable" }
   | { type: "ask-section"; path: string; heading: string; start: string; position: number; count: number };
 
@@ -225,6 +237,28 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
       }
     }
 
+    async function saveStyle(message: Extract<FrameMessage, { type: "style" }>) {
+      if (message.path !== base && !message.path.startsWith(`${base}/`)) {
+        post(frameRef.current, { type: "result", id: message.id, ok: false });
+        return;
+      }
+      const address = message.path.slice(base.length) || "/";
+      setNote({ tone: "saving" });
+      try {
+        const result = await api<{ file: string; status: WorkspaceStatus }>(workspacePath(owner, repo, "/pages/style"), {
+          method: "POST",
+          body: { address, text: message.text, index: message.index, count: message.count, tag: message.tag, selection: message.selection, style: message.style },
+        });
+        post(frameRef.current, { type: "result", id: message.id, ok: true });
+        setStatus(result.status);
+        setNote({ tone: "saved", text: "Saved. The preview updates by itself, and it goes live when you publish." });
+        noteFeature("edit-text");
+      } catch (err) {
+        post(frameRef.current, { type: "result", id: message.id, ok: false });
+        setNote({ tone: "error", error: err });
+      }
+    }
+
     function onMessage(event: MessageEvent) {
       const frame = frameRef.current;
       if (!frame || event.source !== frame.contentWindow) return;
@@ -252,6 +286,8 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
         setTyping(data.on);
       } else if (data.type === "edit") {
         if (editingRef.current) void save(data);
+      } else if (data.type === "style") {
+        if (editingRef.current) void saveStyle(data);
       } else if (data.type === "ask-section") {
         askAbout.current(data);
         noteFeature("ask-section");

@@ -3,47 +3,21 @@
 import { SiteUpdateCard, ToolsNotice, formatDay } from "./HomePanel";
 import { JobLog } from "./JobLog";
 import { useSite } from "./site-context";
-import { Button, Notice, ScreenHeader, Section } from "./ui";
+import { ScreenHeader, Section } from "./ui";
 
-/** Advanced: the commands the editor normally runs by itself, their full output, and where the site stands in git. */
+/** Advanced: site updates, where the site stands in git, and the full output of the last command. The testing tools (build, install, changelog, preview with hidden pages) were taken out on Nov 24: the editor runs them by itself. */
 export function BuildPanel() {
-  const { status, busy, run, siteUpdate } = useSite();
+  const { status, siteUpdate } = useSite();
   const info = siteUpdate.info;
-  const needsInstall = status.needsInstall;
 
   return (
     <div className="space-y-6">
       <ScreenHeader
         title="Technical log"
-        description="The editor builds the preview and installs what the site needs by itself. Use these when something looks wrong, and read the full output below."
+        description="Site updates, where your site stands, and the full output of the last thing that ran, for when something didn't work."
       />
 
       <ToolsNotice />
-
-      <Section
-        title="Build"
-        description="Build and check is the same check the live site runs before publishing: it fails on broken links between pages or two pages at the same address, and warns about missing search settings."
-      >
-        {needsInstall && (
-          <div className="mb-4">
-            <Notice tone="warning">The site&apos;s dependencies need installing before anything can build.</Notice>
-          </div>
-        )}
-        <div className="flex flex-wrap gap-2">
-          <Button variant="primary" disabled={busy || needsInstall} onClick={() => run("check")}>
-            Build and check
-          </Button>
-          <Button disabled={busy || needsInstall} onClick={() => run("preview")}>
-            Rebuild the preview (with hidden pages)
-          </Button>
-          <Button disabled={busy} onClick={() => run("install")}>
-            Install dependencies
-          </Button>
-          <Button disabled={busy || needsInstall} onClick={() => run("changelog")}>
-            Regenerate changelog
-          </Button>
-        </div>
-      </Section>
 
       <Section
         title="Site updates"

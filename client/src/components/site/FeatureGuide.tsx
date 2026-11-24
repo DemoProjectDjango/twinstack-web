@@ -408,16 +408,6 @@ const STEPS: Step[] = [
     done: { visit: "models" },
   },
   {
-    id: "tree",
-    chapter: "tools",
-    title: "Page plan",
-    text: "The list of pages your site should have. The builder can make any missing ones in one go.",
-    todo: "Open Page plan in More tools.",
-    section: "more",
-    target: ["tool-tree"],
-    done: { visit: "tree" },
-  },
-  {
     id: "log",
     chapter: "tools",
     title: "Technical log",

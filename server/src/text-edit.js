@@ -380,3 +380,117 @@ export async function editPreviewText(key, { address, before, after, index, coun
     release();
   }
 }
+
+/* ------------------------------------------------------------ styling (no AI) */
+
+// The preview's style bar (inline-edit.js): bold, italic or underline on the words picked in a
+// paragraph or heading, and its alignment or colour, written straight into the page's source with no
+// AI and no credits. Words are wrapped in <strong>/<em>/<u> (picking them again takes it off);
+// alignment and colour go in the element's own style="…". Only a page's own body can be styled: text
+// kept in Business info or the page settings isn't HTML, and the AI can change it instead.
+const WRAPS = { bold: "strong", italic: "em", underline: "u" };
+const ALIGNS = new Set(["left", "center", "right", "justify"]);
+const COLOUR = /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i;
+const INLINE_TAG = /^(a|abbr|b|bdi|bdo|cite|code|em|font|i|kbd|mark|q|s|samp|small|span|strong|sub|sup|time|u|var)$/i;
+
+/** `tag` (a start tag's text) with CSS property `prop` set to `value` in its style="…" ("" removes it). */
+export function withStyle(tag, prop, value) {
+  const decl = value ? `${prop}: ${value}` : "";
+  const m = /\sstyle\s*=\s*(["'])([\s\S]*?)\1/i.exec(tag);
+  if (m) {
+    const kept = m[2].split(";").map((part) => part.trim()).filter((part) => part && !new RegExp(`^${prop}\\s*:`, "i").test(part));
+    const next = [...kept, ...(decl ? [decl] : [])].join("; ");
+    return tag.slice(0, m.index) + (next ? ` style=${m[1]}${next}${m[1]}` : "") + tag.slice(m.index + m[0].length);
+  }
+  return decl ? tag.replace(/\s*(\/?)>$/, ` style="${decl}"$1>`) : tag;
+}
+
+/**
+ * Where the start tag of the element whose text begins at `from` is: going back over spaces and the
+ * start tags of inline parts (a bold first word, a link), the first start tag must be a `tag`.
+ * Returns `{ start, end }` of that tag in `source`, or null.
+ */
+function startTagBefore(source, from, tag, bodyStart) {
+  let at = from;
+  while (at > bodyStart) {
+    while (at > bodyStart && /\s/.test(source[at - 1])) at--;
+    if (source[at - 1] !== ">") return null;
+    const open = source.lastIndexOf("<", at - 1);
+    if (open < bodyStart) return null;
+    const m = /^<([a-zA-Z][\w-]*)\b/.exec(source.slice(open, at));
+    if (!m) return null;
+    if (m[1].toLowerCase() === tag) return { start: open, end: at };
+    if (!INLINE_TAG.test(m[1])) return null;
+    at = open;
+  }
+  return null;
+}
+
+export async function stylePreviewText(key, { address, text, index, count, tag, selection, style } = {}) {
+  if (typeof address !== "string" || !address.startsWith("/") || address.length > 500) fail("Which page was that?", 400);
+  if (typeof text !== "string" || !text.trim() || text.length > MAX_TEXT) fail("Click some text to style it.", 400);
+  const name = typeof tag === "string" ? tag.toLowerCase() : "";
+  if (!/^[a-z][a-z0-9]*$/.test(name)) fail("Which text was that?", 400);
+  const kind = style?.kind;
+  const value = style?.value;
+  if (kind in WRAPS) {
+    if (!selection || !Number.isInteger(selection.start) || !Number.isInteger(selection.end) || selection.start < 0 || selection.end <= selection.start || selection.end > text.length) {
+      fail("Select the words to style first.", 400);
+    }
+  } else if (kind === "align") {
+    if (!ALIGNS.has(value)) fail("Align left, centre, right or justified.", 400);
+  } else if (kind === "color") {
+    if (value !== "" && !COLOUR.test(value ?? "")) fail("Pick a colour like #1d4ed8.", 400);
+  } else fail("That style isn't one this bar has.", 400);
+
+  const dir = workspaceDir(key);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(address);
+  } catch {
+    fail("Which page was that?", 400);
+  }
+  const { page } = await pageAt(dir, decoded);
+  if (!page) fail("This page isn't one of your pages (it's made by the site itself), so it can't be styled here.");
+
+  const release = acquire(key, `styling text on ${page.file}`);
+  try {
+    const target = inside(dir, page.file);
+    const source = await readText(target);
+    if (source === null) fail(`${page.file} no longer exists.`, 409);
+    const bodyStart = FRONTMATTER.exec(source)?.[0].length ?? 0;
+    const visible = visibleText(source, bodyStart, {});
+    const words = spaced(text);
+    const found = locate(visible.text, words, 0, words.length, { index, count });
+    if (!found?.whole) fail("That text isn't in this page's own content (it may come from Business info or the page settings), so it can't be styled here. Ask the AI to change it.");
+    const { at } = found;
+
+    let next;
+    if (kind in WRAPS) {
+      const first = at + selection.start;
+      const last = at + selection.end - 1;
+      for (let i = first + 1; i <= last; i++) {
+        if (visible.from[i] !== visible.to[i - 1] && visible.from[i] !== visible.from[i - 1]) {
+          fail("Those words run across other formatting (a link, bold text…). Pick words inside one part.");
+        }
+      }
+      const from = visible.from[first];
+      const to = visible.to[last];
+      const open = `<${WRAPS[kind]}>`;
+      const close = `</${WRAPS[kind]}>`;
+      const wrapped = source.slice(from - open.length, from).toLowerCase() === open && source.slice(to, to + close.length).toLowerCase() === close;
+      next = wrapped
+        ? source.slice(0, from - open.length) + source.slice(from, to) + source.slice(to + close.length)
+        : source.slice(0, from) + open + source.slice(from, to) + close + source.slice(to);
+    } else {
+      const startTag = startTagBefore(source, visible.from[at], name, bodyStart);
+      if (!startTag) fail("This text isn't kept as HTML on the page, so its alignment and colour can't be set here. Ask the AI to change it.");
+      const tagText = source.slice(startTag.start, startTag.end);
+      next = source.slice(0, startTag.start) + withStyle(tagText, kind === "align" ? "text-align" : "color", value) + source.slice(startTag.end);
+    }
+    await fs.writeFile(target, next);
+    return { file: page.file };
+  } finally {
+    release();
+  }
+}

@@ -71,7 +71,7 @@ import {
   pageAddresses,
 } from "../site-files.js";
 import { getStaticInfo, saveStaticInfo, staticInfoSection } from "../static-info.js";
-import { getBrand, saveBrand, saveBrandImage } from "../brand.js";
+import { getBrand, replaceHeaderLogo, saveBrand, saveBrandImage } from "../brand.js";
 import { fileUsage, listRepoFiles, prepareUploadedPage, removeConvertedPage, removeRepoFile, uploadRepoFile } from "../repo-files.js";
 import { planSetup, saveSetup } from "../site-setup.js";
 import { pendingBuild } from "../setup-build.js";
@@ -79,7 +79,7 @@ import { APPEARANCE_MARKER, HEADER_FOOTER_FILES, HEADER_FOOTER_MARKERS, getNavig
 import { SEO_FILES, SEO_MARKERS, installSeo, readSeo } from "../seo.js";
 import { readCheckReport } from "../site-check.js";
 import { readMissingPages } from "../missing-pages.js";
-import { editPreviewText } from "../text-edit.js";
+import { editPreviewText, stylePreviewText } from "../text-edit.js";
 import { claudeResolver, getUpdateStatus, siteUpdateSteps, undoSiteUpdate } from "../site-update.js";
 import { readTemplateFile, templateToken } from "../sites.js";
 import { listVersions, restoreVersion } from "../versions.js";
@@ -483,6 +483,20 @@ workspacesRouter.post(
       instruction: "The owner changed text on the site",
       point: `“${logQuote(before, 60)}” → “${logQuote(after, 60)}”`,
     });
+    res.json({ file, status: await getStatus(key) });
+  }),
+);
+
+/* The preview's style bar: bold/italic/underline on picked words, or a text's alignment or colour (text-edit.js). No AI, no credits. */
+
+workspacesRouter.post(
+  "/:owner/:repo/pages/style",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const { address, text, index, count, tag, selection, style } = req.body ?? {};
+    const { file } = await stylePreviewText(key, { address, text, index, count, tag, selection, style });
+    const what = { bold: "made words bold", italic: "made words italic", underline: "underlined words", align: `aligned text ${style?.value}`, color: style?.value ? `coloured text ${style.value}` : "reset a text colour" }[style?.kind] ?? "styled text";
+    await logOwnerEdit(key, { command: "owner:style-text", file, instruction: `The owner ${what} on the site`, point: `“${logQuote(text, 60)}”` });
     res.json({ file, status: await getStatus(key) });
   }),
 );
@@ -1084,6 +1098,17 @@ workspacesRouter.put(
     const key = keyFor(req);
     const brand = await saveBrand(key, req.body?.brand);
     await logOwnerEdit(key, { command: "owner:logo", file: "site.config.json", instruction: "The owner changed the logo and tab icon" });
+    res.json({ ...brand, status: await getStatus(key) });
+  }),
+);
+
+// A designed or copied header draws its own logo (brand.js headerLogoOf): this swaps that image.
+workspacesRouter.put(
+  "/:owner/:repo/brand/header-logo",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const brand = await replaceHeaderLogo(key, req.body?.path);
+    await logOwnerEdit(key, { command: "owner:logo", file: "templates/partials/header.html", instruction: "The owner changed the logo in the header" });
     res.json({ ...brand, status: await getStatus(key) });
   }),
 );

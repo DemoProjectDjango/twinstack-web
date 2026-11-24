@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { CLAUDE_MODELS, isClaudeModel } from "../claude-models.js";
+import { CLAUDE_MODELS, isClaudeModel, USER_MODEL_CHOICE } from "../claude-models.js";
 import {
   clearAnthropicKey,
   getAnthropicKeyHint,
@@ -41,9 +41,8 @@ settingsRouter.get(
       // While OWN_KEYS is off nobody sees or sets a key: everyone uses credits.
       ownKeys: OWN_KEYS,
       anthropicKey: OWN_KEYS ? await getAnthropicKeyHint(req.user.id) : null,
-      model: await getClaudeModel(req.user.id),
-      assistantModel: await getAssistantModel(req.user.id),
-      models: CLAUDE_MODELS,
+      // The models are the server's choice (USER_MODEL_CHOICE): without these the page shows no pickers.
+      ...(USER_MODEL_CHOICE ? { model: await getClaudeModel(req.user.id), assistantModel: await getAssistantModel(req.user.id), models: CLAUDE_MODELS } : {}),
     });
   }),
 );
@@ -57,6 +56,7 @@ for (const [path, save] of [
     path,
     handle(async (req, res) => {
       if (!req.is("application/json")) return res.status(415).json({ error: "Expected JSON" });
+      if (!USER_MODEL_CHOICE) return res.status(403).json({ error: "The builder chooses the Claude models; they can't be changed here." });
       const model = req.body?.model;
       if (!isClaudeModel(model)) return res.status(400).json({ error: "Choose one of the models listed." });
       await save(req.user.id, model);

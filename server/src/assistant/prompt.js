@@ -82,7 +82,6 @@ const SCREENS = {
   seo: "Google & sharing, under More tools (how pages show up in search results)",
   redirects: "Old web addresses, under More tools (redirects from the old site's addresses)",
   sections: "Homepage sections, under More tools (an older homepage's sections, in order)",
-  tree: "Page plan, under More tools (the list of pages the site should have)",
   schedule: "Planned posts, under More tools (scheduled pages)",
   memory: "AI notes about your site, under More tools (the owner's notes and the work log)",
   styles: "Custom code, under More tools (the site's stylesheets)",

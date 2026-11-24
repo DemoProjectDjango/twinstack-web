@@ -33,7 +33,15 @@
     "[data-ts-ask]{position:absolute!important;z-index:2147483647!important;margin:0!important;font:600 13px/1.2 system-ui,-apple-system,sans-serif!important;" +
     "color:#fff!important;background:rgb(37,99,235)!important;border:0!important;border-radius:999px!important;padding:7px 12px!important;" +
     "cursor:pointer!important;box-shadow:0 4px 14px rgba(0,0,0,.2)!important;white-space:nowrap!important;text-transform:none!important;letter-spacing:normal!important}" +
-    "[data-ts-ask]:hover{background:rgb(29,78,216)!important}[data-ts-ask][hidden]{display:none!important}";
+    "[data-ts-ask]:hover{background:rgb(29,78,216)!important}[data-ts-ask][hidden]{display:none!important}" +
+    "[data-ts-bar]{position:absolute!important;z-index:2147483647!important;display:flex!important;align-items:center!important;gap:2px!important;margin:0!important;" +
+    "padding:3px!important;background:#111827!important;border-radius:8px!important;box-shadow:0 4px 14px rgba(0,0,0,.25)!important;font:600 12px/1 system-ui,-apple-system,sans-serif!important}" +
+    "[data-ts-bar][hidden]{display:none!important}" +
+    "[data-ts-bar] button,[data-ts-bar] label{all:unset!important;box-sizing:border-box!important;cursor:pointer!important;color:#fff!important;padding:6px 8px!important;border-radius:5px!important;" +
+    "font:600 12px/1 system-ui,-apple-system,sans-serif!important;display:inline-flex!important;align-items:center!important;gap:4px!important}" +
+    "[data-ts-bar] button:hover,[data-ts-bar] label:hover{background:#374151!important}" +
+    "[data-ts-bar] input{width:18px!important;height:18px!important;padding:0!important;border:0!important;background:none!important;cursor:pointer!important}" +
+    "[data-ts-bar] span[data-ts-hint]{color:#fbbf24!important;padding:0 6px!important;font-weight:500!important}";
   (document.head || document.documentElement).appendChild(style);
 
   function isInline(el) {
@@ -80,19 +88,24 @@
   // The section a node is in: the outermost <section> inside <main>, else the part of <main> it's in,
   // going down while that part is taller than the window and has more than one block (so a page whose
   // body is one wrapper, like a converted page's, still has sections).
+  // The part of the page a request should be about: the innermost block under the pointer that has
+  // its own heading and more than just it, no taller than a screen and a half (a card, the "Tableau"
+  // block inside "How we can help"). Else the innermost <section>, else the part of <main> it's in.
+  // It used to take the outermost <section>, so on pages that nest sections every block inside one
+  // asked about the whole outer section (the Nov 24 demo).
   function sectionOf(node) {
     var el = node && node.nodeType === 1 ? node : node && node.parentElement;
     var main = el && el.closest("main");
     if (!main || el === main) return null;
-    var section = el.closest("section");
-    if (section && main.contains(section) && section !== main) {
-      var outer = section.parentElement && section.parentElement.closest("section");
-      while (outer && main.contains(outer) && outer !== main) {
-        section = outer;
-        outer = section.parentElement && section.parentElement.closest("section");
-      }
-      return section;
+    var limit = window.innerHeight * 1.5;
+    var innermostSection = null;
+    for (var at = el; at && at !== main; at = at.parentElement) {
+      var heading = at.querySelector("h1, h2, h3, h4");
+      var inline = /^inline/.test(window.getComputedStyle(at).display);
+      if (heading && !inline && at.children.length > 1 && at.textContent.trim() && at.getBoundingClientRect().height <= limit) return at;
+      if (!innermostSection && at.tagName === "SECTION") innermostSection = at;
     }
+    if (innermostSection) return innermostSection;
     var part = el;
     while (part.parentElement && part.parentElement !== main) part = part.parentElement;
     while (part.children.length > 1 && part.getBoundingClientRect().height > window.innerHeight * 1.2) {
@@ -192,11 +205,14 @@
     el.focus();
     caretAt(x, y);
     send({ type: "typing", on: true });
+    showBar(el);
   }
 
   function stop(el) {
     el.removeAttribute("contenteditable");
     el.removeAttribute("data-ts-editing");
+    // The bar stays while its own colour picker is open (which takes the focus from the text).
+    if (!picking) bar.hidden = true;
   }
 
   function cancel() {
@@ -230,6 +246,124 @@
     });
   }
 
+  // The style bar, above the text being edited: B, I and U act on the words picked in it; the
+  // alignment buttons and the colour on the whole heading or paragraph. Each one is saved at once
+  // (the parent posts it to .../pages/style), with no AI. Its target outlives the editing, so the
+  // colour picker, which takes the focus, still knows which text it's for.
+  var bar = document.createElement("div");
+  bar.setAttribute("data-ts-bar", "");
+  bar.hidden = true;
+  var barTarget = null;
+  var picking = false;
+  var hint = document.createElement("span");
+  hint.setAttribute("data-ts-hint", "");
+  function barButton(label, title, kind, value) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.title = title;
+    button.setAttribute("data-ts-style", kind + (value ? ":" + value : ""));
+    // Keeps the text's focus and the picked words.
+    button.addEventListener("mousedown", function (event) {
+      event.preventDefault();
+    });
+    button.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      applyStyle(kind, value);
+    });
+    bar.appendChild(button);
+  }
+  barButton("B", "Bold: select words first", "bold");
+  barButton("I", "Italic: select words first", "italic");
+  barButton("U", "Underline: select words first", "underline");
+  barButton("Left", "Align left", "align", "left");
+  barButton("Centre", "Centre", "align", "center");
+  barButton("Right", "Align right", "align", "right");
+  var colourLabel = document.createElement("label");
+  colourLabel.title = "Text colour";
+  colourLabel.textContent = "Colour";
+  var colour = document.createElement("input");
+  colour.type = "color";
+  colour.setAttribute("data-ts-colour", "");
+  colourLabel.appendChild(colour);
+  colourLabel.addEventListener("mousedown", function () {
+    picking = true;
+  });
+  colour.addEventListener("change", function () {
+    picking = false;
+    applyStyle("color", colour.value);
+  });
+  colour.addEventListener("blur", function () {
+    picking = false;
+  });
+  bar.appendChild(colourLabel);
+  barButton("Reset colour", "Back to the design's own colour", "color", "");
+  bar.appendChild(hint);
+  (document.body || document.documentElement).appendChild(bar);
+
+  function showBar(el) {
+    barTarget = { el: el, before: el.textContent, html: el.innerHTML, index: active ? active.index : 0, count: active ? active.count : 1 };
+    hint.textContent = "";
+    bar.hidden = false;
+    var rect = el.getBoundingClientRect();
+    bar.style.setProperty("left", Math.max(4, rect.left + window.scrollX) + "px", "important");
+    bar.style.setProperty("top", Math.max(4, rect.top + window.scrollY - bar.offsetHeight - 8) + "px", "important");
+  }
+
+  function say(text) {
+    hint.textContent = text;
+  }
+
+  // The picked words' place in the text: character offsets into its textContent, or null.
+  function pickedIn(el) {
+    var selection = window.getSelection();
+    if (!selection || !selection.rangeCount || selection.isCollapsed) return null;
+    var range = selection.getRangeAt(0);
+    if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) return null;
+    var before = document.createRange();
+    before.selectNodeContents(el);
+    before.setEnd(range.startContainer, range.startOffset);
+    var start = before.toString().length;
+    var end = start + range.toString().length;
+    return end > start ? { start: start, end: end } : null;
+  }
+
+  function applyStyle(kind, value) {
+    var target = barTarget;
+    if (!target) return;
+    if (target.el.textContent !== target.before) {
+      say("Press Enter to save your typing first");
+      return;
+    }
+    var selection = null;
+    if (kind === "bold" || kind === "italic" || kind === "underline") {
+      selection = pickedIn(target.el);
+      if (!selection) {
+        say("Select some words first");
+        return;
+      }
+    }
+    say("");
+    var id = nextId++;
+    pending[id] = { el: target.el, html: target.html };
+    target.el.setAttribute("data-ts-saving", "");
+    // Shown at once; the rebuilt preview shows it as saved.
+    if (kind === "align") target.el.style.textAlign = value;
+    if (kind === "color") target.el.style.color = value;
+    send({
+      type: "style",
+      id: id,
+      path: window.location.pathname,
+      text: target.before,
+      index: target.index,
+      count: target.count,
+      tag: target.el.tagName.toLowerCase(),
+      selection: selection,
+      style: { kind: kind, value: value },
+    });
+  }
+
   function setEditing(on) {
     editing = on;
     if (on) document.documentElement.setAttribute("data-ts-editing-on", "");
@@ -238,6 +372,8 @@
       setHover(null);
       setSection(null);
       finish();
+      bar.hidden = true;
+      barTarget = null;
     }
   }
 
@@ -323,6 +459,7 @@
     // scaled back up by the same amount, so it stays readable.
     else if (data.type === "scale" && typeof data.value === "number" && data.value > 0.2 && data.value <= 1) {
       askButton.style.setProperty("zoom", String(1 / data.value), "important");
+      bar.style.setProperty("zoom", String(1 / data.value), "important");
       placeAsk();
     }
     else if (data.type === "go" && typeof data.path === "string" && data.path.charAt(0) === "/") window.location.replace(data.path);

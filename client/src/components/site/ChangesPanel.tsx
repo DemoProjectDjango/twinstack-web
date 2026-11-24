@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { describeChange } from "@/lib/change-labels";
 import { confirmModal } from "@/lib/confirm";
 import { ApiError, api, workspacePath, type FileDiff, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
-import { DomainSettings } from "./DomainSettings";
 import { PreviousVersions } from "./PreviousVersions";
 import { markVisited, wasVisited } from "./HomePanel";
 import { confirmSamples, publishMessage } from "./site-hooks";
@@ -34,7 +33,7 @@ function lineClass(line: string) {
  * a pull request for review is an option.
  */
 export function ChangesPanel() {
-  const { owner, repo, status, overview, busy, setStatus, refresh, runAndWait, version, publishing, siteCheck, prepareToPublish } = useSite();
+  const { owner, repo, status, overview, busy, setStatus, refresh, runAndWait, version, publishing, siteCheck, prepareToPublish, showSection } = useSite();
   const [files, setFiles] = useState<FileDiff[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [working, setWorking] = useState<"discard" | "commit" | null>(null);
@@ -365,14 +364,14 @@ export function ChangesPanel() {
 
       <PreviousVersions />
 
+      {/* The DNS records live on Your domain only: showing them here too listed every record twice. */}
       {publishing.publishing?.enabled && publishing.publishing.canConfigure && (
-        <Section title="Your web address" description="Your site is on a free github.io address. You can use your own domain name instead (also on the menu's Your domain).">
-          <DomainSettings publishing={publishing.publishing} onChange={(next) => {
-            publishing.setPublishing(next);
-            // A domain change starts a redeploy: watch it closely.
-            publishing.watch();
-          }} />
-        </Section>
+        <p className="text-sm text-zinc-500">
+          {publishing.publishing.domain ? `Your site is on ${publishing.publishing.domain}.` : "Your site is on a free github.io address."}{" "}
+          <button type="button" className="font-medium text-foreground underline" onClick={() => showSection("domain")}>
+            {publishing.publishing.domain ? "Manage your web address" : "Use your own web address"}
+          </button>
+        </p>
       )}
     </div>
   );
