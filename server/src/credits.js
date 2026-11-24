@@ -1,5 +1,5 @@
 import { config } from "./config.js";
-import { FREE_CREDITS, getAnthropicKey, getCredits, recordClaudeUsage } from "./db.js";
+import { FREE_CREDITS, chargedCreditsSince, getAnthropicKey, getCredits, getUserLimits, recordClaudeUsage } from "./db.js";
 
 // Claude credits. Claude runs on the app's key (PLATFORM_ANTHROPIC_KEY) for every account without
 // a key of its own, and each request costs credits worked out from what Anthropic charges for it:
@@ -185,6 +185,7 @@ export async function claudeKeyFor(userId) {
   }
   const { balance } = await getCredits(userId);
   if (balance <= 0) throw new ClaudeAccessError("credits_exhausted", OUT_OF_CREDITS, 402);
+  await checkDailyLimit(userId, await limitsFor(userId));
   return { apiKey: config.platformAnthropicKey, charged: true };
 }
 
@@ -239,11 +240,89 @@ const creditsPerToken = (dollarsPerMillion) => (dollarsPerMillion / 1e6) * CREDI
 // the stored one (re-read as each request starts and ends); `running` is what isn't charged yet.
 const accounts = new Map();
 
-/** Credits the account has above zero, less what its running requests have used so far. */
-function left(account) {
+/**
+ * Credits the account has above zero, less what its running requests have used so far. With
+ * `reserved` (the default), each running request counts at the most it was allowed to cost
+ * (`Spend.reserved`: its input plus its max_tokens of output), so requests started side by side
+ * share the room down to -OVERDRAFT instead of each being given all of it. Watching a reply as it
+ * streams uses what was really used (`reserved: false`).
+ */
+function left(account, { reserved = true } = {}) {
   let running = 0;
-  for (const spend of account.running) running += spend.credits;
+  for (const spend of account.running) running += reserved ? Math.max(spend.credits, spend.reserved) : spend.credits;
   return account.balance - running;
+}
+
+/* ------------------------------------------------------------ per-account limits */
+
+// Limits on how fast one account may use Claude (and DeepSeek and OpenAI through the proxy) on the
+// app's keys, so one account can't take the app's shared provider rate limits or run up a large bill
+// in a day through a bug or a changed site script. An admin can give an account its own
+// (`users.limits`, getUserLimits). Requests on the account's own key aren't limited.
+const envLimit = (name, fallback) => {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+};
+export const LIMITS = {
+  // Requests running at once (assistant answers, Claude commands, site updates together).
+  running: envLimit("CLAUDE_MAX_RUNNING_PER_USER", 4),
+  // Requests started in any 60 seconds.
+  perMinute: envLimit("CLAUDE_REQUESTS_PER_MINUTE", 40),
+  // Credits charged in the last 24 hours (100,000 = $10).
+  dailyCredits: envLimit("CLAUDE_DAILY_CREDITS", 100_000),
+};
+// A request over the running or per-minute limit waits for room this long before it's refused (the
+// site's scripts wait 5 minutes for a reply's first byte).
+const LIMIT_WAIT_MS = 3 * 60_000;
+const DAY_MS = 24 * 60 * 60_000;
+
+export const TOO_BUSY = "You're running a lot of AI work at once. Wait for some of it to finish, then try again.";
+export const DAILY_LIMIT = "You've reached today's limit for AI work on this account. It resets over the next 24 hours.";
+
+/** The account's limits: its own (an admin's choice) where set, else LIMITS. */
+async function limitsFor(userId) {
+  const own = await getUserLimits(userId).catch(() => ({}));
+  const pick = (field) => (Number.isInteger(own?.[field]) && own[field] > 0 ? own[field] : LIMITS[field]);
+  return { running: pick("running"), perMinute: pick("perMinute"), dailyCredits: pick("dailyCredits") };
+}
+
+/** Throws ClaudeAccessError `daily_limit` (429) once the account was charged its daily credits in the last 24 hours. */
+async function checkDailyLimit(userId, limits) {
+  const used = await chargedCreditsSince(userId, new Date(Date.now() - DAY_MS));
+  if (used >= limits.dailyCredits) throw new ClaudeAccessError("daily_limit", DAILY_LIMIT, 429);
+}
+
+// Per account: requests running and the start times of those in the last minute.
+const gates = new Map();
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Waits until the account has room under its running and per-minute limits, then takes it.
+ * Resolves to a function that gives the running place back (once). Throws ClaudeAccessError
+ * `rate_limited` (429) when no room comes within LIMIT_WAIT_MS.
+ */
+async function enterGate(userId, limits) {
+  let gate = gates.get(userId);
+  if (!gate) gates.set(userId, (gate = { running: 0, starts: [] }));
+  const deadline = Date.now() + LIMIT_WAIT_MS;
+  for (;;) {
+    const now = Date.now();
+    gate.starts = gate.starts.filter((t) => now - t < 60_000);
+    if (gate.running < limits.running && gate.starts.length < limits.perMinute) {
+      gate.running++;
+      gate.starts.push(now);
+      let left = false;
+      return () => {
+        if (left) return;
+        left = true;
+        gate.running--;
+        if (!gate.running && !gate.starts.some((t) => Date.now() - t < 60_000)) gates.delete(userId);
+      };
+    }
+    if (now >= deadline) throw new ClaudeAccessError("rate_limited", TOO_BUSY, 429);
+    const wait = gate.running >= limits.running ? 500 : 60_000 - (now - gate.starts[0]) + 10;
+    await sleep(Math.min(Math.max(wait, 100), deadline - now));
+  }
 }
 
 /** A rough count of a request's input tokens, without its base64 data, and whether it uses the cache. */
@@ -293,6 +372,8 @@ function deltaChars(delta) {
 /** One Claude request, from its start to its charge. Made by beginSpend. */
 class Spend {
   credits = 0;
+  /** The most this request was allowed to cost (input plus its max_tokens), held against the balance while it runs. */
+  reserved = 0;
   model = null;
   requestedModel = null;
   /** True once the request was cut off at the overdraft limit. */
@@ -307,10 +388,12 @@ class Spend {
   #final = false;
   #chars = 0;
   #done = false;
+  #leave;
 
-  constructor(info, account) {
+  constructor(info, account, leave = () => {}) {
     this.#info = info;
     this.#account = account;
+    this.#leave = leave;
   }
 
   /**
@@ -360,11 +443,14 @@ class Spend {
     const inputCredits = this.#inputCredits(body, options);
     const room = left(this.#account) + OVERDRAFT - inputCredits;
     const allowed = Math.floor(room / creditsPerToken(price.output));
+    const granted = Math.max(0, Math.min(requested, allowed));
+    // Held against the balance while it runs, so a request started alongside it can't be given the same room.
+    if (granted > 0) this.reserved = inputCredits + granted * creditsPerToken(price.output);
     if (allowed >= requested) return requested;
     this.clamped = true;
     // Refused with credits still left: what reading the request would cost, for telling the owner.
     if (allowed <= 0) this.shortfall = { needed: Math.ceil(inputCredits), balance: Math.floor(this.#account.balance) };
-    return Math.max(0, allowed);
+    return granted;
   }
 
   /**
@@ -379,6 +465,7 @@ class Spend {
       return false;
     }
     this.credits = credits;
+    this.reserved = credits;
     return true;
   }
 
@@ -399,7 +486,7 @@ class Spend {
     if (this.#account && this.#usage) {
       this.credits = creditsFor(this.usage, this.model, this.requestedModel);
       // A reply that has finished has nothing left to stop.
-      if (!this.#final && left(this.#account) <= -OVERDRAFT) this.stopped = true;
+      if (!this.#final && left(this.#account, { reserved: false }) <= -OVERDRAFT) this.stopped = true;
     }
     return this.stopped;
   }
@@ -435,6 +522,7 @@ class Spend {
         account.running.delete(this);
         if (!account.running.size) accounts.delete(account.userId);
       }
+      this.#leave();
     }
   }
 }
@@ -444,20 +532,34 @@ class Spend {
  * recorded against (`userId`, `siteId`, `runId`, `kind`, `command`); with `charged: false` (the
  * account's own key) it's only recorded, never limited. Returns null when the account has nothing
  * left above zero to start it with. Every Spend must end with `finish()`.
+ *
+ * A charged request also keeps to the account's limits (LIMITS): over the daily credits it throws
+ * ClaudeAccessError `daily_limit`; over the running or per-minute limit it waits for room, and
+ * throws `rate_limited` when none comes within LIMIT_WAIT_MS. Both are 429s.
  */
 export async function beginSpend({ charged = true, ...info }) {
   if (!charged) return new Spend(info, null);
-  const { balance } = await getCredits(info.userId);
-  let account = accounts.get(info.userId);
-  if (account) account.balance = balance;
-  else accounts.set(info.userId, (account = { userId: info.userId, balance, running: new Set() }));
-  if (left(account) <= 0) {
-    if (!account.running.size) accounts.delete(info.userId);
-    return null;
+  const limits = await limitsFor(info.userId);
+  await checkDailyLimit(info.userId, limits);
+  const leave = await enterGate(info.userId, limits);
+  try {
+    const { balance } = await getCredits(info.userId);
+    let account = accounts.get(info.userId);
+    if (account) account.balance = balance;
+    else accounts.set(info.userId, (account = { userId: info.userId, balance, running: new Set() }));
+    // What has really been used: room another request has only reserved is shared out by maxTokens.
+    if (left(account, { reserved: false }) <= 0) {
+      if (!account.running.size) accounts.delete(info.userId);
+      leave();
+      return null;
+    }
+    const spend = new Spend(info, account, leave);
+    account.running.add(spend);
+    return spend;
+  } catch (err) {
+    leave();
+    throw err;
   }
-  const spend = new Spend(info, account);
-  account.running.add(spend);
-  return spend;
 }
 
 /* ------------------------------------------------------------ activity */

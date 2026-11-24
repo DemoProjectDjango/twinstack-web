@@ -874,6 +874,27 @@ function startingCredits() {
  * `{ balance, granted, purchased, used, freePending }` for the account: `freePending` while the
  * free credits wait for GitHub to be connected.
  */
+/**
+ * The account's own Claude limits (`users.limits`: `running`, `perMinute`, `dailyCredits`), set by
+ * an admin for an account that needs more or less than the defaults (credits.js: LIMITS). Missing
+ * fields use the defaults.
+ */
+export async function getUserLimits(id) {
+  const doc = await users().findOne({ _id: objectId(id) }, { projection: { limits: 1 } });
+  return doc?.limits ?? {};
+}
+
+/** Credits charged to the account since `since` (a Date), from its usage records. */
+export async function chargedCreditsSince(userId, since) {
+  const [row] = await claudeUsage()
+    .aggregate([
+      { $match: { userId, charged: true, createdAt: { $gte: since } } },
+      { $group: { _id: null, credits: { $sum: "$credits" } } },
+    ])
+    .toArray();
+  return row?.credits ?? 0;
+}
+
 export async function getCredits(id) {
   const doc = await users().findOne({ _id: objectId(id) }, { projection: { credits: 1 } });
   const { purchaseIds: _ids, freePending, ...credits } = doc?.credits ?? {};

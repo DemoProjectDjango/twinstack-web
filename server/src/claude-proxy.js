@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import http from "node:http";
 import { providerOf } from "./ai-providers.js";
 import { config } from "./config.js";
-import { OUT_OF_CREDITS, beginSpend, countableRequest } from "./credits.js";
+import { ClaudeAccessError, OUT_OF_CREDITS, beginSpend, countableRequest } from "./credits.js";
 import { fastModelKey } from "./fast-model.js";
 import { sendToOpenAI } from "./openai-bridge.js";
 import { noteProviderError } from "./provider-health.js";
@@ -134,7 +134,14 @@ async function handle(req, res) {
   request = withScopeNote(request);
   body = Buffer.from(JSON.stringify(request));
 
-  const spend = await beginSpend({ ...grant, kind: "command" });
+  let spend;
+  try {
+    // Waits while the account is at its running or per-minute limit (credits.js: LIMITS).
+    spend = await beginSpend({ ...grant, kind: "command" });
+  } catch (err) {
+    if (err instanceof ClaudeAccessError) return sendError(res, err.status, err.status === 429 ? "rate_limit_error" : "billing_error", err.message);
+    throw err;
+  }
   if (!spend) return sendError(res, 402, "billing_error", OUT_OF_CREDITS);
   try {
     // No more output than the balance pays for down to the overdraft limit.

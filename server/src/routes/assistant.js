@@ -206,6 +206,8 @@ function friendlyError(err) {
   if (err instanceof Anthropic.BadRequestError) return `Claude couldn't process this conversation (${err.message}). If it keeps happening, start a new conversation.`;
   if (err instanceof Anthropic.APIConnectionError) return "Couldn't reach Claude. Check the server's internet connection.";
   if (err instanceof WorkspaceError) return err.message;
+  // The account's own limits (credits.js: LIMITS): too much at once, or today's credits used.
+  if (err instanceof ClaudeAccessError) return err.message;
   return "Something went wrong talking to Claude.";
 }
 
