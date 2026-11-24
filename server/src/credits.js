@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { config } from "./config.js";
 import { FREE_CREDITS, chargedCreditsSince, getAnthropicKey, getCredits, getUserLimits, recordClaudeUsage } from "./db.js";
 
@@ -163,7 +164,14 @@ export class ClaudeAccessError extends Error {
   }
 }
 
-export const OUT_OF_CREDITS = "You've used all your Claude credits. Buy more credits to keep using Claude.";
+/**
+ * The account as Anthropic sees it (`metadata.user_id` on requests on the app's key): an opaque
+ * hash, never the email or the database id, so Anthropic can tell which of the app's users sent a
+ * request if one misuses it, without learning who they are.
+ */
+export const anthropicUserId = (userId) => createHash("sha256").update(`twinstack-user:${userId}`).digest("hex").slice(0, 40);
+
+export const OUT_OF_CREDITS ="You've used all your Claude credits. Buy more credits to keep using Claude.";
 
 /** The account's own key when OWN_KEYS allows it, else null. */
 const ownKeyOf = async (userId) => (OWN_KEYS ? getAnthropicKey(userId) : null);

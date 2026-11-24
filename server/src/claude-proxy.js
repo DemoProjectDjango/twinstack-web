@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import http from "node:http";
 import { providerOf } from "./ai-providers.js";
 import { config } from "./config.js";
-import { ClaudeAccessError, OUT_OF_CREDITS, beginSpend, countableRequest } from "./credits.js";
+import { isClaudeModel } from "./claude-models.js";
+import { ClaudeAccessError, OUT_OF_CREDITS, anthropicUserId, beginSpend, countableRequest, listedPrices } from "./credits.js";
 import { fastModelKey } from "./fast-model.js";
 import { sendToOpenAI } from "./openai-bridge.js";
 import { noteProviderError } from "./provider-health.js";
@@ -27,7 +28,8 @@ const UPSTREAM = (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com")
 // API with the app's DeepSeek key; it takes the same request and streams the same events.
 export const DEEPSEEK_UPSTREAM = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/anthropic").replace(/\/+$/, "");
 // Headers the scripts send that Anthropic needs; everything else (the token above all) stays here.
-const FORWARD_HEADERS = ["content-type", "anthropic-version", "anthropic-beta"];
+// anthropic-beta only with its allowed values (allowedBetas).
+const FORWARD_HEADERS = ["content-type", "anthropic-version"];
 const RETURN_HEADERS = /^(content-type|request-id|retry-after|anthropic-|x-should-retry)/i;
 
 const grants = new Map();
@@ -95,6 +97,39 @@ function parseEvent(raw) {
   }
 }
 
+// The site's scripts are code the owner can change, and they spend the app's keys, so only what the
+// template's scripts send gets through: anything else could turn on a paid feature that isn't
+// charged for (code execution, MCP servers, priority or fast tiers, the long-context price) or make
+// Anthropic reach out to any server. Fields the request may have:
+const ALLOWED_FIELDS = new Set([
+  "model", "max_tokens", "messages", "system", "stream", "metadata",
+  "tools", "tool_choice", "thinking", "output_config", "fallbacks", "cache_control",
+  "temperature", "top_p", "top_k", "stop_sequences",
+]);
+// Tools: the site's own (no type, or "custom"), and web search, which creditsFor charges for.
+const allowedTool = (tool) => tool && typeof tool === "object" && (tool.type == null || tool.type === "custom" || /^web_search_\d{8}$/.test(tool.type));
+// anthropic-beta values passed on; any other is dropped. Kept to ones that change no price.
+const ALLOWED_BETA = /^(server-side-fallback|prompt-caching|extended-cache-ttl|interleaved-thinking|token-efficient-tools|fine-grained-tool-streaming)-[\d-]+$/;
+// The largest max_tokens a script may ask for (Claude's own limits are lower for most models).
+const MAX_OUTPUT_TOKENS = 128_000;
+
+/** Why the request can't go through the proxy (a message for the script), or null when it can. */
+function requestProblem(request) {
+  const extra = Object.keys(request).filter((field) => !ALLOWED_FIELDS.has(field));
+  if (extra.length) return `${extra.join(", ")} can't be used on this server.`;
+  if (!Number.isInteger(request.max_tokens) || request.max_tokens < 1 || request.max_tokens > MAX_OUTPUT_TOKENS) {
+    return `max_tokens must be a whole number from 1 to ${MAX_OUTPUT_TOKENS}.`;
+  }
+  if (request.tools != null && (!Array.isArray(request.tools) || !request.tools.every(allowedTool))) return "Only web search and the script's own tools can be used on this server.";
+  return null;
+}
+
+/** The anthropic-beta header with only ALLOWED_BETA values, or null. */
+function allowedBetas(header) {
+  const kept = String(header ?? "").split(",").map((b) => b.trim()).filter((b) => ALLOWED_BETA.test(b));
+  return kept.length ? kept.join(",") : null;
+}
+
 /** The request with PROXY_SCOPE_NOTE as the first block of its system prompt. */
 function withScopeNote(request) {
   const note = { type: "text", text: PROXY_SCOPE_NOTE };
@@ -127,11 +162,19 @@ async function handle(req, res) {
   if (!request || typeof request !== "object") return sendError(res, 400, "invalid_request_error", "The request isn't a Claude message.");
   const requestedModel = request.model ?? null;
   const provider = providerOf(requestedModel);
-  if (provider !== "claude" && !fastModelKey(requestedModel)) return sendError(res, 400, "invalid_request_error", `${requestedModel} isn't available on this server.`);
+  // Claude: the models offered in Settings and the ones the app's own steps use (all priced);
+  // others: the fast model's provider must have a key.
+  const known = provider === "claude" ? isClaudeModel(requestedModel) || listedPrices(requestedModel) != null : fastModelKey(requestedModel);
+  if (!known) return sendError(res, 400, "invalid_request_error", `${requestedModel} isn't available on this server.`);
+  const problem = requestProblem(request);
+  if (problem) return sendError(res, 400, "invalid_request_error", problem);
 
   // Every request the site's scripts make is about the website (scope-guard.js): the note goes first
   // in the system prompt, whatever the copy's scripts say. The same text every time, so caching holds.
   request = withScopeNote(request);
+  // Which account sent it, as an opaque id, so Anthropic can tell the app's users apart if one misuses it.
+  if (provider === "claude") request = { ...request, metadata: { user_id: anthropicUserId(grant.userId) } };
+  else delete request.metadata;
   body = Buffer.from(JSON.stringify(request));
 
   let spend;
@@ -161,7 +204,9 @@ async function handle(req, res) {
 /** The request's exact input tokens from Anthropic's count_tokens (free), or null when it can't be had. */
 async function countInputTokens(req, request) {
   const headers = { "x-api-key": config.platformAnthropicKey, "content-type": "application/json" };
-  for (const name of ["anthropic-version", "anthropic-beta"]) if (req.headers[name]) headers[name] = req.headers[name];
+  if (req.headers["anthropic-version"]) headers["anthropic-version"] = req.headers["anthropic-version"];
+  const betas = allowedBetas(req.headers["anthropic-beta"]);
+  if (betas) headers["anthropic-beta"] = betas;
   headers["anthropic-version"] ??= "2023-06-01";
   try {
     const res = await fetch(`${UPSTREAM}/v1/messages/count_tokens`, {
@@ -222,6 +267,8 @@ async function fetchRetrying(url, init) {
 async function forward(req, res, body, deepseek, spend) {
   const headers = { "x-api-key": deepseek ? config.deepseekKey : config.platformAnthropicKey };
   for (const name of FORWARD_HEADERS) if (req.headers[name]) headers[name] = req.headers[name];
+  const betas = allowedBetas(req.headers["anthropic-beta"]);
+  if (betas) headers["anthropic-beta"] = betas;
   const controller = new AbortController();
   // The job was cancelled (or the script gave up): stop the request at Anthropic too.
   res.on("close", () => {
