@@ -426,6 +426,33 @@ function startTagBefore(source, from, tag, bodyStart) {
   return null;
 }
 
+/** Whether, after `to`, only spaces and inline parts' end tags come before `</tag>`. */
+function closesAfter(source, to, tag) {
+  const rest = /^(?:\s|<\/(?:a|abbr|b|bdi|bdo|cite|code|em|font|i|kbd|mark|q|s|samp|small|span|strong|sub|sup|time|u|var)\s*>)*<\/([a-zA-Z][\w-]*)\s*>/i.exec(source.slice(to, to + 400));
+  return Boolean(rest) && rest[1].toLowerCase() === tag;
+}
+
+/**
+ * Where the clicked element's text starts in the visible text: an occurrence that is the whole of a
+ * `<tag>`'s text (its start tag right before it, its end tag right after), so the same words in a
+ * breadcrumb and in the heading aren't confused. `index`/`count` pick one when the page has several.
+ */
+function elementText(source, visible, words, tag, bodyStart, { index, count }) {
+  const matches = [];
+  const trimmed = words.trim();
+  const lead = words.length - words.trimStart().length;
+  for (let at = visible.text.indexOf(trimmed); at !== -1; at = visible.text.indexOf(trimmed, at + 1)) {
+    const from = visible.from[at];
+    const to = visible.to[at + trimmed.length - 1];
+    if (from >= bodyStart && startTagBefore(source, from, tag, bodyStart) && closesAfter(source, to, tag)) matches.push(at - lead);
+    if (matches.length > 200) break;
+  }
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1 && Number.isInteger(index) && count === matches.length && index >= 0 && index < count) return matches[index];
+  if (matches.length > 1) fail("That text is on this page more than once, so it can't be told apart here. Ask the AI to change it.");
+  return null;
+}
+
 export async function stylePreviewText(key, { address, text, index, count, tag, selection, style } = {}) {
   if (typeof address !== "string" || !address.startsWith("/") || address.length > 500) fail("Which page was that?", 400);
   if (typeof text !== "string" || !text.trim() || text.length > MAX_TEXT) fail("Click some text to style it.", 400);
@@ -461,9 +488,8 @@ export async function stylePreviewText(key, { address, text, index, count, tag, 
     const bodyStart = FRONTMATTER.exec(source)?.[0].length ?? 0;
     const visible = visibleText(source, bodyStart, {});
     const words = spaced(text);
-    const found = locate(visible.text, words, 0, words.length, { index, count });
-    if (!found?.whole) fail("That text isn't in this page's own content (it may come from Business info or the page settings), so it can't be styled here. Ask the AI to change it.");
-    const { at } = found;
+    const at = elementText(source, visible, words, name, bodyStart, { index, count });
+    if (at === null) fail("That text isn't in this page's own content (it may come from Business info or the page settings), so it can't be styled here. Ask the AI to change it.");
 
     let next;
     if (kind in WRAPS) {
@@ -483,7 +509,7 @@ export async function stylePreviewText(key, { address, text, index, count, tag, 
         ? source.slice(0, from - open.length) + source.slice(from, to) + source.slice(to + close.length)
         : source.slice(0, from) + open + source.slice(from, to) + close + source.slice(to);
     } else {
-      const startTag = startTagBefore(source, visible.from[at], name, bodyStart);
+      const startTag = startTagBefore(source, visible.from[at + (words.length - words.trimStart().length)], name, bodyStart);
       if (!startTag) fail("This text isn't kept as HTML on the page, so its alignment and colour can't be set here. Ask the AI to change it.");
       const tagText = source.slice(startTag.start, startTag.end);
       next = source.slice(0, startTag.start) + withStyle(tagText, kind === "align" ? "text-align" : "color", value) + source.slice(startTag.end);
