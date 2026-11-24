@@ -122,8 +122,6 @@ export function addressFor(raw, taken) {
   return address;
 }
 
-/** The relative path from a page at `address` to a site file `file` ("assets/img/a.png"), for url()s in its own markup. */
-const fromPage = (address, file) => path.posix.relative(path.posix.dirname(address === "/" ? "/index.html" : address), `/${file}`);
 
 // The page as it looks, ready to copy. Runs inside the page. Lazy images get their real source,
 // every address becomes absolute (the server maps them), scripts and what only matters to them go,
@@ -404,11 +402,16 @@ async function copyStylesheet(href, assets, depth = 0) {
   return rewriteCssUrls(css, res.url, assets);
 }
 
+// A url() this file already pointed at a downloaded file. An @import's sheet is copied (and its
+// url()s rewritten) before the sheet that imports it is, so those must not be resolved again against
+// the outer sheet's address (they became "https://site/…/fonts/copied/…", which doesn't exist).
+const COPIED_REF = /^(?:\.\.\/\.\.\/|\/assets\/)(?:img|fonts)\/copied\//;
+
 /** url()s in `css` (relative to `base`) pointing at the downloaded files, relative to assets/css/imported/. */
 function rewriteCssUrls(css, base, assets) {
   return replaceAsync(css, CSS_URL, async (whole, quote, raw) => {
     const ref = raw.trim();
-    if (/^(data:|#)/i.test(ref)) return whole;
+    if (/^(data:|#)/i.test(ref) || COPIED_REF.test(ref)) return whole;
     let target;
     try {
       target = new URL(ref, base).href;
@@ -469,11 +472,13 @@ async function finishPage(snapshot, { address, addresses, assets, notes }) {
     const file = await assets.local(url.replace(/&amp;/g, "&"));
     return file ? `${lead}${quote}/${file}${quote}` : whole;
   });
-  // Inline backgrounds: relative to the page, since the build doesn't add the base path inside style="…".
+  // Inline backgrounds: root addresses. The editor's preview maps url(/…) into its own prefix, and
+  // the template's build adds the base path to url(/…) in a page's HTML as it does to href and src.
+  // (Page-relative addresses broke in the preview, whose homepage address has no trailing slash.)
   html = await replaceAsync(html, /(\sstyle\s*=\s*)(["'])([^"']*url\([^"']*)\2/gi, async (whole, lead, quote, style) => {
     const fixed = await replaceAsync(style.replace(/&quot;/g, '"'), CSS_URL, async (m, q, raw) => {
       const file = /^https?:/i.test(raw.trim()) ? await assets.local(raw.trim().replace(/&amp;/g, "&")) : null;
-      return file ? `url('${fromPage(address, file)}')` : m;
+      return file ? `url('/${file}')` : m;
     });
     return `${lead}${quote}${quote === '"' ? fixed.replace(/"/g, "'") : fixed}${quote}`;
   });
