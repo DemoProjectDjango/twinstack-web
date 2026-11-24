@@ -1,2 +1,20 @@
+# Everyone (Windows and Mac) commits text files with LF line endings, so a
+# checkout on one machine never shows every line changed on another.
+* text=auto eol=lf
+
 # deploy.sh runs on Linux; a CRLF checkout would break it.
 *.sh text eol=lf
+
+# Never touch binary files.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.zip binary
