@@ -45,12 +45,19 @@ export function StatusStrip({ onShowLog, inline = false }: { onShowLog: () => vo
   const foundProblems = job?.command === "check" && job.status === "failed";
 
   if (job?.status === "running") {
+    // Waiting in the server's queue (jobs.js) for a free place to run.
+    const place = job.queuePosition ?? 0;
     content = (
       <>
         <Spinner />
         <span className="min-w-0 flex-1 truncate">
           {friendlyJobLabel(job.command, job.label)}
-          {jobProgress(job.output) ? `: ${jobProgress(job.output)}` : ""}…
+          {place > 0
+            ? `: waiting to start (${place === 1 ? "you're next" : `${place - 1} ahead of you`})`
+            : jobProgress(job.output)
+              ? `: ${jobProgress(job.output)}`
+              : ""}
+          …
         </span>
         <Button variant="ghost" className="px-2 py-0.5 text-xs" onClick={cancel} disabled={cancelling}>
           Cancel
