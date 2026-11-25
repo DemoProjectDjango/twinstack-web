@@ -5,6 +5,7 @@ import express, { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
 import { describeTaskSize, taskSize } from "../task-size.js";
 import { usageTarget } from "../usage-history.js";
+import { publicJobView } from "../model-words.js";
 import { listOriginalPages, prepareOriginalPage } from "../original-pages.js";
 import { DEFAULT_PAGES, MAX_PAGES, clearCopiedWebsite, copiedPageShot, copyWebsiteStep, finishCopiedWebsite, normaliseStartUrl, prepareCopiedPage, readCopiedWebsite } from "../copy-website.js";
 import { config } from "../config.js";
@@ -408,7 +409,7 @@ workspacesRouter.post(
     });
     // Claude work in a new site's first week, for the setup numbers.
     if (command.claude) siteIdFor(key).then((siteId) => noteSetupSignal(siteId, "commands"), () => {});
-    res.status(202).json({ job });
+    res.status(202).json({ job: publicJobView(job, { admin: req.user.admin }) });
   }),
 );
 
@@ -647,7 +648,7 @@ workspacesRouter.post(
         env: jobEnv(null, null),
         release,
       });
-      res.status(202).json({ job });
+      res.status(202).json({ job: publicJobView(job, { admin: req.user.admin }) });
     } catch (err) {
       release();
       throw err;
@@ -992,7 +993,7 @@ workspacesRouter.post(
             release();
           }),
       });
-      res.status(202).json({ job });
+      res.status(202).json({ job: publicJobView(job, { admin: req.user.admin }) });
     } catch (err) {
       endActivity();
       release();
@@ -1302,7 +1303,7 @@ jobsRouter.get(
     const job = getJob(req.params.id, req.user.id);
     if (!job) throw new WorkspaceError("Job not found. It may have expired or the server restarted.", 404);
     const since = Number(req.query.since ?? 0);
-    res.json({ job: serializeJob(job, Number.isFinite(since) && since > 0 ? since : 0) });
+    res.json({ job: publicJobView(serializeJob(job, Number.isFinite(since) && since > 0 ? since : 0), { admin: req.user.admin }) });
   }),
 );
 
@@ -1312,6 +1313,6 @@ jobsRouter.post(
     const job = getJob(req.params.id, req.user.id);
     if (!job) throw new WorkspaceError("Job not found.", 404);
     cancelJob(job);
-    res.json({ job: serializeJob(job, Number.MAX_SAFE_INTEGER) });
+    res.json({ job: publicJobView(serializeJob(job, Number.MAX_SAFE_INTEGER), { admin: req.user.admin }) });
   }),
 );
