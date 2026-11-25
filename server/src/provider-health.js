@@ -100,6 +100,8 @@ const ERROR_ALERTS = {
  */
 export function noteProviderError(provider, status, message) {
   const kind = errorKind(provider, status, message);
+  // Out of balance or the key refused: requests skip it for a while (ai-failover.js).
+  if (kind === "balance" || kind === "auth") markProviderDown(provider, kind);
   if (kind === "other" && status < 500) return;
   void (async () => {
     await recordProviderError({ provider, kind, status, message });
@@ -109,6 +111,33 @@ export function noteProviderError(provider, status, message) {
       await alertOnce(`error:${provider}:${kind}`, ERROR_ALERT_EVERY_MS, `Twinstack: ${subject}`, `${text}\n\nWhat it said: ${String(message).slice(0, 300)}`);
     }
   })().catch((err) => console.error(`Couldn't record a ${provider} error:`, err.message));
+}
+
+/* ------------------------------------------------------------ down for now */
+
+// A provider that just said it's out of balance or refused the app's key won't take the next request
+// either: ai-failover.js skips it until DOWN_MS has passed, then tries it again. In memory (one API
+// process), so a restart tries every provider again at once.
+export const DOWN_MS = 5 * 60 * 1000;
+const downUntil = new Map();
+
+/** Marks `provider` as unable to take requests for DOWN_MS (`kind`: "balance" or "auth"). */
+export function markProviderDown(provider, kind, now = Date.now()) {
+  downUntil.set(provider, { until: now + DOWN_MS, kind });
+}
+
+/** Whether `provider` was marked down less than DOWN_MS ago. */
+export function isProviderDown(provider, now = Date.now()) {
+  const mark = downUntil.get(provider);
+  if (!mark) return false;
+  if (mark.until > now) return true;
+  downUntil.delete(provider);
+  return false;
+}
+
+/** Forgets every mark (tests). */
+export function clearProviderDown() {
+  downUntil.clear();
 }
 
 /* ------------------------------------------------------------ balances */

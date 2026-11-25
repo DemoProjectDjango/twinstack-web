@@ -29,6 +29,7 @@ import {
   reopenConversation,
   updateConversation,
 } from "../db.js";
+import { AI_BUSY, AiUnavailableError, OWN_KEY_REFUSED } from "../ai-errors.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeFilesKeyFor, claudeKeyFor } from "../credits.js";
 import { fastModelForSite, fastModelKey } from "../fast-model.js";
 import { imageModelForSite } from "../image-model.js";
@@ -197,18 +198,30 @@ function askedOwner(display) {
   return text.endsWith("?");
 }
 
-function friendlyError(err) {
+/**
+ * What the owner is told when an answer fails: never a provider's error, status, raw JSON or a
+ * provider or model name. On the app's keys every provider-side failure (out of balance, key refused,
+ * overloaded, unreachable) has already been handed to another provider (ai-failover.js), so it reads
+ * as a short maintenance with the credits untouched (AI_BUSY). `ownKey`: the account's own API key
+ * (credits.js: OWN_KEYS) ran it, so a refused key is theirs to fix.
+ */
+export function friendlyError(err, { ownKey = false } = {}) {
   if (err instanceof Anthropic.APIUserAbortError) return "Stopped.";
-  if (err instanceof Anthropic.AuthenticationError) return "Claude didn't accept the API key. If you added your own Anthropic key, check it in Settings.";
-  if (err instanceof Anthropic.PermissionDeniedError) return "Your Anthropic account can't use this Claude model.";
-  if (err instanceof Anthropic.RateLimitError) return "Claude is getting too many requests right now. Try again in a minute.";
-  if (err instanceof Anthropic.InternalServerError) return "Claude is overloaded right now. Try again shortly.";
-  if (err instanceof Anthropic.BadRequestError) return `Claude couldn't process this conversation (${err.message}). If it keeps happening, start a new conversation.`;
-  if (err instanceof Anthropic.APIConnectionError) return "Couldn't reach Claude. Check the server's internet connection.";
+  if (err instanceof AiUnavailableError) return AI_BUSY;
   if (err instanceof WorkspaceError) return err.message;
   // The account's own limits (credits.js: LIMITS): too much at once, or today's credits used.
   if (err instanceof ClaudeAccessError) return err.message;
-  return "Something went wrong talking to Claude.";
+  if (ownKey) {
+    if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) return OWN_KEY_REFUSED;
+    if (err instanceof Anthropic.BadRequestError && /credit balance/i.test(err.message)) return "Your own API key in Settings has no balance left. Top it up, or remove the key to use your credits.";
+    if (err instanceof Anthropic.RateLimitError) return "Your own API key in Settings is getting too many requests right now. Try again in a minute.";
+  }
+  if (err instanceof Anthropic.BadRequestError && !/credit balance/i.test(err.message)) {
+    return "The AI couldn't process this conversation. If it keeps happening, start a new conversation.";
+  }
+  // Out of balance, a refused key, overloaded or unreachable: on the app's keys, a short maintenance.
+  if (err instanceof Anthropic.APIError) return ownKey ? "The AI is busy right now. Please try again in a few minutes." : AI_BUSY;
+  return "Something went wrong with the AI. Please try again.";
 }
 
 assistantRouter.get(
@@ -330,7 +343,7 @@ assistantRouter.post(
         attachments.push(await ensureUploaded(client, key, meta));
       } catch (err) {
         if (!(err instanceof Anthropic.APIError)) throw err;
-        throw new WorkspaceError(`${meta.name} couldn't be sent to Claude: ${friendlyError(err)}`, 502);
+        throw new WorkspaceError(`${meta.name} couldn't be sent to the AI. ${friendlyError(err, { ownKey: !claude.charged })}`, 502);
       }
     }
 
@@ -444,12 +457,12 @@ assistantRouter.post(
         });
       } catch (err) {
         const stopped = turn.controller.signal.aborted;
-        if (!stopped && !(err instanceof Anthropic.APIError) && !(err instanceof Anthropic.APIUserAbortError)) {
+        if (!stopped && !(err instanceof Anthropic.APIError) && !(err instanceof Anthropic.APIUserAbortError) && !(err instanceof AiUnavailableError)) {
           console.error("Assistant turn failed:", err);
         }
         ended = stopped ? "stopped" : "failed";
         // Stopping while a picture is being made aborts a plain fetch, not a Claude request.
-        turn.error = stopped ? "Stopped." : friendlyError(err);
+        turn.error = stopped ? "Stopped." : friendlyError(err, { ownKey: !claude.charged });
         result = err.partial ?? null;
       }
       try {
@@ -471,7 +484,7 @@ assistantRouter.post(
       } catch (err) {
         console.error("Couldn't save the assistant turn:", err);
         ended = "failed";
-        turn.error = "Claude's answer couldn't be saved.";
+        turn.error = "The AI's answer couldn't be saved.";
       } finally {
         turn.status = ended;
         turn.finishedAt = Date.now();

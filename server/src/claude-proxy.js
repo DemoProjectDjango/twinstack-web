@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
 import http from "node:http";
+import { AI_BUSY } from "./ai-errors.js";
+import { DEEPSEEK_UPSTREAM, adaptRequest, attemptOrder, failoverReason } from "./ai-failover.js";
 import { providerOf } from "./ai-providers.js";
 import { config } from "./config.js";
 import { isClaudeModel } from "./claude-models.js";
@@ -20,13 +22,19 @@ import { PROXY_SCOPE_NOTE } from "./scope-guard.js";
 // Nginx, and a token only works while its job runs. Requests for the cheaper "fast" model
 // (fast-model.js) go to its provider instead, and are charged the same way: deepseek-* models to
 // DeepSeek, OpenAI ones to OpenAI (translated by openai-bridge.js).
+//
+// When the provider asked for can't take a request because of the app's account with it (out of
+// balance, key refused, overloaded after the retries below, unreachable), the request goes to the
+// next provider that can, before anything has reached the script (ai-failover.js), and is charged at
+// the model that answered. When none can, the script gets a neutral error (ai-errors.js: AI_BUSY),
+// never a provider's own words, since the scripts print errors into the job's log.
 
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
 const MAX_JSON_REPLY_BYTES = 16 * 1024 * 1024;
 const UPSTREAM = (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/+$/, "");
 // deepseek-* models (TWINSTACK_FAST_MODEL, see fast-model.js) go to DeepSeek's Anthropic-compatible
 // API with the app's DeepSeek key; it takes the same request and streams the same events.
-export const DEEPSEEK_UPSTREAM = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/anthropic").replace(/\/+$/, "");
+export { DEEPSEEK_UPSTREAM };
 // Headers the scripts send that Anthropic needs; everything else (the token above all) stays here.
 // anthropic-beta only with its allowed values (allowedBetas).
 const FORWARD_HEADERS = ["content-type", "anthropic-version"];
@@ -39,7 +47,7 @@ export async function startClaudeProxy() {
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
       if (err?.name !== "AbortError") console.error("Claude proxy error:", err);
-      if (!res.headersSent) sendError(res, 502, "api_error", "Couldn't reach Claude.");
+      if (!res.headersSent) sendBusy(res);
       else res.destroy();
     });
   });
@@ -144,38 +152,34 @@ const sse = (event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n
 
 async function handle(req, res) {
   const path = (req.url ?? "").split("?")[0];
-  if (req.method !== "POST" || path !== "/v1/messages") return sendError(res, 404, "not_found_error", "Only Claude messages go through here.");
+  if (req.method !== "POST" || path !== "/v1/messages") return sendError(res, 404, "not_found_error", "Only AI messages go through here.");
 
   const token = req.headers["x-api-key"] ?? req.headers.authorization?.replace(/^Bearer\s+/i, "");
   const grant = typeof token === "string" ? grants.get(token) : null;
-  if (!grant) return sendError(res, 401, "authentication_error", "This Claude run has ended. Start it again.");
-  if (!config.platformAnthropicKey) return sendError(res, 503, "api_error", "Claude isn't available on this server.");
+  if (!grant) return sendError(res, 401, "authentication_error", "This AI run has ended. Start it again.");
+  if (!config.platformAnthropicKey) return sendBusy(res);
 
   let body = await readBody(req);
-  if (!body) return sendError(res, 413, "request_too_large", "This request is too big to send to Claude.");
+  if (!body) return sendError(res, 413, "request_too_large", "This request is too big to send to the AI.");
   let request;
   try {
     request = JSON.parse(body.toString("utf8"));
   } catch {
     return sendError(res, 400, "invalid_request_error", "The request isn't valid JSON.");
   }
-  if (!request || typeof request !== "object") return sendError(res, 400, "invalid_request_error", "The request isn't a Claude message.");
+  if (!request || typeof request !== "object") return sendError(res, 400, "invalid_request_error", "The request isn't an AI message.");
   const requestedModel = request.model ?? null;
   const provider = providerOf(requestedModel);
   // Claude: the models offered in Settings and the ones the app's own steps use (all priced);
   // others: the fast model's provider must have a key.
   const known = provider === "claude" ? isClaudeModel(requestedModel) || listedPrices(requestedModel) != null : fastModelKey(requestedModel);
-  if (!known) return sendError(res, 400, "invalid_request_error", `${requestedModel} isn't available on this server.`);
+  if (!known) return sendError(res, 400, "invalid_request_error", "This model isn't available on this server.");
   const problem = requestProblem(request);
   if (problem) return sendError(res, 400, "invalid_request_error", problem);
 
   // Every request the site's scripts make is about the website (scope-guard.js): the note goes first
   // in the system prompt, whatever the copy's scripts say. The same text every time, so caching holds.
   request = withScopeNote(request);
-  // Which account sent it, as an opaque id, so Anthropic can tell the app's users apart if one misuses it.
-  if (provider === "claude") request = { ...request, metadata: { user_id: anthropicUserId(grant.userId) } };
-  else delete request.metadata;
-  body = Buffer.from(JSON.stringify(request));
 
   let spend;
   try {
@@ -187,18 +191,59 @@ async function handle(req, res) {
   }
   if (!spend) return sendError(res, 402, "billing_error", OUT_OF_CREDITS);
   try {
-    // No more output than the balance pays for down to the overdraft limit.
-    // Only Claude has a token count: DeepSeek and OpenAI requests keep the estimate.
-    const count = provider === "claude" ? (body) => countInputTokens(req, body) : async () => null;
-    const maxTokens = await spend.fitMaxTokens(request.max_tokens, request, {}, count);
-    if (maxTokens === 0) return sendError(res, 402, "billing_error", OUT_OF_CREDITS);
-    if (provider === "openai") return await forwardOpenAI(res, { ...request, max_tokens: maxTokens }, spend);
-    if (maxTokens !== request.max_tokens) body = Buffer.from(JSON.stringify({ ...request, max_tokens: maxTokens }));
-    await forward(req, res, body, provider === "deepseek", spend);
+    await sendWithFailover(req, res, request, spend, grant);
   } finally {
     // A stopped reply is charged for what was used up to then.
     await spend.finish();
   }
+}
+
+/**
+ * Sends `request` on the model it names and, when that provider can't take it on the app's account
+ * (ai-failover.js: out of balance, key refused, overloaded after the retries, unreachable) and nothing
+ * has reached the script yet, on the next provider in attemptOrder, adapted to it. A request's own
+ * problem on the model it asked for comes back to the script as it is (the scripts fall back from the
+ * fast model on it). When nobody can take it the script gets the neutral AI_BUSY error, which it
+ * prints into the job's log. Whatever answers is charged by `spend`, at the model that answered.
+ */
+export async function sendWithFailover(req, res, request, spend, grant) {
+  const requested = request.model;
+  let failed = false;
+  for (const model of attemptOrder(requested)) {
+    const provider = providerOf(model);
+    let attempt = model === requested ? request : adaptRequest(request, model);
+    if (!attempt) continue;
+    // Which account sent it, as an opaque id, so Anthropic can tell the app's users apart if one misuses it.
+    if (provider === "claude") attempt = { ...attempt, metadata: { user_id: anthropicUserId(grant.userId) } };
+    else {
+      attempt = { ...attempt };
+      delete attempt.metadata;
+    }
+    // No more output than the balance pays for down to the overdraft limit, at this model's prices.
+    // Only Claude has a token count: DeepSeek and OpenAI requests keep the estimate.
+    spend.clamped = false;
+    spend.shortfall = null;
+    const count = provider === "claude" ? (body) => countInputTokens(req, body) : async () => null;
+    const maxTokens = await spend.fitMaxTokens(attempt.max_tokens, attempt, {}, count);
+    if (maxTokens === 0) {
+      // The account's own balance can't pay for it: that's the "buy more" message, not an outage.
+      if (!failed) return sendError(res, 402, "billing_error", OUT_OF_CREDITS);
+      continue;
+    }
+    attempt = { ...attempt, max_tokens: maxTokens };
+    const outcome = provider === "openai" ? await forwardOpenAI(res, attempt, spend) : await forward(req, res, attempt, provider, spend);
+    if (outcome.sent) return;
+    if (!outcome.reason && model === requested) return outcome.reply();
+    failed = true;
+    console.warn(`AI proxy: ${model} couldn't take a request (${outcome.reason ?? `answered ${outcome.status}`}); trying the next provider.`);
+  }
+  sendBusy(res);
+}
+
+/** The neutral "busy" error, which the scripts mustn't retry (they print it and stop or fall back). */
+function sendBusy(res) {
+  res.writeHead(503, { "content-type": "application/json", "x-should-retry": "false" });
+  res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: AI_BUSY } }));
 }
 
 /** The request's exact input tokens from Anthropic's count_tokens (free), or null when it can't be had. */
@@ -264,66 +309,102 @@ async function fetchRetrying(url, init) {
   }
 }
 
-async function forward(req, res, body, deepseek, spend) {
-  const headers = { "x-api-key": deepseek ? config.deepseekKey : config.platformAnthropicKey };
-  for (const name of FORWARD_HEADERS) if (req.headers[name]) headers[name] = req.headers[name];
-  const betas = allowedBetas(req.headers["anthropic-beta"]);
-  if (betas) headers["anthropic-beta"] = betas;
-  const controller = new AbortController();
-  // The job was cancelled (or the script gave up): stop the request at Anthropic too.
-  res.on("close", () => {
-    if (!res.writableFinished) controller.abort();
-  });
+// Tests shorten the waits between tries.
+export function setRetryDelaysForTests(delays) {
+  RETRY_DELAYS_MS.splice(0, RETRY_DELAYS_MS.length, ...delays);
+}
 
-  const upstream = await fetchRetrying(`${deepseek ? DEEPSEEK_UPSTREAM : UPSTREAM}/v1/messages`, { method: "POST", headers, body, signal: controller.signal });
-  const replyHeaders = {};
-  for (const [name, value] of upstream.headers) if (RETURN_HEADERS.test(name)) replyHeaders[name] = value;
-  res.writeHead(upstream.status, replyHeaders);
+const MAX_FAILURE_BYTES = 64 * 1024;
 
-  const streamed = upstream.ok && /text\/event-stream/i.test(upstream.headers.get("content-type") ?? "");
-  const decoder = new TextDecoder();
-  let pending = "";
-  // The content block being streamed, closed for the script if the reply is cut off inside it.
-  let openBlock = null;
-  const json = [];
-  let jsonSize = 0;
-  // A refusal's body, for provider-health.js (out of balance, rate limited, key refused…).
-  const failure = [];
+/** Up to MAX_FAILURE_BYTES of a refusal's body, as text. */
+async function failureText(upstream) {
+  const chunks = [];
+  let size = 0;
   try {
     for await (const chunk of upstream.body ?? []) {
-      if (!streamed) {
+      chunks.push(chunk);
+      size += chunk.length;
+      if (size >= MAX_FAILURE_BYTES) break;
+    }
+  } catch {
+    // Cut off: what arrived is enough to tell what it was.
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/** The reply headers worth passing on to the script. */
+function returnHeaders(upstream) {
+  const headers = {};
+  for (const [name, value] of upstream.headers) if (RETURN_HEADERS.test(name)) headers[name] = value;
+  return headers;
+}
+
+/**
+ * Sends a Claude-format request to Anthropic or DeepSeek (`provider`) with the app's key and streams
+ * the reply back. Resolves to `{ sent: true }` once anything was written to the script, or, when the
+ * provider refused or failed before that, `{ reason, status, reply }`: `reason` from failoverReason
+ * (null for the request's own problem) and `reply()` to pass the refusal on to the script as it was.
+ */
+async function forward(req, res, request, provider, spend) {
+  const deepseek = provider === "deepseek";
+  const headers = { "x-api-key": deepseek ? config.deepseekKey : config.platformAnthropicKey };
+  for (const name of FORWARD_HEADERS) if (req.headers[name]) headers[name] = req.headers[name];
+  // Betas are Claude's: DeepSeek gets none.
+  const betas = deepseek ? null : allowedBetas(req.headers["anthropic-beta"]);
+  if (betas) headers["anthropic-beta"] = betas;
+  const controller = new AbortController();
+  // The job was cancelled (or the script gave up): stop the request at the provider too.
+  const onClose = () => {
+    if (!res.writableFinished) controller.abort();
+  };
+  res.on("close", onClose);
+  const signal = controller.signal;
+
+  let upstream;
+  try {
+    upstream = await fetchRetrying(`${deepseek ? DEEPSEEK_UPSTREAM : UPSTREAM}/v1/messages`, { method: "POST", headers, body: JSON.stringify(request), signal });
+  } catch (err) {
+    res.off("close", onClose);
+    if (signal.aborted) throw err;
+    console.warn(`AI proxy: couldn't reach ${provider}: ${err.message}`);
+    return { reason: "connection", status: 0, reply: () => sendBusy(res) };
+  }
+
+  if (!upstream.ok) {
+    res.off("close", onClose);
+    const text = await failureText(upstream);
+    // Out of balance, rate limited, key refused… (provider-health.js: also marks it down for now).
+    noteProviderError(provider, upstream.status, text.slice(0, 2000));
+    const replyHeaders = returnHeaders(upstream);
+    return {
+      reason: failoverReason(provider, upstream.status, text),
+      status: upstream.status,
+      reply: () => {
+        res.writeHead(upstream.status, replyHeaders);
+        res.end(text);
+      },
+    };
+  }
+
+  const replyHeaders = returnHeaders(upstream);
+  const streamed = /text\/event-stream/i.test(upstream.headers.get("content-type") ?? "");
+  if (!streamed) {
+    res.writeHead(upstream.status, replyHeaders);
+    const json = [];
+    let jsonSize = 0;
+    try {
+      for await (const chunk of upstream.body ?? []) {
         res.write(chunk);
-        if (upstream.ok && jsonSize < MAX_JSON_REPLY_BYTES) {
+        if (jsonSize < MAX_JSON_REPLY_BYTES) {
           json.push(chunk);
           jsonSize += chunk.length;
-        } else if (!upstream.ok && failure.length < 8) failure.push(chunk);
-        continue;
-      }
-      // Whole events only, so the reply can end cleanly between any two of them.
-      pending += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
-      let end;
-      while ((end = pending.indexOf("\n\n")) !== -1) {
-        const raw = pending.slice(0, end);
-        pending = pending.slice(end + 2);
-        res.write(`${raw}\n\n`);
-        const event = parseEvent(raw);
-        if (event?.type === "content_block_start") openBlock = event.index;
-        else if (event?.type === "content_block_stop") openBlock = null;
-        if (spend.track(event)) {
-          controller.abort();
-          endAtLimit(res, openBlock, spend);
-          return;
         }
       }
-    }
-    if (pending) res.write(pending);
-    res.end();
-  } catch (err) {
-    if (!controller.signal.aborted) console.error("Claude proxy stream failed:", err.message);
-    res.destroy();
-  } finally {
-    if (!upstream.ok) noteProviderError(deepseek ? "deepseek" : "claude", upstream.status, Buffer.concat(failure).toString("utf8").slice(0, 2000));
-    if (json.length) {
+      res.end();
+    } catch (err) {
+      if (!signal.aborted) console.error("Claude proxy reply failed:", err.message);
+      res.destroy();
+    } finally {
       try {
         const message = JSON.parse(Buffer.concat(json).toString("utf8"));
         spend.track({ type: "message_start", message });
@@ -332,7 +413,79 @@ async function forward(req, res, body, deepseek, spend) {
         // Not a message: nothing to charge.
       }
     }
+    return { sent: true };
   }
+
+  const decoder = new TextDecoder();
+  let pending = "";
+  // The content block being streamed, closed for the script if the reply is cut off inside it.
+  let openBlock = null;
+  let started = false;
+  // An error event before anything else, which another provider can still make up for.
+  let early = null;
+  try {
+    reading: for await (const chunk of upstream.body ?? []) {
+      // Whole events only, so the reply can end cleanly between any two of them.
+      pending += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
+      let end;
+      while ((end = pending.indexOf("\n\n")) !== -1) {
+        const raw = pending.slice(0, end);
+        pending = pending.slice(end + 2);
+        const event = parseEvent(raw);
+        if (!started) {
+          // An error before anything else (overloaded as the reply began): nothing has reached the
+          // script, so another provider can still take the request.
+          if (event?.type === "error") {
+            early = { event, raw };
+            // Leaving the loop cancels the rest of the reply.
+            break reading;
+          }
+          res.writeHead(upstream.status, replyHeaders);
+          started = true;
+        }
+        res.write(`${raw}\n\n`);
+        if (event?.type === "content_block_start") openBlock = event.index;
+        else if (event?.type === "content_block_stop") openBlock = null;
+        if (spend.track(event)) {
+          controller.abort();
+          endAtLimit(res, openBlock, spend);
+          return { sent: true };
+        }
+      }
+    }
+    if (early) {
+      res.off("close", onClose);
+      const status = early.event.error?.type === "overloaded_error" ? 529 : early.event.error?.type === "invalid_request_error" ? 400 : 500;
+      const text = JSON.stringify(early.event);
+      noteProviderError(provider, status, text.slice(0, 2000));
+      return {
+        reason: failoverReason(provider, status, text),
+        status,
+        reply: () => {
+          res.writeHead(upstream.status, replyHeaders);
+          res.end(`${early.raw}\n\n`);
+        },
+      };
+    }
+    if (!started) res.writeHead(upstream.status, replyHeaders);
+    if (pending) res.write(pending);
+    res.end();
+  } catch (err) {
+    if (signal.aborted && !started && !res.writableEnded && !res.destroyed) {
+      // The script went away before anything was sent.
+      res.destroy();
+      return { sent: true };
+    }
+    if (!started) {
+      // The connection dropped before the reply began: another provider can still take it.
+      res.off("close", onClose);
+      console.warn(`AI proxy: ${provider}'s reply broke off before it began: ${err.message}`);
+      return { reason: "connection", status: 0, reply: () => sendBusy(res) };
+    }
+    if (!signal.aborted) console.error("Claude proxy stream failed:", err.message);
+    res.destroy();
+  }
+  return { sent: true };
 }
 
 /**
@@ -345,36 +498,72 @@ function endAtLimit(res, openBlock, spend) {
   res.end(sse({ type: "message_stop" }));
 }
 
-/** forward for an OpenAI model: the request (an object) goes through openai-bridge.js, the reply comes back as Claude's. */
+/**
+ * forward for an OpenAI model: the request (an object) goes through openai-bridge.js, the reply comes
+ * back as Claude's. Resolves like forward.
+ */
 async function forwardOpenAI(res, request, spend) {
   const controller = new AbortController();
-  res.on("close", () => {
+  const onClose = () => {
     if (!res.writableFinished) controller.abort();
-  });
-  const reply = await sendToOpenAI(request, { apiKey: config.openaiKey, signal: controller.signal });
+  };
+  res.on("close", onClose);
+  let reply;
+  try {
+    reply = await sendToOpenAI(request, { apiKey: config.openaiKey, signal: controller.signal });
+  } catch (err) {
+    res.off("close", onClose);
+    if (controller.signal.aborted) throw err;
+    console.warn(`AI proxy: couldn't reach openai: ${err.message}`);
+    return { reason: "connection", status: 0, reply: () => sendBusy(res) };
+  }
   if (reply.body) {
-    res.writeHead(reply.status, { "content-type": "application/json", ...reply.headers });
-    return res.end(JSON.stringify(reply.body));
+    res.off("close", onClose);
+    // A request the bridge can't translate has no upstreamStatus: the request's own problem.
+    return {
+      reason: reply.upstreamStatus ? failoverReason("openai", reply.upstreamStatus, reply.detail) : null,
+      status: reply.upstreamStatus ?? reply.status,
+      reply: () => {
+        res.writeHead(reply.status, { "content-type": "application/json", ...reply.headers });
+        res.end(JSON.stringify(reply.body));
+      },
+    };
   }
   if (reply.message) {
     res.writeHead(200, { "content-type": "application/json", ...reply.headers });
     res.end(JSON.stringify(reply.message));
     spend.track({ type: "message_start", message: reply.message });
     spend.track({ type: "message_delta", usage: reply.message.usage });
-    return;
+    return { sent: true };
   }
 
+  const events = reply.events[Symbol.asyncIterator]();
+  let first;
+  try {
+    first = await events.next();
+  } catch (err) {
+    res.off("close", onClose);
+    if (controller.signal.aborted) throw err;
+    return { reason: "connection", status: 0, reply: () => sendBusy(res) };
+  }
+  // Failed before anything was said: another provider can still take it.
+  if (!first.done && first.value?.type === "error") {
+    res.off("close", onClose);
+    controller.abort();
+    return { reason: "overloaded", status: 500, reply: () => sendBusy(res) };
+  }
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", ...reply.headers });
   let openBlock = null;
   try {
-    for await (const event of reply.events) {
+    for (let next = first; !next.done; next = await events.next()) {
+      const event = next.value;
       res.write(sse(event));
       if (event.type === "content_block_start") openBlock = event.index;
       else if (event.type === "content_block_stop") openBlock = null;
       if (spend.track(event)) {
         controller.abort();
         endAtLimit(res, openBlock, spend);
-        return;
+        return { sent: true };
       }
     }
     res.end();
@@ -382,4 +571,5 @@ async function forwardOpenAI(res, request, spend) {
     if (!controller.signal.aborted) console.error("Claude proxy stream from OpenAI failed:", err.message);
     res.destroy();
   }
+  return { sent: true };
 }

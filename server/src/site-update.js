@@ -7,6 +7,9 @@ import { anthropicClient } from "./assistant/turn.js";
 import { jobEnv, npmCli } from "./commands.js";
 import { config } from "./config.js";
 import { countInputTokens } from "./credits.js";
+import { AiUnavailableError } from "./ai-errors.js";
+import { openStream, withFailover } from "./ai-failover.js";
+import { providerOf } from "./ai-providers.js";
 import { noteProviderError } from "./provider-health.js";
 import { GIT_TIMEOUT_MS } from "./duplicate.js";
 import { githubFetch } from "./github.js";
@@ -266,39 +269,64 @@ async function mergeWithClaude(client, model, conflict, beginSpend) {
     fallbacks: "default",
     betas: ["server-side-fallback-2026-07-01"],
   };
-  const outOfCredits = `Your Claude credits ran out before Claude finished combining ${file}. Buy more credits, then try again.`;
+  const outOfCredits = `Your credits ran out before the AI finished combining ${file}. Buy more credits, then try again.`;
   const spend = await beginSpend();
   params.max_tokens = (await spend?.fitMaxTokens(MAX_TOKENS, params, {}, (body) => countInputTokens(client, body))) ?? 0;
+  const appKey = client.apiKey === config.platformAnthropicKey;
   let message;
   try {
     if (!params.max_tokens) throw new Error(outOfCredits);
-    const stream = client.beta.messages.stream(params);
-    // A half-merged file is no use, so a merge that reaches the overdraft limit just stops.
-    stream.on("streamEvent", (event) => {
-      if (spend.track(event)) stream.abort();
-    });
+    // On the app's key, a provider that can't take it (out of balance, key refused, overloaded,
+    // unreachable) hands the merge to the next one before anything streamed (ai-failover.js).
+    const run = (attempt, target, progress) => {
+      if (target !== params.model) {
+        spend.clamped = false;
+        attempt.max_tokens = spend.maxTokens(MAX_TOKENS, attempt);
+        if (!attempt.max_tokens) throw Object.assign(new Error(outOfCredits), { failoverReason: "credits" });
+      }
+      const stream = openStream(target, attempt, { client });
+      // A half-merged file is no use, so a merge that reaches the overdraft limit just stops.
+      stream.on("streamEvent", (event) => {
+        progress.started = true;
+        if (spend.track(event)) stream.abort();
+      });
+      return stream.finalMessage();
+    };
     try {
-      message = await stream.finalMessage();
+      message = (
+        await withFailover(params, run, {
+          enabled: appKey,
+          onFailover: (target, reason, err) => {
+            console.warn(`Merging ${file}: ${target} couldn't take the request (${reason}); trying the next provider.`);
+            if (err?.status && providerOf(target) !== "openai") noteProviderError(providerOf(target), err.status, err.message);
+          },
+        })
+      ).result;
     } catch (err) {
-      if (err?.status && client.apiKey === config.platformAnthropicKey) noteProviderError("claude", err.status, err.message);
-      throw spend.stopped ? new Error(outOfCredits) : err;
+      if (spend.stopped) throw new Error(outOfCredits);
+      if (err instanceof AiUnavailableError) {
+        throw new Error(`The AI is busy right now (short maintenance), so ${file} couldn't be combined. Please try the update again in about 10 minutes. Nothing on your site has changed.`);
+      }
+      if (err?.status && appKey) noteProviderError("claude", err.status, err.message);
+      // Never the provider's own words: they name it and carry raw JSON.
+      throw err?.status || err?.name === "APIConnectionError" ? new Error(`The AI couldn't combine ${file}. Try the update again later. Nothing on your site has changed.`) : err;
     }
   } finally {
     await spend?.finish(message && !spend.stopped ? { model: message.model, usage: message.usage } : {});
   }
-  if (message.stop_reason === "refusal") throw new Error(`Claude declined to merge ${file}.`);
-  if (message.stop_reason === "max_tokens") throw new Error(spend.clamped ? outOfCredits : `Claude's merge of ${file} was cut off.`);
+  if (message.stop_reason === "refusal") throw new Error(`The AI declined to combine ${file}.`);
+  if (message.stop_reason === "max_tokens") throw new Error(spend.clamped ? outOfCredits : `The AI's version of ${file} was cut off.`);
   const reply = message.content.filter((b) => b.type === "text").map((b) => b.text).join("");
   const found = /<merged_file>\r?\n?([\s\S]*?)<\/merged_file>/.exec(reply);
-  if (!found) throw new Error(`Claude's merge of ${file} came back in the wrong form.`);
+  if (!found) throw new Error(`The AI's version of ${file} came back in the wrong form.`);
 
   const oursText = ours.toString("utf8");
   const eol = oursText.includes("\r\n") ? "\r\n" : "\n";
   let text = found[1].replace(/\r?\n$/, "").replace(/\r?\n/g, eol);
   if (/\r?\n$/.test(oursText)) text += eol;
-  if (CONFLICT_MARKER.test(text)) throw new Error(`Claude's merge of ${file} still has conflict markers.`);
-  if (!text.trim() && oursText.trim()) throw new Error(`Claude's merge of ${file} came back empty.`);
-  if (file.endsWith(".json") && !safeJson(text)) throw new Error(`Claude's merge of ${file} isn't valid JSON.`);
+  if (CONFLICT_MARKER.test(text)) throw new Error(`The AI's version of ${file} still has conflict markers.`);
+  if (!text.trim() && oursText.trim()) throw new Error(`The AI's version of ${file} came back empty.`);
+  if (file.endsWith(".json") && !safeJson(text)) throw new Error(`The AI's version of ${file} isn't valid JSON.`);
   return text;
 }
 

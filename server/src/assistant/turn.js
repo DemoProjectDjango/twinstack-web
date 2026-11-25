@@ -1,4 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { AiUnavailableError } from "../ai-errors.js";
+import { adaptRequest, openStream, withFailover } from "../ai-failover.js";
+import { providerOf } from "../ai-providers.js";
 import { config } from "../config.js";
 import { anthropicUserId, countInputTokens } from "../credits.js";
 import { noteProviderError } from "../provider-health.js";
@@ -137,6 +140,9 @@ export async function runTurn({ client, key, model: requested, history, live, on
 
   async function loop() {
     let nudged = false;
+    // Once another provider has stood in, it answers the rest of the turn: a tool loop can't switch
+    // back to Claude half-way (Claude expects its own thinking before each of its tool calls).
+    let standIn = null;
     for (let step = 0; step < MAX_STEPS; step++) {
       const params = {
         model: requested,
@@ -169,12 +175,27 @@ export async function runTurn({ client, key, model: requested, history, live, on
         stopReason = "out_of_credits";
         break;
       }
-      const stream = client.beta.messages.stream(params, { signal });
-
       // Text streams into the current text part; a tool call shows as "Reading the site plan".
       const blockParts = new Map();
       let cutOff = null;
-      stream.on("streamEvent", (event, snapshot) => {
+      // On the app's key, a provider that can't take the request (out of balance, key refused,
+      // overloaded, unreachable) hands it to the next one before anything streamed (ai-failover.js).
+      // That one's prices decide its max_tokens and charge.
+      const run = async (attempt, target, progress) => {
+        if (target !== params.model) {
+          spend.clamped = false;
+          spend.shortfall = null;
+          attempt.max_tokens = spend.maxTokens(MAX_TOKENS, attempt, cached);
+          if (!attempt.max_tokens) throw Object.assign(new Error("Not enough credits for this model."), { failoverReason: "credits" });
+        }
+        const stream = openStream(target, attempt, { client, signal });
+        stream.on("streamEvent", (event, snapshot) => {
+          progress.started = true;
+          onEvent(stream, event, snapshot);
+        });
+        return stream.finalMessage();
+      };
+      const onEvent = (stream, event, snapshot) => {
         // The credits are spent down to the overdraft limit: stop Claude, keeping what it wrote.
         if (!cutOff && spend.track(event)) {
           cutOff = snapshot ?? { content: [] };
@@ -205,11 +226,22 @@ export async function runTurn({ client, key, model: requested, history, live, on
             onUpdate();
           }
         }
-      });
+      };
 
       let message;
       try {
-        message = await stream.finalMessage();
+        const answered = await withFailover((standIn && adaptRequest(params, standIn)) || params, run, {
+          enabled: client.apiKey === config.platformAnthropicKey,
+          onFailover: (target, reason, err) => {
+            console.warn(`The assistant's ${target} couldn't take its request (${reason}); trying the next provider.`);
+            // OpenAI's are noted by openai-bridge.js.
+            if (err?.status && providerOf(target) !== "openai") noteProviderError(providerOf(target), err.status, err.message);
+          },
+        });
+        message = answered.result;
+        if (answered.model !== params.model) standIn = answered.model;
+        // Another provider's thinking can't go back to Claude later: only its words and tool calls are kept.
+        if (providerOf(answered.model) !== "claude") message = { ...message, content: message.content.filter((b) => b.type !== "thinking" && b.type !== "redacted_thinking") };
       } catch (err) {
         // A request stopped part-way (by the owner, an error, or the credits) is charged for what
         // it used up to then.
@@ -218,7 +250,7 @@ export async function runTurn({ client, key, model: requested, history, live, on
           await spend.finish();
           // With eager input streaming, a tool input that isn't valid JSON rejects the stream. Ask
           // again (the failed request added nothing to the history); API errors go to the caller.
-          if (err instanceof Anthropic.APIError || err instanceof Anthropic.APIUserAbortError || step === MAX_STEPS - 1) throw err;
+          if (err instanceof Anthropic.APIError || err instanceof Anthropic.APIUserAbortError || err instanceof AiUnavailableError || step === MAX_STEPS - 1) throw err;
           live.parts = live.parts.filter((p) => !p.pending);
           continue;
         }
