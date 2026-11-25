@@ -876,9 +876,30 @@ function startingCredits() {
  * `{ balance, granted, purchased, used, freePending }` for the account: `freePending` while the
  * free credits wait for GitHub to be connected.
  */
+/**
+ * The account's own Claude limits (`users.limits`: `running`, `perMinute`, `dailyCredits`), set by
+ * an admin for an account that needs more or less than the defaults (credits.js: LIMITS). Missing
+ * fields use the defaults.
+ */
+export async function getUserLimits(id) {
+  const doc = await users().findOne({ _id: objectId(id) }, { projection: { limits: 1 } });
+  return doc?.limits ?? {};
+}
+
+/** Credits charged to the account since `since` (a Date), from its usage records. */
+export async function chargedCreditsSince(userId, since) {
+  const [row] = await claudeUsage()
+    .aggregate([
+      { $match: { userId, charged: true, createdAt: { $gte: since } } },
+      { $group: { _id: null, credits: { $sum: "$credits" } } },
+    ])
+    .toArray();
+  return row?.credits ?? 0;
+}
+
 export async function getCredits(id) {
   const doc = await users().findOne({ _id: objectId(id) }, { projection: { credits: 1 } });
-  const { purchaseIds: _ids, freePending, ...credits } = doc?.credits ?? {};
+  const { purchaseIds: _ids, chargeIds: _charges, freePending, ...credits } = doc?.credits ?? {};
   return { ...startingCredits(), ...credits, freePending: freePending === true };
 }
 
@@ -919,10 +940,22 @@ export async function recordScopeBlock({ userId, siteId = null, where, text, rea
  * starts. `usage` is the API's usage object.
  */
 export async function recordClaudeUsage({ userId, siteId = null, runId = null, kind, command = null, model, usage, credits = 0, charged = false }) {
+  // Each write is tried again on its own, so a passing database error doesn't leave a request
+  // unpaid. Both are safe to repeat (there's no replica set, so no retryable writes): the charge
+  // carries an id kept in `credits.chargeIds` (the last 200, never sent to the browser), and the
+  // record its own _id, so a write that went through but wasn't acknowledged isn't made twice.
+  const _id = new ObjectId();
   if (charged && credits > 0) {
-    await users().updateOne({ _id: objectId(userId) }, { $inc: { "credits.balance": -credits, "credits.used": credits } });
+    const chargeId = _id.toHexString();
+    await withRetries(() =>
+      users().updateOne(
+        { _id: objectId(userId), "credits.chargeIds": { $ne: chargeId } },
+        { $inc: { "credits.balance": -credits, "credits.used": credits }, $push: { "credits.chargeIds": { $each: [chargeId], $slice: -200 } } },
+      ),
+    );
   }
-  await claudeUsage().insertOne({
+  await withRetries(() => claudeUsage().insertOne({
+    _id,
     userId,
     siteId,
     runId,
@@ -937,7 +970,22 @@ export async function recordClaudeUsage({ userId, siteId = null, runId = null, k
     credits,
     charged,
     createdAt: new Date(),
-  });
+  }).catch((err) => {
+    // Written by an earlier try whose answer was lost.
+    if (err?.code !== 11000) throw err;
+  }));
+}
+
+/** `write()`, tried up to 3 more times (1, 3 and 9 s apart) when it throws. */
+async function withRetries(write) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await write();
+    } catch (err) {
+      if (attempt >= 3) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 1000 * 3 ** attempt));
+    }
+  }
 }
 
 // A purchase's status: "pending" (sent to Stripe Checkout), then "paid", "failed" or "expired";
