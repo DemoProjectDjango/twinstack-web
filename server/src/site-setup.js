@@ -615,7 +615,7 @@ function configChanges(setup) {
 }
 
 function profileText(setup) {
-  const lines = [PROFILE_HEADING, "", "<!-- Written by the setup questions. Change anything here and Claude follows it from then on. -->", `- Kind of website: ${setup.type.label}`];
+  const lines = [PROFILE_HEADING, "", "<!-- Written by the setup questions. Change anything here and the AI follows it from then on. -->", `- Kind of website: ${setup.type.label}`];
   for (const k of setup.known) lines.push(`- ${k.label}: ${k.value}`);
   for (const field of fieldsOfQuestions(setup.questions)) {
     const value = setup.answers[field.id];
@@ -857,7 +857,7 @@ export async function saveSetup({ key, siteId, body, options = {} }) {
   if (Object.keys(brand).length) await saveBrand(key, brand).catch((err) => console.error(`Couldn't save the setup's logo in ${key}:`, err.message));
 
   const { content } = await readDataFile(key, "knowledge-notes");
-  await writeDataFile(key, "knowledge-notes", withProfile(content || "# Notes for Claude\n", profileText(setup)));
+  await writeDataFile(key, "knowledge-notes", withProfile(content || "# Notes for the AI\n", profileText(setup)));
 
   if (typeof siteId === "number") {
     await saveSiteSetup(siteId, {

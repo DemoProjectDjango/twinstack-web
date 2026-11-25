@@ -266,7 +266,7 @@ async function mergeWithClaude(client, model, conflict, beginSpend) {
     fallbacks: "default",
     betas: ["server-side-fallback-2026-07-01"],
   };
-  const outOfCredits = `Your Claude credits ran out before Claude finished combining ${file}. Buy more credits, then try again.`;
+  const outOfCredits = `Your credits ran out before the AI finished combining ${file}. Buy more credits, then try again.`;
   const spend = await beginSpend();
   params.max_tokens = (await spend?.fitMaxTokens(MAX_TOKENS, params, {}, (body) => countInputTokens(client, body))) ?? 0;
   let message;
@@ -286,19 +286,19 @@ async function mergeWithClaude(client, model, conflict, beginSpend) {
   } finally {
     await spend?.finish(message && !spend.stopped ? { model: message.model, usage: message.usage } : {});
   }
-  if (message.stop_reason === "refusal") throw new Error(`Claude declined to merge ${file}.`);
-  if (message.stop_reason === "max_tokens") throw new Error(spend.clamped ? outOfCredits : `Claude's merge of ${file} was cut off.`);
+  if (message.stop_reason === "refusal") throw new Error(`The AI declined to combine ${file}.`);
+  if (message.stop_reason === "max_tokens") throw new Error(spend.clamped ? outOfCredits : `The AI's combined version of ${file} was cut off.`);
   const reply = message.content.filter((b) => b.type === "text").map((b) => b.text).join("");
   const found = /<merged_file>\r?\n?([\s\S]*?)<\/merged_file>/.exec(reply);
-  if (!found) throw new Error(`Claude's merge of ${file} came back in the wrong form.`);
+  if (!found) throw new Error(`The AI's combined version of ${file} came back in the wrong form.`);
 
   const oursText = ours.toString("utf8");
   const eol = oursText.includes("\r\n") ? "\r\n" : "\n";
   let text = found[1].replace(/\r?\n$/, "").replace(/\r?\n/g, eol);
   if (/\r?\n$/.test(oursText)) text += eol;
-  if (CONFLICT_MARKER.test(text)) throw new Error(`Claude's merge of ${file} still has conflict markers.`);
-  if (!text.trim() && oursText.trim()) throw new Error(`Claude's merge of ${file} came back empty.`);
-  if (file.endsWith(".json") && !safeJson(text)) throw new Error(`Claude's merge of ${file} isn't valid JSON.`);
+  if (CONFLICT_MARKER.test(text)) throw new Error(`The AI's combined version of ${file} still has conflict markers.`);
+  if (!text.trim() && oursText.trim()) throw new Error(`The AI's combined version of ${file} came back empty.`);
+  if (file.endsWith(".json") && !safeJson(text)) throw new Error(`The AI's combined version of ${file} isn't valid JSON.`);
   return text;
 }
 
@@ -484,12 +484,12 @@ export function siteUpdateSteps({ key, accessToken, templateToken = accessToken,
         const files = s.conflicts.map((c) => c.file).join(", ");
         if (!anthropicKey) {
           throw new Error(
-            `You changed ${files}, and so does this update. Claude combines the two, but it can't run: ${noClaude ?? "set up Claude in Settings."} Try again then. Nothing on your site has changed.`,
+            `You changed ${files}, and so does this update. The AI combines the two, but it can't run: ${noClaude ?? "the AI isn't available right now."} Try again then. Nothing on your site has changed.`,
           );
         }
         const client = anthropicClient(anthropicKey);
         for (const conflict of s.conflicts) {
-          log(`  Claude is combining ${conflict.file}…`);
+          log(`  The AI is combining ${conflict.file}…`);
           await fs.writeFile(path.join(work, conflict.file), await mergeWithClaude(client, model, conflict, beginSpend));
         }
       },
@@ -620,7 +620,7 @@ export async function moveEditor(dir, target, args, log, resolve = null) {
       await fs.mkdir(path.dirname(full), { recursive: true });
       let text = merged && !merged.conflicts ? merged.text : null;
       if (merged?.conflicts && resolve) {
-        log(`  Claude is combining your unpublished changes to ${file} with the update…`);
+        log(`  The AI is combining your unpublished changes to ${file} with the update…`);
         text = await resolve({ file, ours: content, base: old, theirs: now, marked: merged.text }).catch(() => null);
       }
       if (text !== null) await fs.writeFile(full, text);

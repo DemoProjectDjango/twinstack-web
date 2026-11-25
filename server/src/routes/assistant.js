@@ -225,7 +225,7 @@ assistantRouter.post(
   handle(async (req, res) => {
     const { chat } = await siteOf(req);
     const current = await findConversation(req.user.id, chat);
-    if (current && runningTurnFor(current.id)) throw new WorkspaceError("Wait for Claude to finish, or stop it first.", 409);
+    if (current && runningTurnFor(current.id)) throw new WorkspaceError("Wait for the AI to finish, or stop it first.", 409);
     await removeFiles(req, await archiveConversations(req.user.id, chat));
     res.json({ conversation: null });
   }),
@@ -246,7 +246,7 @@ assistantRouter.post(
   handle(async (req, res) => {
     const { chat } = await siteOf(req);
     const current = await findConversation(req.user.id, chat);
-    if (current && runningTurnFor(current.id)) throw new WorkspaceError("Wait for Claude to finish, or stop it first.", 409);
+    if (current && runningTurnFor(current.id)) throw new WorkspaceError("Wait for the AI to finish, or stop it first.", 409);
     const reopened = await reopenConversation(req.params.id, req.user.id, chat);
     if (!reopened) throw new WorkspaceError("That conversation isn't there any more.", 404);
     await removeFiles(req, reopened.removed);
@@ -301,7 +301,7 @@ assistantRouter.post(
     const claude = keyResult.value;
 
     let conversation = found;
-    if (conversation && runningTurnFor(conversation.id)) throw new WorkspaceError("Claude is still answering. Wait for it, or stop it.", 409);
+    if (conversation && runningTurnFor(conversation.id)) throw new WorkspaceError("The AI is still answering. Wait for it, or stop it.", 409);
     // The owner's own messages in a new site's first week (the setup's build request among them), for the setup numbers.
     if (!continuing) noteSetupSignal(siteId, "messages");
     // A conversation is bound to the tools it started with: when they've changed (Claude learnt
@@ -311,7 +311,7 @@ assistantRouter.post(
     if (conversation && (conversation.toolset !== TOOLSET_VERSION || conversation.filesDeleted)) {
       notice =
         conversation.toolset !== TOOLSET_VERSION
-          ? "Claude has been updated, so this is a fresh conversation. Your site keeps every change you applied."
+          ? "The AI has been updated, so this is a fresh conversation. Your site keeps every change you applied."
           : "The files attached to that conversation are gone, so this is a fresh one. Your site keeps every change you applied.";
       await removeFiles(req, await archiveConversations(userId, chat));
       conversation = null;
@@ -330,7 +330,7 @@ assistantRouter.post(
         attachments.push(await ensureUploaded(client, key, meta));
       } catch (err) {
         if (!(err instanceof Anthropic.APIError)) throw err;
-        throw new WorkspaceError(`${meta.name} couldn't be sent to Claude: ${friendlyError(err)}`, 502);
+        throw new WorkspaceError(`${meta.name} couldn't be sent to the AI: ${friendlyError(err)}`, 502);
       }
     }
 
@@ -471,7 +471,7 @@ assistantRouter.post(
       } catch (err) {
         console.error("Couldn't save the assistant turn:", err);
         ended = "failed";
-        turn.error = "Claude's answer couldn't be saved.";
+        turn.error = "The AI's answer couldn't be saved.";
       } finally {
         turn.status = ended;
         turn.finishedAt = Date.now();

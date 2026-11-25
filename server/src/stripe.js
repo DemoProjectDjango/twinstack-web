@@ -91,7 +91,7 @@ export async function startCheckout({ user, dollars, returnTo }) {
             price_data: {
               currency: "usd",
               unit_amount: dollars * 100,
-              product_data: { name: `${credits.toLocaleString("en-US")} Claude credits`, description: "Credits for Claude in Twinstack" },
+              product_data: { name: `${credits.toLocaleString("en-US")} Twinstack AI credits`, description: "Credits for the AI in Twinstack" },
             },
           },
         ],

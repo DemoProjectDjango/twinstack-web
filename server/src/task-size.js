@@ -359,6 +359,6 @@ export function taskSize({ instruction, images = [], hint = null } = {}) {
 
 /** The line the job log shows for it. */
 export function describeTaskSize({ size, reasons }) {
-  const who = { small: "the faster model does it", standard: "the usual rules pick the model", complex: "Claude does it" }[size];
+  const who = { small: "the faster model does it", standard: "the usual rules pick the model", complex: "the main AI does it" }[size];
   return `Task size: ${size} (${reasons.join("; ")}): ${who}`;
 }

@@ -278,7 +278,7 @@ async function storedField(dir, page, source, scalars, text, pages) {
     }
   }
   if (found.length === 1) return found[0];
-  if (found.length > 1) fail("That text is stored in more than one place on your site, so it's not clear which to change. Change it where it's kept, or ask Claude.");
+  if (found.length > 1) fail("That text is stored in more than one place on your site, so it's not clear which to change. Change it where it's kept, or ask the AI.");
   return null;
 }
 
@@ -356,7 +356,7 @@ export async function editPreviewText(key, { address, before, after, index, coun
         return { file: stored.file, where: stored.where, label: stored.label ?? null, title: stored.title ?? null };
       }
     }
-    if (!found) fail("That text isn't kept on this page or in your site's settings: it's part of the site's design. Ask Claude to change it.");
+    if (!found) fail("That text isn't kept on this page or in your site's settings: it's part of the site's design. Ask the AI to change it.");
 
     const { at } = found;
     let from;

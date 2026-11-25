@@ -49,11 +49,11 @@ let sharedCachedAt = 0;
 const tooCostlyNote = ({ needed, balance, fresh }) => {
   const cost = `about ${needed.toLocaleString("en")} credits and you have ${balance.toLocaleString("en")}`;
   return fresh
-    ? `I've stopped before starting, because reading your request along with my instructions would cost ${cost}. It costs more when Claude hasn't been used for an hour or so. Buy more credits below and I'll carry on.`
-    : `I've stopped before starting, because picking this conversation up again would cost ${cost}. Claude re-reads a whole conversation when it's been idle for a while. Start a new conversation to carry on for less, or buy more credits below.`;
+    ? `I've stopped before starting, because reading your request along with my instructions would cost ${cost}. It costs more when the AI hasn't been used for an hour or so. Buy more credits below and I'll carry on.`
+    : `I've stopped before starting, because picking this conversation up again would cost ${cost}. The AI re-reads a whole conversation when it's been idle for a while. Start a new conversation to carry on for less, or buy more credits below.`;
 };
 
-const OUT_OF_CREDITS_NOTE = "I've stopped here because your Claude credits have run out. Buy more credits below and I'll carry on.";
+const OUT_OF_CREDITS_NOTE = "I've stopped here because your credits have run out. Buy more credits below and I'll carry on.";
 
 // A turn that read things and ended on buttons alone leaves the owner's question unanswered.
 const NO_WORDS_NOTE = "You haven't written anything to the owner in this reply. Tell them now, in words, the answer or what you did. Don't call any more tools.";

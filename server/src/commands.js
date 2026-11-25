@@ -340,7 +340,7 @@ export const COMMANDS = {
   },
 
   "page-edit": {
-    label: "Edit with Claude",
+    label: "Edit with the AI",
     claude: true,
     sized: sizeOf,
     // Even the preview asks Claude for the proposed file.
@@ -361,7 +361,7 @@ export const COMMANDS = {
 
   // The user writes the page's draft by hand; Claude turns it into the finished page.
   "page-generate": {
-    label: "Generate page with Claude",
+    label: "Generate page with the AI",
     claude: true,
     sized: sizeOf,
     needsKey: () => true,
@@ -388,7 +388,7 @@ export const COMMANDS = {
   },
 
   "chrome-design": {
-    label: "Design the header and footer with Claude",
+    label: "Design the header and footer with the AI",
     claude: true,
     sized: sizeOf,
     needsKey: () => true,
@@ -404,7 +404,7 @@ export const COMMANDS = {
 
   // An existing HTML page (uploaded into .git by saveHtmlSource) converted into the page's markdown.
   "page-convert": {
-    label: "Convert HTML with Claude",
+    label: "Convert HTML with the AI",
     claude: true,
     needsKey: () => true,
     steps: (input) => {
@@ -451,7 +451,7 @@ export const COMMANDS = {
 
   // Markdown outside content/ (the site tree, the schedule, the docs), via the copy's scripts/edit-md.js.
   "md-edit": {
-    label: "Edit markdown with Claude",
+    label: "Edit markdown with the AI",
     claude: true,
     needsKey: () => true,
     steps: (input) => {
@@ -481,7 +481,7 @@ export const COMMANDS = {
   // description (all: true; force: true for every page). Claude only writes the title, the
   // description and the focus keyphrase.
   "seo-claude": {
-    label: "Write SEO with Claude",
+    label: "Write SEO with the AI",
     claude: true,
     needsKey: () => true,
     steps: (input) => {

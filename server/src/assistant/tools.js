@@ -617,7 +617,7 @@ const TOOLS = [
     "Proposes the complete new standing notes every Claude request follows (voice, audience, decisions, things to avoid). Use when the owner says to always do something, or to remember something.",
     { content: { type: "string", description: "The complete new notes file (Markdown)." }, ...summaryField, ...continueField },
     ["content", "summary"],
-    { kind: "change", runs: "server", title: "Change Claude's notes" },
+    { kind: "change", runs: "server", title: "Change the AI notes" },
   ),
   tool(
     "schedule_page",
@@ -731,7 +731,7 @@ async function referencesOf(input, key) {
   const references = [];
   for (const raw of list) {
     const meta = await attachmentOf(typeof raw === "string" ? raw.trim() : raw, key);
-    if (meta.kind !== "image") throw new ToolInputError(`${meta.id} (${meta.name}) isn't an image Claude can look at.`);
+    if (meta.kind !== "image") throw new ToolInputError(`${meta.id} (${meta.name}) isn't an image the AI can look at.`);
     references.push(meta.id);
   }
   return { references };
@@ -1607,7 +1607,7 @@ async function applyAction(key, action, { accessToken, user } = {}) {
       return `Saved ${input.file}.`;
     case "update_notes_for_claude":
       await writeDataFile(key, "knowledge-notes", input.content);
-      return "Saved Claude's notes.";
+      return "Saved the AI notes.";
     case "schedule_page": {
       const schedule = await readSchedule(key);
       if (schedule.error && schedule.jobs.length === 0 && !schedule.error.includes("doesn't exist")) throw new WorkspaceError(schedule.error, 409);

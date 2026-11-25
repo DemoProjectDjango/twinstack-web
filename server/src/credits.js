@@ -171,7 +171,7 @@ export class ClaudeAccessError extends Error {
  */
 export const anthropicUserId = (userId) => createHash("sha256").update(`twinstack-user:${userId}`).digest("hex").slice(0, 40);
 
-export const OUT_OF_CREDITS ="You've used all your Claude credits. Buy more credits to keep using Claude.";
+export const OUT_OF_CREDITS ="You've used all your credits. Buy more credits to keep using the AI.";
 
 /** The account's own key when OWN_KEYS allows it, else null. */
 const ownKeyOf = async (userId) => (OWN_KEYS ? getAnthropicKey(userId) : null);
@@ -187,7 +187,7 @@ export async function claudeKeyFor(userId) {
   if (!config.platformAnthropicKey) {
     throw new ClaudeAccessError(
       "anthropic_key_required",
-      OWN_KEYS ? "Claude isn't available yet. Add your own Anthropic API key in Settings to use it." : "Claude isn't available right now. Try again later.",
+      OWN_KEYS ? "The AI isn't available yet. Add your own Anthropic API key in Settings to use it." : "The AI isn't available right now. Try again later.",
       400,
     );
   }
