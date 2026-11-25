@@ -4,6 +4,7 @@ import path from "node:path";
 import express, { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
 import { describeTaskSize, taskSize } from "../task-size.js";
+import { usageTarget } from "../usage-history.js";
 import { listOriginalPages, prepareOriginalPage } from "../original-pages.js";
 import { DEFAULT_PAGES, MAX_PAGES, clearCopiedWebsite, copiedPageShot, copyWebsiteStep, finishCopiedWebsite, normaliseStartUrl, prepareCopiedPage, readCopiedWebsite } from "../copy-website.js";
 import { config } from "../config.js";
@@ -69,6 +70,7 @@ import {
   logQuote,
   logWork,
   pageAddresses,
+  frontmatter,
 } from "../site-files.js";
 import { getStaticInfo, saveStaticInfo, staticInfoSection } from "../static-info.js";
 import { getBrand, replaceHeaderLogo, saveBrand, saveBrandImage } from "../brand.js";
@@ -277,6 +279,14 @@ async function supportsTaskSize(key) {
   return script.includes("TWINSTACK_TASK_SIZE");
 }
 
+/** The title and own address of the page a command works on (`input.page`), or null. */
+async function pageFields(key, input) {
+  if (typeof input?.page !== "string") return null;
+  const { content } = await readPage(key, input.page);
+  const fields = frontmatter(content);
+  return { title: fields.title || null, url: fields.url || null };
+}
+
 workspacesRouter.post(
   "/:owner/:repo/commands/:command",
   handle(async (req, res) => {
@@ -323,7 +333,9 @@ workspacesRouter.post(
         if (first) model = firstDesignModel(model, first);
         if (claude.charged) {
           const siteId = await siteIdFor(key).catch(() => null);
-          proxy = issueProxyToken({ userId: req.user.id, siteId, command: name });
+          // What the job works on, so the owner's usage history can name the part of the site.
+          const target = usageTarget(name, input, await pageFields(key, input).catch(() => null));
+          proxy = issueProxyToken({ userId: req.user.id, siteId, command: name, target });
           // The site's own choice of the cheaper model, else the admin's.
           let fastModel = first ? null : await fastModelForSite(siteId);
           if (fastModel && command.sized) {

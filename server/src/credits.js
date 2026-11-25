@@ -208,11 +208,11 @@ export async function claudeFilesKeyFor(userId) {
  * the credits history. Returns the credits charged. Never throws: a failed record mustn't fail the
  * work already done.
  */
-export async function meterClaude({ userId, siteId, runId, kind, command, model, requestedModel, usage, charged }) {
+export async function meterClaude({ userId, siteId, runId, kind, command, target = null, model, requestedModel, usage, charged }) {
   if (!usage) return 0;
   try {
     const credits = creditsFor(usage, model, requestedModel);
-    await recordClaudeUsage({ userId, siteId, runId, kind, command, model: model ?? requestedModel, usage, credits, charged });
+    await recordClaudeUsage({ userId, siteId, runId, kind, command, target, model: model ?? requestedModel, usage, credits, charged });
     return charged ? credits : 0;
   } catch (err) {
     console.error(`Couldn't record Claude usage for account ${userId}:`, err);
@@ -537,7 +537,7 @@ class Spend {
 
 /**
  * Starts one Claude request: the Spend that caps, watches and charges it. `info` is what it's
- * recorded against (`userId`, `siteId`, `runId`, `kind`, `command`); with `charged: false` (the
+ * recorded against (`userId`, `siteId`, `runId`, `kind`, `command`, `target`); with `charged: false` (the
  * account's own key) it's only recorded, never limited. Returns null when the account has nothing
  * left above zero to start it with. Every Spend must end with `finish()`.
  *
