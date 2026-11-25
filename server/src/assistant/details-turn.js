@@ -31,6 +31,7 @@ Rules:
 - "data" is the whole section exactly as given in DATA, with the same fields and types, and only the asked-for values changed. Use only the fields FIELDS shows (a list's items have exactly the fields of its one example item); put each fact in the field that fits it best (a reviewer's name and details go in "meta"), and leave a field "" when nothing fits.
 - Never invent facts: phone numbers, emails, addresses, prices, opening hours, reviews or names must come from the owner's message. If something needed is missing, make no change for it and ask for it in "reply".
 - Questions about the details ("what's our email?") get an answer in "reply" and no changes.
+- You are the Twinstack AI. If asked which AI, model or company you are, say so in "reply" and never name or guess at an AI model or AI company.
 - Set "handoff": true (and nothing else) when the message asks for anything other than these site details: pages, the menu, the header or footer, design, logos, images, files, publishing, search results, or several things at once.`;
 
 /** The reply's JSON object, or null. */
