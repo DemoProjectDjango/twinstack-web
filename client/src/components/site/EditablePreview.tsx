@@ -5,7 +5,7 @@ import { ApiError, api, isHomePage, workspacePath, type WorkspaceStatus } from "
 import { useAssistant } from "./assistant/AssistantProvider";
 import { noteFeature } from "./FeatureGuide";
 import { useSite } from "./site-context";
-import { Button, ErrorText, Notice, Spinner } from "./ui";
+import { Button, ErrorText, Notice, Segmented, Spinner } from "./ui";
 
 // The site preview, with click-to-edit: the preview's own script (server/src/preview/inline-edit.js,
 // added by the preview route) makes the text the owner clicks editable and sends it here, and this
@@ -418,8 +418,8 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
         )}
         <p className="min-w-0 flex-1 text-sm text-zinc-500">
           {editing
-            ? "Click any words on your site and type: Enter or clicking away saves, Esc puts it back. To change more, use \"Ask the AI to change this section\"."
-            : "Links and buttons work as they do on your live site."}
+            ? "Edit text: click any words on your site and type. Enter saves, Esc cancels. Links don't open in this mode."
+            : "Click like a visitor: links and buttons open just as they do on your live site. Choose Edit text to change words again."}
         </p>
         <Button
           variant="ghost"
@@ -459,19 +459,26 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
         >
           ↷ Redo
         </Button>
-        <Button
-          variant="ghost"
-          data-tour="try-links"
-          aria-pressed={!editing}
-          onClick={() => {
-            setEditing(!editing);
-            if (editing) noteFeature("try-links");
-            if (editing) setTyping(false);
-            setNote(null);
-          }}
-        >
-          {editing ? "Stop editing to try links" : "Edit words"}
-        </Button>
+        <span data-tour="try-links">
+          <Segmented
+            label="What a click does in the preview"
+            value={editing ? "edit" : "visit"}
+            onChange={(next) => {
+              const edit = next === "edit";
+              if (edit === editing) return;
+              setEditing(edit);
+              if (!edit) {
+                noteFeature("try-links");
+                setTyping(false);
+              }
+              setNote(null);
+            }}
+            options={[
+              { value: "edit", label: "Edit text" },
+              { value: "visit", label: "Click like a visitor" },
+            ]}
+          />
+        </span>
       </div>
       <div aria-live="polite">
         {note?.tone === "saving" && (
