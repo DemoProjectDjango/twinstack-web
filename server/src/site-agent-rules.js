@@ -26,6 +26,8 @@ export const KEY = /^[A-Za-z0-9_-]{16,64}$/;
 // When a suggestion may be made, per visitor session.
 export const LIMITS = Object.freeze({
   suggestionsPerSession: 3,
+  // Things the visitor's memory keeps across the visit (topInterests).
+  interests: 30,
   // Between two suggestions.
   cooldownMs: 60_000,
   // Nothing in the first seconds of a visit.
@@ -192,6 +194,7 @@ export function newSession({ siteId, sid, now, device }) {
     page: null,
     suggestions: [],
     questions: [],
+    interests: {},
   };
 }
 
@@ -230,11 +233,42 @@ export function applyBatch(session, batch, now) {
       page.labels[id] = { label: event.label, link: event.link, type: event.type };
       if (event.kind === "hover") page.hovers[id] = Math.min((page.hovers[id] ?? 0) + event.ms, 600_000);
       else page.clicks[id] = (page.clicks[id] ?? 0) + 1;
+      noteInterest(session, id, event, path0(session));
     } else if (event.kind === "scroll") page.scroll = Math.max(page.scroll, event.depth);
     else if (event.kind === "time") page.seconds = Math.max(page.seconds, event.seconds);
     else if (event.kind === "exit") page.exit = true;
   }
   return session;
+}
+
+const path0 = (session) => session.page?.path ?? null;
+
+/**
+ * The visitor's own memory across the visit (this visitor's "sub-agent" state): what they rested on
+ * or clicked on any page, by thing, with the time spent and clicks. Kept to LIMITS.interests things
+ * (the weakest go first), so a session stays small.
+ */
+function noteInterest(session, id, event, path) {
+  const interests = (session.interests ??= {});
+  const was = interests[id] ?? { label: event.label ?? null, link: event.link ?? null, hover: 0, clicks: 0, path };
+  if (event.kind === "hover") was.hover = Math.min(was.hover + (event.ms ?? 0), 600_000);
+  else was.clicks += 1;
+  interests[id] = was;
+  const ids = Object.keys(interests);
+  if (ids.length > LIMITS.interests) {
+    ids.sort((a, b) => interestScore(interests[a]) - interestScore(interests[b]));
+    for (const drop of ids.slice(0, ids.length - LIMITS.interests)) delete interests[drop];
+  }
+}
+
+const interestScore = (thing) => thing.hover / 1000 + thing.clicks * 3;
+
+/** The visitor's strongest interests this visit, strongest first, for the model. */
+export function topInterests(session, limit = 8) {
+  return Object.values(session.interests ?? {})
+    .filter((t) => t.label || t.link)
+    .sort((a, b) => interestScore(b) - interestScore(a))
+    .slice(0, limit);
 }
 
 /** Whether a thing on the page (`{ label, link }`) leads to the goal (`{ label, path }`). */

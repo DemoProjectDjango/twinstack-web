@@ -304,3 +304,19 @@ describe("site knowledge", () => {
     assert.equal(outcomeOf("hacked"), null);
   });
 });
+
+it("the visitor's memory keeps interests across pages, strongest first, and stays small", async () => {
+  const { newSession, applyBatch, topInterests, LIMITS } = await import("../src/site-agent-rules.js");
+  const now = new Date();
+  const session = newSession({ siteId: 1, sid: "s", now, device: "desktop" });
+  applyBatch(session, { path: "/", events: [{ kind: "hover", label: "Donate", link: "/donate", type: "link", ms: 4000 }] }, now);
+  applyBatch(session, { path: "/about", events: [{ kind: "click", label: "Volunteer", link: "/volunteer", type: "link" }] }, now);
+  const top = topInterests(session);
+  assert.equal(top[0].label, "Donate");
+  assert.equal(top[1].label, "Volunteer");
+  for (let i = 0; i < LIMITS.interests + 10; i++) {
+    applyBatch(session, { path: "/x", events: [{ kind: "hover", label: `Thing ${i}`, link: `/t${i}`, type: "link", ms: 100 }] }, now);
+  }
+  assert.ok(Object.keys(session.interests).length <= LIMITS.interests);
+  assert.equal(topInterests(session)[0].label, "Donate");
+});

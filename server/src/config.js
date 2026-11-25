@@ -129,6 +129,12 @@ export const config = {
   // the visit counter's address in a site's site.config.json → analytics. Unset: this server's
   // own port on localhost, which only works for a site viewed on this machine.
   publicApiUrlSet: Boolean(process.env.PUBLIC_API_URL?.trim()),
+  // Extra visitor hosts every site agent answers, beside where each site is published. Only for
+  // local testing (SITE_AGENT_EXTRA_HOSTS=127.0.0.1): never set it on a server people use.
+  siteAgentExtraHosts: (process.env.SITE_AGENT_EXTRA_HOSTS ?? "")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean),
   publicApiUrl: (process.env.PUBLIC_API_URL?.trim() || `http://localhost:${process.env.PORT ?? 4000}`).replace(/\/+$/, ""),
   // Email through Resend (resend.com). Unset, emails are written to the server log instead.
   email: {
