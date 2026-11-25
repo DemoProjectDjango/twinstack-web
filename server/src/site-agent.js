@@ -21,6 +21,7 @@ import {
   listAgentSessions,
   saveAgentSession,
   setAgentOutcome,
+  setAgentShown,
   updateSiteAgent,
 } from "./db.js";
 import { fastModelForSite, fastModelKey } from "./fast-model.js";
@@ -44,6 +45,7 @@ import {
   newSession,
   outcomeOf,
   parseBatch,
+  pendingSuggestion,
   parseReply,
   redact,
   relevantPages,
@@ -207,12 +209,17 @@ async function takeBatch(ctx, batch) {
     session = newSession({ siteId: site.siteId, sid: batch.sid, now, device: device(batch.width) });
   }
   applyBatch(session, batch, now);
-  const trigger = decide(session, site.agent.goals ?? [], now);
+  // A quiet batch (the page closing or hidden) is sent as a beacon: nothing can show a reply to
+  // it, so it never makes a suggestion (one would be charged, counted and never seen).
+  const trigger = batch.quiet ? null : decide(session, site.agent.goals ?? [], now);
   let suggestion = null;
   if (trigger) {
     suggestion = await writeSuggestion(ctx, session, trigger);
     if (suggestion) session.suggestions.push(suggestion);
   }
+  // A suggestion written after the visitor had already moved on never reached the screen: it's
+  // offered on the next page instead, at no new cost.
+  if (!suggestion && !batch.quiet) suggestion = pendingSuggestion(session, now);
   await saveAgentSession(session);
   return suggestion ? { suggestion: { id: suggestion.id, text: suggestion.text, target: suggestion.target, label: suggestion.label } } : {};
 }
@@ -222,6 +229,10 @@ export async function agentOutcome(req, res) {
   try {
     const ctx = await visitorContext(req, res);
     const data = ctx && readJson(req.body);
+    // "shown": the suggestion reached the screen, so it isn't offered again (pendingSuggestion).
+    if (data?.o === "shown" && SESSION_ID.test(data.s ?? "") && typeof data.i === "string" && /^[\w-]{6,32}$/.test(data.i)) {
+      await withSessionQueue(`${ctx.site.siteId}:${data.s}`, () => setAgentShown(ctx.site.siteId, data.s, data.i));
+    }
     const outcome = outcomeOf(data?.o);
     if (data && SESSION_ID.test(data.s ?? "") && typeof data.i === "string" && /^[\w-]{6,32}$/.test(data.i) && outcome) {
       await withSessionQueue(`${ctx.site.siteId}:${data.s}`, () => setAgentOutcome(ctx.site.siteId, data.s, data.i, outcome));

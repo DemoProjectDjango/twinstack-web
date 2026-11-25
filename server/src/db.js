@@ -1770,6 +1770,11 @@ export async function setAgentOutcome(siteId, sid, id, outcome, at = new Date())
   return result.modifiedCount > 0;
 }
 
+/** The widget put a suggestion on screen (so it isn't offered again on the next page). */
+export async function setAgentShown(siteId, sid, id, at = new Date()) {
+  await agentSessions().updateOne({ _id: agentSessionId(siteId, sid), suggestions: { $elemMatch: { id } } }, { $set: { "suggestions.$.shownAt": at, lastSeenAt: at } });
+}
+
 /**
  * Sessions that started from `from` to `to` (Dates) and had suggestions or questions, newest
  * first, `limit` at a time; `before` (a Date) pages back by start.
@@ -1804,7 +1809,15 @@ export async function agentTotals(siteId, { from, to, quietBefore }) {
       {
         $project: {
           questions: 1,
-          shown: { $size: "$suggestions" },
+          // Reached the screen: the widget said so, or the visitor answered it.
+          shown: {
+            $size: {
+              $filter: {
+                input: "$suggestions",
+                cond: { $or: [{ $gt: ["$$this.shownAt", null] }, { $in: ["$$this.outcome", ["accepted", "dismissed"]] }] },
+              },
+            },
+          },
           accepted: { $size: { $filter: { input: "$suggestions", cond: { $eq: ["$$this.outcome", "accepted"] } } } },
           dismissed: { $size: { $filter: { input: "$suggestions", cond: { $eq: ["$$this.outcome", "dismissed"] } } } },
           ignored: {

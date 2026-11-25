@@ -320,3 +320,26 @@ it("the visitor's memory keeps interests across pages, strongest first, and stay
   assert.ok(Object.keys(session.interests).length <= LIMITS.interests);
   assert.equal(topInterests(session)[0].label, "Donate");
 });
+
+it("marks a batch sent as the page closes as quiet", async () => {
+  const { parseBatch } = await import("../src/site-agent-rules.js");
+  const body = (extra) => JSON.stringify({ s: "abcdefghijklmnopqrstuv", p: "/about.html", w: 390, e: [{ k: "v", p: "/about.html" }], ...extra });
+  assert.equal(parseBatch(body({ q: 1 })).quiet, true);
+  assert.equal(parseBatch(body({})).quiet, false);
+});
+
+it("offers a suggestion that never reached the screen again on the next page, at most twice", async () => {
+  const { pendingSuggestion } = await import("../src/site-agent-rules.js");
+  const now = Date.now();
+  const s = { at: new Date(now - 5000), target: "/book-club.html", outcome: null, shownAt: null, reachedAt: null };
+  const session = { page: { path: "/gift-cards.html" }, suggestions: [s] };
+  assert.equal(pendingSuggestion(session, now), s);
+  assert.equal(pendingSuggestion(session, now), s);
+  assert.equal(pendingSuggestion(session, now), null);
+  const shown = { page: { path: "/gift-cards.html" }, suggestions: [{ ...s, redelivered: 0, shownAt: new Date() }] };
+  assert.equal(pendingSuggestion(shown, now), null);
+  const samePage = { page: { path: "/book-club.html" }, suggestions: [{ ...s, redelivered: 0 }] };
+  assert.equal(pendingSuggestion(samePage, now), null);
+  const old = { page: { path: "/x.html" }, suggestions: [{ ...s, redelivered: 0, at: new Date(now - 11 * 60_000) }] };
+  assert.equal(pendingSuggestion(old, now), null);
+});

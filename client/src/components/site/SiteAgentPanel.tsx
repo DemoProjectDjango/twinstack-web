@@ -112,6 +112,24 @@ export function SiteAgentPanel() {
     }
   }
 
+  /** Turns the agent on, saving first whatever the owner already set below (goals, tone…), so nothing is lost. */
+  async function turnOn() {
+    setWorking("enable");
+    setError(null);
+    try {
+      if (dirty && draft) await api<AgentView>(workspacePath(owner, repo, "/agent/settings"), { method: "PUT", body: draft });
+      const next = await api<AgentView>(workspacePath(owner, repo, "/agent/enable"), { method: "POST", body: {} });
+      setView(next);
+      setDraft(next.settings);
+      await refresh();
+      toast.success("The site agent is on. Publish your site to put it live.");
+    } catch (err) {
+      setError(err);
+    } finally {
+      setWorking(null);
+    }
+  }
+
   async function turnOff() {
     const ok = await confirmModal(
       "Turn the site agent off? It stops suggesting and answering straight away, and is taken off your site the next time you publish. Its history is kept until you delete it.",
@@ -150,7 +168,7 @@ export function SiteAgentPanel() {
         <EmptyState
           title="Add a site agent"
           action={
-            <Button variant="primary" disabled={locked} onClick={() => void act("enable", "/enable", "POST", {}, "The site agent is on. Publish your site to put it live.")}>
+            <Button variant="primary" disabled={locked} onClick={() => void turnOn()}>
               {working === "enable" ? "Turning on…" : "Turn on the site agent"}
             </Button>
           }
@@ -167,7 +185,11 @@ export function SiteAgentPanel() {
           <SettingsForm draft={draft} setDraft={setDraft} />
           <GoalsForm view={view} goals={draft.goals} onChange={(goals) => setDraft({ ...draft, goals })} />
           <SpendingForm view={view} value={draft.dailyCredits} onChange={(dailyCredits) => setDraft({ ...draft, dailyCredits })} />
-          <div className="sticky bottom-2 z-10 flex flex-wrap items-center gap-3 rounded-lg border border-zinc-200 bg-background/95 px-4 py-3 shadow-sm backdrop-blur dark:border-zinc-800">
+          <div
+            className={`flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3 ${
+              dirty ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40" : "border-zinc-200 dark:border-zinc-800"
+            }`}
+          >
             <Button variant="primary" disabled={!dirty || locked} onClick={() => void act("save", "/settings", "PUT", draft, view.enabled ? "Saved. Goals and tone work straight away; publish to update the name and greeting." : "Saved.")}>
               {working === "save" ? "Saving…" : "Save changes"}
             </Button>
@@ -176,7 +198,9 @@ export function SiteAgentPanel() {
                 Undo changes
               </Button>
             )}
-            <span className="text-sm text-zinc-500">{dirty ? "You have unsaved changes." : "Everything is saved."}</span>
+            <span className={`text-sm ${dirty ? "font-medium text-amber-900 dark:text-amber-200" : "text-zinc-500"}`}>
+              {dirty ? (view.enabled ? "You have unsaved changes: press Save changes." : "Your choices are kept when you turn the agent on.") : "Everything is saved."}
+            </span>
           </div>
         </>
       )}

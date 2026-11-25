@@ -138,7 +138,7 @@ export function parseBatch(body) {
     if (event) events.push(event);
   }
   const width = Number(data.w);
-  return { sid: data.s, path, width: Number.isFinite(width) && width > 0 ? Math.min(Math.round(width), 10_000) : 0, dnt: data.dnt === true, events };
+  return { sid: data.s, path, width: Number.isFinite(width) && width > 0 ? Math.min(Math.round(width), 10_000) : 0, dnt: data.dnt === true, quiet: data.q === 1, events };
 }
 
 function eventOf(raw) {
@@ -461,4 +461,20 @@ export function relevantPages(pages, text, limit = 8) {
 }
 
 /** The outcome a widget reports for a suggestion, or null. */
+/**
+ * The visit's last suggestion when it never reached the screen (the visitor had moved on before it
+ * was written) and still makes sense now: unanswered, under REDELIVER_MS old, not for this page,
+ * not reached, offered again at most REDELIVER_TIMES. Changed in place; null when there's none.
+ */
+export function pendingSuggestion(session, now) {
+  const last = session.suggestions?.at(-1);
+  if (!last || last.shownAt || last.outcome || last.reachedAt) return null;
+  if (now - new Date(last.at).getTime() > REDELIVER_MS || (last.redelivered ?? 0) >= REDELIVER_TIMES) return null;
+  if (!session.page || pageKey(last.target) === pageKey(session.page.path)) return null;
+  last.redelivered = (last.redelivered ?? 0) + 1;
+  return last;
+}
+const REDELIVER_MS = 10 * 60_000;
+const REDELIVER_TIMES = 2;
+
 export const outcomeOf = (value) => (["accepted", "dismissed", "ignored"].includes(value) ? value : null);
