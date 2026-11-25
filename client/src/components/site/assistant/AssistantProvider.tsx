@@ -267,6 +267,16 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
       setError(null);
       setOpen(true);
       if (!body.continue) setSentAt(Date.now());
+      // The owner's message shows at once: the server takes a second or two (it saves the message and
+      // gathers the site's notes) before it answers, and pressing Enter must feel instant.
+      const localId = `sending-${Date.now()}`;
+      if (!body.continue && body.text) {
+        const local: DisplayEntry = { id: localId, role: "user", text: body.text, at: new Date().toISOString(), sending: true };
+        setConversation((prev) => ({
+          ...(prev ?? { id: "", actions: {}, usage: { input_tokens: 0, output_tokens: 0 }, runningTurn: null }),
+          display: [...(prev?.display ?? []), local],
+        }));
+      }
       try {
         const result = await assistantApi.send(owner, repo, { ...body, context: { ...context, autoApply } });
         if (result.turn?.id) {
@@ -277,6 +287,7 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
         setTurn(result.turn);
         return true;
       } catch (err) {
+        setConversation((prev) => (prev ? { ...prev, display: prev.display.filter((e) => e.id !== localId) } : prev));
         setError(err);
         return false;
       }

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { WorkspaceError, acquire, workspaceDir } from "./workspace.js";
 import { inside, readText } from "./site-files.js";
 import { sitePages } from "./navigation.js";
+import { recordEdit } from "./undo-history.js";
 
 // Text typed straight into the preview (the Home screen's "Edit text"): the preview's script
 // (preview/inline-edit.js) sends the clicked element's text before and after, and this finds that
@@ -298,6 +299,7 @@ async function writeStored(dir, stored, now) {
   const next = stored.source.slice(0, from) + written + stored.source.slice(to);
   if (stored.json) JSON.parse(next);
   await fs.writeFile(inside(dir, stored.file), next);
+  await recordEdit(dir, stored.file, stored.source, next, "text change");
 }
 
 /**
@@ -306,7 +308,7 @@ async function writeStored(dir, stored, now) {
  * for the page itself, "shared" for the site's data, "details" for its details, "other" for
  * another page's `label` field, that page being `title`), or `{ file: null }` when nothing changed.
  */
-export async function editPreviewText(key, { address, before, after, index, count } = {}) {
+export async function editPreviewText(key, { address, before, after, index, count, tag } = {}) {
   if (typeof address !== "string" || !address.startsWith("/") || address.length > 500) fail("Which page was that?", 400);
   const was = textField(before, "The old text");
   const now = textField(after, "The new text");
@@ -339,7 +341,12 @@ export async function editPreviewText(key, { address, before, after, index, coun
     const inserted = typedText(now.slice(start, afterEnd));
     // A pure insertion needs a character beside it to be found by.
     const [coreStart, coreEnd] = beforeEnd > start ? [start, beforeEnd] : start > 0 ? [start - 1, start] : [0, 1];
-    const found = locate(visible.text, beforeText, coreStart, coreEnd, { index, count });
+    // The clicked element's kind (h1, p, li…) tells the same words in a heading and a breadcrumb
+    // apart: text that is the whole of such an element is found first (elementText), and only
+    // without a tag (older previews) or no such element does the page-wide search decide.
+    const name = typeof tag === "string" && /^[a-z][a-z0-9]*$/i.test(tag) ? tag.toLowerCase() : null;
+    const elementAt = name ? elementText(source, visible, beforeText, name, bodyStart, { index, count }) : null;
+    const found = elementAt !== null ? { at: elementAt + coreStart, whole: true } : locate(visible.text, beforeText, coreStart, coreEnd, { index, count });
 
     // Not in the body as a whole: a field holding exactly this text wins over part of a paragraph.
     if (!found?.whole) {
@@ -374,7 +381,9 @@ export async function editPreviewText(key, { address, before, after, index, coun
     if (from < bodyStart && !field) fail("That change runs across formatting. Change it in the page's text on the Pages screen.");
     if (field?.quote && inserted.includes(field.quote)) fail(`The page's title can't contain ${field.quote} here. Change it in the page settings on the Pages screen.`, 400);
 
-    await fs.writeFile(target, source.slice(0, from) + inserted + source.slice(to));
+    const edited = source.slice(0, from) + inserted + source.slice(to);
+    await fs.writeFile(target, edited);
+    await recordEdit(dir, page.file, source, edited, "text change");
     return { file: page.file, where: "page", label: null, title: null };
   } finally {
     release();
@@ -515,6 +524,7 @@ export async function stylePreviewText(key, { address, text, index, count, tag, 
       next = source.slice(0, startTag.start) + withStyle(tagText, kind === "align" ? "text-align" : "color", value) + source.slice(startTag.end);
     }
     await fs.writeFile(target, next);
+    await recordEdit(dir, page.file, source, next, { bold: "bold", italic: "italic", underline: "underline", align: "alignment", color: "colour" }[kind]);
     return { file: page.file };
   } finally {
     release();

@@ -93,11 +93,14 @@ export function AssistantPanel() {
   async function submit(value = text) {
     const message = value.trim();
     if ((!message && !uploads.ready.length) || running || uploads.uploading) return;
-    if (await send(message, uploads.ready)) {
-      setShowHistory(false);
-      setText("");
-      uploads.clear();
+    // The box clears at once, as the message shows at once; it comes back if sending fails.
+    setText("");
+    if (!(await send(message, uploads.ready))) {
+      setText(value);
+      return;
     }
+    setShowHistory(false);
+    uploads.clear();
   }
 
   const entries = conversation?.display ?? [];
@@ -329,8 +332,9 @@ function Entry({
       <div className="flex flex-col items-end gap-2">
         {entry.attachments?.length ? <SentAttachments attachments={entry.attachments} /> : null}
         {entry.text && (
-          <p className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-foreground px-3 py-2 text-sm text-background">{entry.text}</p>
+          <p className={`max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-foreground px-3 py-2 text-sm text-background ${entry.sending ? "opacity-70" : ""}`}>{entry.text}</p>
         )}
+        {entry.sending && <span className="text-[11px] text-zinc-500">Sending…</span>}
       </div>
     );
   }

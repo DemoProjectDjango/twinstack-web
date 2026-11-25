@@ -80,7 +80,8 @@ export type AssistantPart =
   | { type: "choices"; kind: "question" | "next"; question?: string; choices: string[] };
 
 export type DisplayEntry =
-  | { id: string; role: "user"; text: string; attachments?: Attachment[]; at: string }
+  // `sending`: shown at once while the server takes the message (never stored).
+  | { id: string; role: "user"; text: string; attachments?: Attachment[]; at: string; sending?: boolean }
   | { id: string; role: "notice"; text: string; at: string }
   | { id: string; role: "assistant"; parts: AssistantPart[]; error: string | null; at: string };
 

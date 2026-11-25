@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Dark mode follows the `dark` class on <html> (ThemeToggle.tsx: light, dark or the computer's own
+   setting), not only the computer's setting, so `dark:` styles and the colours below can be chosen. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -12,11 +16,14 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+  color-scheme: light;
+}
+
+:root.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  color-scheme: dark;
 }
 
 /* The sign-up code screen's wait before "Send a new code" (AuthForm.tsx): a ring that drains. */
@@ -70,10 +77,8 @@
   --strip-accent: #a1a1aa;
 }
 
-@media (prefers-color-scheme: dark) {
-  .status-strip-border {
-    --strip-line: #27272a;
-  }
+.dark .status-strip-border {
+  --strip-line: #27272a;
 }
 
 @media (prefers-reduced-motion: reduce) {

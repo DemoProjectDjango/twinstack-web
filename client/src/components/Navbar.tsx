@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getUser } from "@/lib/session";
 import { NavAccount } from "./NavAccount";
 import { NavLinks } from "./NavLinks";
+import { ThemeToggle } from "./ThemeToggle";
 
 export async function Navbar() {
   // While the server isn't answering, the page below shows why; the navbar just leaves the account out.
@@ -26,6 +27,7 @@ export async function Navbar() {
             <NavAccount user={user} />
           ) : (
             <>
+              <ThemeToggle />
               <Link href="/login" className="rounded-md px-3 py-1.5 text-sm text-zinc-600 hover:text-foreground dark:text-zinc-400">
                 Log in
               </Link>

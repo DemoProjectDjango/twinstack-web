@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { CreditBadge } from "./CreditBadge";
+import { ThemeToggle } from "./ThemeToggle";
 
 type AccountUser = { name: string; email: string; github?: { avatarUrl: string } | null };
 
@@ -7,6 +8,7 @@ type AccountUser = { name: string; email: string; github?: { avatarUrl: string }
 export function NavAccount({ user, compact = false }: { user: AccountUser; compact?: boolean }) {
   return (
     <>
+      <ThemeToggle />
       <CreditBadge />
       <Link href="/settings" title={`${user.email}: settings`} className="flex items-center gap-2 text-sm text-zinc-600 hover:text-foreground dark:text-zinc-400">
         {user.github ? (

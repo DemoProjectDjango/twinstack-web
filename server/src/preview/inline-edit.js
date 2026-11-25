@@ -243,6 +243,7 @@
       after: after,
       index: current.index,
       count: current.count,
+      tag: current.el.tagName.toLowerCase(),
     });
   }
 
@@ -425,6 +426,24 @@
         event.preventDefault();
         cancel();
       }
+    },
+    true,
+  );
+
+  // Ctrl+Z / Cmd+Z (undo), Ctrl+Shift+Z or Ctrl+Y (redo) while nothing is being typed: the editor
+  // undoes or redoes the owner's last saved edit. While typing, the browser's own undo applies.
+  document.addEventListener(
+    "keydown",
+    function (event) {
+      if (active && active.el.contains(event.target)) return;
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      var key = String(event.key || "").toLowerCase();
+      var direction = key === "z" ? (event.shiftKey ? "redo" : "undo") : key === "y" ? "redo" : null;
+      if (!direction) return;
+      var target = event.target;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || ""))) return;
+      event.preventDefault();
+      send({ type: "history", direction: direction });
     },
     true,
   );

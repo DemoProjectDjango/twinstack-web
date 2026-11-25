@@ -72,6 +72,7 @@ import {
 } from "../site-files.js";
 import { getStaticInfo, saveStaticInfo, staticInfoSection } from "../static-info.js";
 import { getBrand, replaceHeaderLogo, saveBrand, saveBrandImage } from "../brand.js";
+import { stepHistory, undoState } from "../undo-history.js";
 import { fileUsage, listRepoFiles, prepareUploadedPage, removeConvertedPage, removeRepoFile, uploadRepoFile } from "../repo-files.js";
 import { planSetup, saveSetup } from "../site-setup.js";
 import { pendingBuild } from "../setup-build.js";
@@ -475,15 +476,15 @@ workspacesRouter.post(
   "/:owner/:repo/pages/text",
   handle(async (req, res) => {
     const key = keyFor(req);
-    const { address, before, after, index, count } = req.body ?? {};
-    const { file } = await editPreviewText(key, { address, before, after, index, count });
+    const { address, before, after, index, count, tag } = req.body ?? {};
+    const { file } = await editPreviewText(key, { address, before, after, index, count, tag });
     await logOwnerEdit(key, {
       command: "owner:edit-text",
       file,
       instruction: "The owner changed text on the site",
       point: `“${logQuote(before, 60)}” → “${logQuote(after, 60)}”`,
     });
-    res.json({ file, status: await getStatus(key) });
+    res.json({ file, status: await getStatus(key), history: await undoState(key) });
   }),
 );
 
@@ -497,9 +498,28 @@ workspacesRouter.post(
     const { file } = await stylePreviewText(key, { address, text, index, count, tag, selection, style });
     const what = { bold: "made words bold", italic: "made words italic", underline: "underlined words", align: `aligned text ${style?.value}`, color: style?.value ? `coloured text ${style.value}` : "reset a text colour" }[style?.kind] ?? "styled text";
     await logOwnerEdit(key, { command: "owner:style-text", file, instruction: `The owner ${what} on the site`, point: `“${logQuote(text, 60)}”` });
-    res.json({ file, status: await getStatus(key) });
+    res.json({ file, status: await getStatus(key), history: await undoState(key) });
   }),
 );
+
+/* Undo and redo of the owner's own edits in the preview (undo-history.js): Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y. */
+
+workspacesRouter.get(
+  "/:owner/:repo/pages/history",
+  handle(async (req, res) => res.json({ history: await undoState(keyFor(req)) })),
+);
+
+for (const direction of ["undo", "redo"]) {
+  workspacesRouter.post(
+    `/:owner/:repo/pages/${direction}`,
+    handle(async (req, res) => {
+      const key = keyFor(req);
+      const result = await stepHistory(key, direction);
+      await logOwnerEdit(key, { command: `owner:${direction}`, file: result.file, instruction: `The owner ${direction === "undo" ? "undid" : "redid"} a ${result.label}` });
+      res.json({ ...result, status: await getStatus(key) });
+    }),
+  );
+}
 
 /* Hides a page from visitors, or shows it again (the Pages list's page menu). */
 

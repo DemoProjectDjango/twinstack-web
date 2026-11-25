@@ -286,16 +286,19 @@ assistantRouter.post(
     if (attachmentIds.length > MAX_ATTACHMENTS) throw new WorkspaceError(`Attach at most ${MAX_ATTACHMENTS} files to a message.`, 400);
     if (continuing && attachmentIds.length) throw new WorkspaceError("Attach files to your own messages.", 400);
 
-    let claude;
-    try {
-      claude = await claudeKeyFor(userId);
-    } catch (err) {
-      if (!(err instanceof ClaudeAccessError)) throw err;
-      return res.status(err.status).json({ error: err.code, message: err.message });
+    // Independent lookups, each a database round trip: at the same time, so the message shows sooner.
+    const [keyResult, model, found] = await Promise.all([
+      claudeKeyFor(userId).then((value) => ({ value }), (err) => ({ err })),
+      getAssistantModel(userId),
+      findConversation(userId, chat),
+    ]);
+    if (keyResult.err) {
+      if (!(keyResult.err instanceof ClaudeAccessError)) throw keyResult.err;
+      return res.status(keyResult.err.status).json({ error: keyResult.err.code, message: keyResult.err.message });
     }
-    const model = await getAssistantModel(userId);
+    const claude = keyResult.value;
 
-    let conversation = await findConversation(userId, chat);
+    let conversation = found;
     if (conversation && runningTurnFor(conversation.id)) throw new WorkspaceError("Claude is still answering. Wait for it, or stop it.", 409);
     // The owner's own messages in a new site's first week (the setup's build request among them), for the setup numbers.
     if (!continuing) noteSetupSignal(siteId, "messages");
