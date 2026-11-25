@@ -381,7 +381,7 @@ authRouter.get("/github/callback", async (req, res) => {
       if (err instanceof GithubInUseError) return redirectWithGithubError(res, "github_in_use");
       throw err;
     }
-    const free = await grantGithubCredits(account._id.toHexString(), profile.id);
+    const free = await grantGithubCredits(account._id.toHexString(), profile.id, { ip: req.ip });
 
     res.clearCookie(config.stateCookie, { path: "/" });
     res.redirect(`${config.clientUrl}/dashboard?github=connected${free ? `&credits=${free}` : ""}`);

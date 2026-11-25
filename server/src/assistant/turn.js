@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.js";
-import { countInputTokens } from "../credits.js";
+import { anthropicUserId, countInputTokens } from "../credits.js";
 import { noteProviderError } from "../provider-health.js";
 import { SYSTEM_PROMPT } from "./prompt.js";
 import { TOOL_DEFINITIONS, runTool, toolInfo } from "./tools.js";
@@ -141,6 +141,8 @@ export async function runTurn({ client, key, model: requested, history, live, on
       const params = {
         model: requested,
         max_tokens: MAX_TOKENS,
+        // Which of the app's users asked, as an opaque id (credits.js: anthropicUserId).
+        ...(userId && { metadata: { user_id: anthropicUserId(userId) } }),
         system: SYSTEM,
         tools: TOOL_DEFINITIONS,
         messages: withinImageLimit(messages),

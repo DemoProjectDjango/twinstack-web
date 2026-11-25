@@ -26,6 +26,16 @@ import { DeletePermissionError, deleteSite } from "./site-delete.js";
 import { WorkspaceError, assertRepoRef, sweepWorkspaces } from "./workspace.js";
 import { editorCookie } from "./routes/helpers.js";
 
+// One API process only. Running AI spend (credits.js: accounts, gates), proxy tokens, jobs and their
+// queue, assistant turns and the per-browser workspaces live in this process's memory and on this
+// machine's disk, so a second process would let an account overspend its balance and limits and
+// lose track of jobs. PM2 must run it in fork mode with one instance (ecosystem.config.cjs). To serve
+// more people, give the machine more CPU and memory (MAX_RUNNING_JOBS follows the cores).
+if (process.env.NODE_APP_INSTANCE && process.env.NODE_APP_INSTANCE !== "0") {
+  console.error(`Refusing to start API instance ${process.env.NODE_APP_INSTANCE}: the API must run as one process (see index.js).`);
+  process.exit(1);
+}
+
 const app = express();
 
 app.disable("x-powered-by");

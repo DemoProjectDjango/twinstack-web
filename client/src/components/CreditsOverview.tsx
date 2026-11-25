@@ -153,7 +153,9 @@ function Balance({ credits }: { credits: Credits }) {
           ? "Credits left. Each Claude request uses some, depending on how much it reads and writes."
           : credits.freePending
             ? "Connect GitHub to get your free credits."
-            : "You've used all your credits. Buy more to keep using Claude."}
+            : credits.freeHeld
+              ? `Your ${formatCredits(credits.freeCredits)} free credits are on their way: so many people joined today that they're added within a day. Buy credits to start now.`
+              : "You've used all your credits. Buy more to keep using Claude."}
         {credits.active && " Claude is working now, so this updates every few seconds."}
       </p>
       <dl className="mt-6 grid grid-cols-3 gap-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">

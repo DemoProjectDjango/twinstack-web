@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
-import { ClaudeAccessError, beginSpend, claudeKeyFor } from "./credits.js";
+import { ClaudeAccessError, anthropicUserId, beginSpend, claudeKeyFor } from "./credits.js";
 import { anthropicClient } from "./assistant/turn.js";
 import { saveBrand } from "./brand.js";
 import { normalizeLink } from "./links.js";
@@ -389,6 +389,7 @@ async function planWithClaude({ userId, siteId, text, existing }) {
     const params = {
       model: PLAN_MODEL,
       max_tokens: 12000,
+      metadata: { user_id: anthropicUserId(userId) },
       system: PLAN_SYSTEM,
       messages,
       tools: [

@@ -60,6 +60,8 @@ export type Job = {
   label: string;
   status: "running" | "succeeded" | "failed" | "cancelled";
   exitCode: number | null;
+  /** Its place in the server's job queue while it waits to start (1 = next); 0 or missing once it runs (older servers send none). */
+  queuePosition?: number;
   output: string;
   truncated: boolean;
   next: number;

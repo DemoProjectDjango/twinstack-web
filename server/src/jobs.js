@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { availableParallelism } from "node:os";
 
 // In-memory job runner. A job is a sequence of processes run in a workspace;
 // the browser polls for output by offset. Jobs don't survive a server restart.
@@ -7,6 +8,89 @@ import { randomUUID } from "node:crypto";
 const MAX_OUTPUT_CHARS = 2 * 1024 * 1024;
 const KEEP_FINISHED_MS = 60 * 60 * 1000;
 const jobs = new Map();
+
+/* ------------------------------------------------------------ queue */
+
+// Builds, Claude commands and site updates all run on this machine, so only so many run at once:
+// the rest wait in line, first come first served, and start as places free up. One account may
+// run at most MAX_JOBS_PER_USER at once, so one owner can't fill the machine. A waiting job reads
+// as running (its workspace stays locked, so nothing else changes it meanwhile), says in its output
+// where it is in line, and can be cancelled while it waits.
+const envCount = (name, fallback) => {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+};
+export const MAX_RUNNING_JOBS = envCount("MAX_RUNNING_JOBS", Math.max(2, availableParallelism()));
+export const MAX_JOBS_PER_USER = envCount("MAX_JOBS_PER_USER", 3);
+
+// Jobs waiting, in order: { job, resolve }.
+const waiting = [];
+// Running jobs per account, and in all.
+const runningByUser = new Map();
+let runningJobs = 0;
+
+const runningFor = (userId) => runningByUser.get(userId) ?? 0;
+
+/** Starts every waiting job there's now room for, in order, skipping accounts at their own limit. */
+function startWaiting() {
+  for (let i = 0; i < waiting.length && runningJobs < MAX_RUNNING_JOBS; ) {
+    const entry = waiting[i];
+    if (runningFor(entry.job.userId) >= MAX_JOBS_PER_USER) {
+      i++;
+      continue;
+    }
+    waiting.splice(i, 1);
+    entry.resolve(take(entry.job));
+  }
+  for (const [index, { job }] of waiting.entries()) job.queuePosition = index + 1;
+}
+
+/** Takes a running place for `job`; resolves to the function that gives it back (once). */
+function take(job) {
+  runningJobs++;
+  runningByUser.set(job.userId, runningFor(job.userId) + 1);
+  job.queuePosition = 0;
+  let given = false;
+  return () => {
+    if (given) return;
+    given = true;
+    runningJobs--;
+    const left = runningFor(job.userId) - 1;
+    if (left > 0) runningByUser.set(job.userId, left);
+    else runningByUser.delete(job.userId);
+    startWaiting();
+  };
+}
+
+/**
+ * A running place for `job`, at once when there's room, else after waiting in line. Resolves to
+ * the function that gives it back, or null when the job was cancelled while it waited.
+ */
+function placeFor(job) {
+  // Jobs still in line while there's room are only waiting for their own account, so they don't block this one.
+  if (runningJobs < MAX_RUNNING_JOBS && runningFor(job.userId) < MAX_JOBS_PER_USER) {
+    return Promise.resolve(take(job));
+  }
+  return new Promise((resolve) => {
+    waiting.push({ job, resolve });
+    job.queuePosition = waiting.length;
+    append(job, `Waiting for a free place to run (${job.queuePosition === 1 ? "next in line" : `${job.queuePosition - 1} ahead`})…\n`);
+    startWaiting();
+  });
+}
+
+/** Takes a waiting job out of the line; true when it was waiting. */
+function leaveLine(job) {
+  const index = waiting.findIndex((entry) => entry.job === job);
+  if (index === -1) return false;
+  const [entry] = waiting.splice(index, 1);
+  entry.resolve(null);
+  startWaiting();
+  return true;
+}
+
+/** How busy the machine is, for the admin pages and logs. */
+export const queueState = () => ({ running: runningJobs, waiting: waiting.length, maxRunning: MAX_RUNNING_JOBS, maxPerUser: MAX_JOBS_PER_USER });
 
 setInterval(() => {
   const cutoff = Date.now() - KEEP_FINISHED_MS;
@@ -98,13 +182,19 @@ export function startJob({ key, userId, command, label, steps, cwd, env, release
     base: 0,
     child: null,
     cancelled: false,
+    queuePosition: 0,
   };
   jobs.set(job.id, job);
 
   (async () => {
     let exitCode = 0;
+    let givePlaceBack = null;
     try {
-      for (const step of steps) {
+      const wasQueued = () => job.text.length > 0;
+      givePlaceBack = await placeFor(job);
+      if (!givePlaceBack) exitCode = 1;
+      else if (wasQueued()) append(job, "Starting.\n");
+      for (const step of givePlaceBack && !job.cancelled ? steps : []) {
         exitCode = await runStep(job, step, { cwd, env });
         if (exitCode !== 0 || job.cancelled) break;
       }
@@ -113,6 +203,7 @@ export function startJob({ key, userId, command, label, steps, cwd, env, release
       append(job, `\n${err.message}\n`);
       exitCode = exitCode || 1;
     } finally {
+      givePlaceBack?.();
       if (onEnd && !job.cancelled) {
         try {
           await onEnd({ exitCode, output: job.text });
@@ -144,6 +235,8 @@ export function serializeJob(job, since = 0) {
     label: job.label,
     status: job.status,
     exitCode: job.exitCode,
+    // Its place in line while it waits to run (1 = next), else 0.
+    queuePosition: job.queuePosition,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
     output: job.text.slice(from - job.base),
@@ -160,6 +253,7 @@ export function getJob(id, userId) {
 export function cancelJob(job) {
   if (job.status !== "running") return;
   job.cancelled = true;
+  leaveLine(job);
   job.child?.kill();
 }
 
