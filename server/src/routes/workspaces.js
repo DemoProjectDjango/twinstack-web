@@ -31,6 +31,7 @@ import { requireAuth, requireGithub } from "../session.js";
 import { getNextSteps, sampleContent } from "../next-steps.js";
 import { FIRST_DESIGN_EFFORT, REVIEW_MODEL, designReviews, firstDesign, firstDesignModel } from "../first-design.js";
 import { analyticsRouter } from "./analytics.js";
+import { agentRouter } from "./site-agent.js";
 import { assistantRouter } from "./assistant.js";
 import { handle, keyFor, requireJson } from "./helpers.js";
 import {
@@ -107,6 +108,8 @@ workspacesRouter.use(requireAuth, requireGithub, requireJson);
 workspacesRouter.use("/:owner/:repo/assistant", assistantRouter);
 // The site's visits, for its creator only (routes/analytics.js).
 workspacesRouter.use("/:owner/:repo/analytics", analyticsRouter);
+// The site agent's settings and history, for its creator only (routes/site-agent.js).
+workspacesRouter.use("/:owner/:repo/agent", agentRouter);
 
 workspacesRouter.post(
   "/:owner/:repo/open",

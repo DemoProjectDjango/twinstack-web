@@ -6,7 +6,7 @@ import type { EditMode, Job, Overview, Publishing, SiteCheckReport, SiteUpdateIn
 
 /**
  * The site editor's screens: the everyday ones in the menu ("home" is Edit site, "design" Look &
- * logo, "details" Business info, "analytics" Visitors), "publish" (What's changed, from the top
+ * logo, "details" Business info, "analytics" Visitors, "agent" Site agent), "publish" (What's changed, from the top
  * bar), then "more" (More tools) and the tools it opens.
  */
 export type SiteSection =
@@ -17,6 +17,7 @@ export type SiteSection =
   | "domain"
   | "publish"
   | "analytics"
+  | "agent"
   | "more"
   | "seo"
   | "redirects"

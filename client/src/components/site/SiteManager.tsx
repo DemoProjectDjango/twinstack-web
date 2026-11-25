@@ -11,6 +11,7 @@ import { toast } from "@/lib/toast";
 import { GitHubChangesModal, wasDismissed } from "./GitHubChanges";
 import { AiHelpBadge } from "./AiHelpBadge";
 import { AnalyticsPanel } from "./AnalyticsPanel";
+import { SiteAgentPanel } from "./SiteAgentPanel";
 import { AiActivity } from "./assistant/AiActivity";
 import { SiteBuildActivity } from "./assistant/SiteBuildActivity";
 import { CopyWebsiteRunner } from "./CopyWebsite";
@@ -57,6 +58,8 @@ const MAIN: { id: SiteSection; label: string; hint: string }[] = [
 
 // Only for the site's creator (GET …/analytics/access): nobody else sees its visits.
 const ANALYTICS = { id: "analytics" as const, label: "Visitors", hint: "Who visits your site" };
+// The chat helper on the published site, also only for the site's creator: it spends their credits.
+const AGENT = { id: "agent" as const, label: "Site agent", hint: "A helper that guides visitors on your site" };
 
 // Screens reached from elsewhere, for the small-screen menu button's label.
 const OTHER: { id: SiteSection; label: string }[] = [
@@ -69,7 +72,7 @@ const TOOL_IDS = new Set<SiteSection>(MORE_TOOLS.map((tool) => tool.id));
 
 /** A screen's name as the menu shows it ("Edit site", "Pages", "Google & sharing"…). */
 function screenLabel(id: SiteSection) {
-  return [...MAIN, ANALYTICS, ...OTHER].find((s) => s.id === id)?.label ?? "Edit site";
+  return [...MAIN, ANALYTICS, AGENT, ...OTHER].find((s) => s.id === id)?.label ?? "Edit site";
 }
 
 // The menu's icons (24×24 stroke paths), by screen.
@@ -108,6 +111,13 @@ const NAV_ICONS: Partial<Record<SiteSection, React.ReactNode>> = {
       <path d="M3 12h18" />
       <path d="M12 3a14 14 0 0 1 0 18" />
       <path d="M12 3a14 14 0 0 0 0 18" />
+    </>
+  ),
+  agent: (
+    <>
+      <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z" />
+      <path d="M9 11h.01" />
+      <path d="M15 11h.01" />
     </>
   ),
   analytics: (
@@ -695,7 +705,8 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
     },
   };
 
-  const main = isCreator ? [...MAIN, ANALYTICS] : MAIN;
+  // The site agent sits beside Pages and Look & logo, for the site's creator.
+  const main = isCreator ? [...MAIN.slice(0, 3), AGENT, ...MAIN.slice(3), ANALYTICS] : MAIN;
   const current = [...main, ...OTHER].find((s) => s.id === section);
   // The AI bar is on every screen but the technical log, which keeps the status strip to itself.
   const withAiBar = section !== "tools";
@@ -923,6 +934,7 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
               {section === "domain" && <DomainPanel />}
               {section === "publish" && <ChangesPanel />}
               {section === "analytics" && isCreator && <AnalyticsPanel />}
+              {section === "agent" && isCreator && <SiteAgentPanel />}
               {section === "more" && <MoreToolsPanel />}
               {section === "learn" && <LearnPanel isCreator={isCreator} />}
               {section === "seo" && (

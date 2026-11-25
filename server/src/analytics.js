@@ -38,7 +38,7 @@ import { WorkspaceError, acquire, workspaceDir } from "./workspace.js";
 export const ANALYTICS_MARKER = "site.analytics.key";
 const CONFIG_FILE = "site.config.json";
 const KEY = /^[A-Za-z0-9_-]{16,64}$/;
-const BOT = /bot|crawl|spider|slurp|headless|lighthouse|pagespeed|preview|prerender|monitor|uptime|curl|wget|python|axios|node-fetch|go-http|java\/|httpclient|facebookexternalhit|embedly|quora link|whatsapp\//i;
+export const BOT = /bot|crawl|spider|slurp|headless|lighthouse|pagespeed|preview|prerender|monitor|uptime|curl|wget|python|axios|node-fetch|go-http|java\/|httpclient|facebookexternalhit|embedly|quora link|whatsapp\//i;
 
 /* --------------------------------------------------------------- collecting */
 
@@ -74,7 +74,7 @@ async function siteForKey(key) {
 
 const forgetKey = (key) => key && keyCache.delete(key);
 
-function requestHost(req) {
+export function requestHost(req) {
   for (const header of [req.get("origin"), req.get("referer")]) {
     if (!header || header === "null") continue;
     try {

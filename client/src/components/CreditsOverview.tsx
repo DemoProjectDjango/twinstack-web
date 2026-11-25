@@ -77,6 +77,7 @@ function usageLabel(u: Usage) {
   if (u.kind === "site-update") return "Updating your site";
   if (u.kind === "publish-combine") return "Combining changes before publishing";
   if (u.kind === "setup") return "Setting up your site";
+  if (u.kind === "site-agent") return "Site agent (visitors' suggestions and answers)";
   return (u.command && COMMAND_LABELS[u.command]) ?? "Claude command";
 }
 
