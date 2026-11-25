@@ -36,6 +36,10 @@ export const SUGGESTIONS: Record<SiteSection | "page", { placeholder: string; it
     placeholder: "Ask the AI about your visitors…",
     items: ["What should I improve first, based on my visits?", "Which pages do visitors look for but can't find?", "Why do visitors leave my most viewed page?"],
   },
+  agent: {
+    placeholder: "Ask the AI about your site agent…",
+    items: ["Which goals should my site agent steer visitors to?", "Write a friendly greeting for my site agent", "Which page should visitors who are about to leave see?"],
+  },
   seo: {
     placeholder: "Tell the AI what to improve in search results…",
     items: ["Write search titles and descriptions for every page", "Which pages need the most work for Google?", "Improve how the homepage shows up in Google"],

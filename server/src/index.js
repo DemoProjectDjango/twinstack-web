@@ -6,6 +6,7 @@ import { hasTemplateAccess, isTemplate, templateToken, withSiteRoles } from "./s
 import { accessRouter, adminRouter } from "./routes/access.js";
 import { authRouter } from "./routes/auth.js";
 import { collectRouter } from "./routes/analytics.js";
+import { agentPublicRouter } from "./routes/site-agent.js";
 import { creditsRouter } from "./routes/credits.js";
 import { startClaudeProxy } from "./claude-proxy.js";
 import { startProviderMonitor } from "./provider-health.js";
@@ -266,6 +267,9 @@ app.delete("/api/repos/:owner/:repo", requireAuth, requireGithub, async (req, re
 
 // Public: published sites' visit counter posts here (analytics.js). It never answers with data.
 app.use("/api/collect", collectRouter);
+// Public: published sites' site agent widget posts here (site-agent.js). It answers only the
+// site's published hosts, and every model request is paid from the owner's credits within limits.
+app.use("/api/agent", agentPublicRouter);
 app.use("/api/access", accessRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/settings", settingsRouter);

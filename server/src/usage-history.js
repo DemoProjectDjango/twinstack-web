@@ -21,6 +21,7 @@ const COMMAND_PURPOSES = {
 
 /** Why a run used credits, in plain words. */
 export function usagePurpose({ kind, command = null }) {
+  if (kind === "site-agent") return "Helping your visitors (suggestions and answers)";
   if (kind === "assistant") return "Answering your message";
   if (kind === "site-update") return "Updating your site to the latest version";
   if (kind === "publish-combine") return "Combining changes before publishing";
@@ -67,6 +68,7 @@ const MD_FILES = { "scripts/site-tree.md": "Page plan", "scripts/scaffold-schedu
  */
 export function usagePart({ kind, command = null, target = null, pictures = 0 }) {
   const withPictures = (part) => (pictures > 0 ? `${part}, images` : part);
+  if (kind === "site-agent") return "Site agent";
   if (kind === "assistant") return withPictures("Chat with the AI");
   if (kind === "site-update") return "Whole site";
   if (kind === "publish-combine") return "Changes waiting to be published";

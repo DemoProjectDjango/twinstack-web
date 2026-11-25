@@ -30,6 +30,10 @@ import { config } from "./config.js";
 //               published site (siteId = GitHub repo id), kept for a year
 //   analyticsSalts   the day's random salt for counting visitors (_id = the
 //               UTC date), deleted after two days so visitors can't be traced
+//   agentSessions    one document per anonymous visitor session on a published
+//               site with the site agent on (_id = <siteId>:<session id>): the
+//               pages seen, the suggestions made and their outcomes, questions
+//               asked; deleted AGENT_RETENTION_DAYS after the last activity
 //   providerErrors   one document per refusal from Anthropic, OpenAI or
 //               DeepSeek on the app's keys (out of balance, rate limited, key
 //               refused…), kept 30 days (provider-health.js)
@@ -115,6 +119,10 @@ export async function connectDb() {
     analyticsEvents().createIndex({ siteId: 1, at: -1 }),
     analyticsEvents().createIndex({ at: 1 }, { expireAfterSeconds: ANALYTICS_RETENTION_DAYS * 24 * 60 * 60 }),
     analyticsSalts().createIndex({ createdAt: 1 }, { expireAfterSeconds: 2 * 24 * 60 * 60 }),
+    siteCopies().createIndex({ "agent.key": 1 }, { unique: true, partialFilterExpression: { "agent.key": { $type: "string" } } }),
+    agentSessions().createIndex({ siteId: 1, startedAt: -1 }),
+    agentSessions().createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
+    claudeUsage().createIndex({ siteId: 1, kind: 1, createdAt: -1 }, { partialFilterExpression: { kind: "site-agent" } }),
     providerErrors().createIndex({ at: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 }),
     claudeUsage().createIndex({ charged: 1, createdAt: -1 }),
     pendingSignups().createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
@@ -168,6 +176,7 @@ const creditPurchases = () => db.collection("creditPurchases");
 const appSettings = () => db.collection("appSettings");
 const analyticsEvents = () => db.collection("analyticsEvents");
 const analyticsSalts = () => db.collection("analyticsSalts");
+const agentSessions = () => db.collection("agentSessions");
 const pendingSignups = () => db.collection("pendingSignups");
 const passwordResets = () => db.collection("passwordResets");
 const freeCreditGrants = () => db.collection("freeCreditGrants");
@@ -661,6 +670,7 @@ export async function deleteSiteRecords(siteId) {
     workLogForgotten().deleteMany({ siteId }),
     conversations().deleteMany({ siteId }),
     analyticsEvents().deleteMany({ siteId }),
+    agentSessions().deleteMany({ siteId }),
     forgetSiteSetup(siteId),
   ]);
   await siteCopies().deleteOne({ _id: siteId });
@@ -1703,4 +1713,146 @@ export async function analyticsSaltFor(day) {
     if (err?.code !== 11000) throw err;
   });
   return (await analyticsSalts().findOne({ _id: day })).salt;
+}
+
+/* -------------------------------------------------------------- site agent */
+
+// The chat helper on a published site (site-agent.js). Its settings are siteCopies.agent:
+// { key, enabled, hosts, url, hostsCheckedAt, name, greeting, tone, goals, dailyCredits, pages,
+// updatedAt }. Like analytics, only the copy's creator sees or changes any of it. Each visitor
+// session is one agentSessions document, kept AGENT_RETENTION_DAYS after its last activity.
+
+/** How long a visitor session is kept after its last activity (the TTL index on agentSessions.expireAt). */
+export const AGENT_RETENTION_DAYS = 90;
+
+/** The site's creator and agent settings, or null when it isn't a recorded copy. */
+export async function findSiteAgent(siteId) {
+  if (typeof siteId !== "number") return null;
+  const doc = await siteCopies().findOne({ _id: siteId }, { projection: { userId: 1, fullName: 1, agent: 1 } });
+  return doc ? { userId: doc.userId ?? null, fullName: doc.fullName, agent: doc.agent ?? null } : null;
+}
+
+/** Changes the site's agent settings (fields of siteCopies.agent). */
+export async function updateSiteAgent(siteId, fields) {
+  const set = Object.fromEntries(Object.entries(fields).map(([k, v]) => [`agent.${k}`, v]));
+  await siteCopies().updateOne({ _id: siteId }, { $set: { ...set, "agent.updatedAt": new Date() } });
+}
+
+/** The site a widget's key belongs to: `{ siteId, userId, agent }`, or null. */
+export async function findSiteByAgentKey(key) {
+  const doc = await siteCopies().findOne({ "agent.key": key }, { projection: { userId: 1, agent: 1 } });
+  return doc ? { siteId: doc._id, userId: doc.userId ?? null, agent: doc.agent } : null;
+}
+
+const agentSessionId = (siteId, sid) => `${siteId}:${sid}`;
+const agentExpiry = (from) => new Date(from.getTime() + AGENT_RETENTION_DAYS * 24 * 60 * 60_000);
+
+export async function findAgentSession(siteId, sid) {
+  return agentSessions().findOne({ _id: agentSessionId(siteId, sid) });
+}
+
+/** Saves a visitor session whole (one request at a time per session: site-agent.js queues them). */
+export async function saveAgentSession(session) {
+  const { _id: _ignored, ...doc } = session;
+  await agentSessions().replaceOne(
+    { _id: agentSessionId(session.siteId, session.sid) },
+    { ...doc, expireAt: agentExpiry(new Date(session.lastSeenAt)) },
+    { upsert: true },
+  );
+}
+
+/** Sets a suggestion's outcome, once (a later report doesn't change it). True when it was set. */
+export async function setAgentOutcome(siteId, sid, id, outcome, at = new Date()) {
+  const result = await agentSessions().updateOne(
+    { _id: agentSessionId(siteId, sid), suggestions: { $elemMatch: { id, outcome: null } } },
+    { $set: { "suggestions.$.outcome": outcome, "suggestions.$.outcomeAt": at, lastSeenAt: at, expireAt: agentExpiry(at) } },
+  );
+  return result.modifiedCount > 0;
+}
+
+/**
+ * Sessions that started from `from` to `to` (Dates) and had suggestions or questions, newest
+ * first, `limit` at a time; `before` (a Date) pages back by start.
+ */
+export async function listAgentSessions(siteId, { from, to, before = null, limit = 25 }) {
+  const startedAt = { $gte: from, $lt: before && before < to ? before : to };
+  return agentSessions()
+    .find(
+      { siteId, startedAt, $or: [{ "suggestions.0": { $exists: true } }, { "questions.0": { $exists: true } }] },
+      { projection: { sid: 1, startedAt: 1, lastSeenAt: 1, device: 1, pages: 1, suggestions: 1, questions: 1 } },
+    )
+    .sort({ startedAt: -1 })
+    .limit(limit)
+    .toArray();
+}
+
+/**
+ * Totals for sessions that started from `from` to `to`: sessions, suggestions by outcome (an
+ * unanswered one in a session quiet since `quietBefore` counts as ignored), questions.
+ */
+export async function agentTotals(siteId, { from, to, quietBefore }) {
+  const [row] = await agentSessions()
+    .aggregate([
+      { $match: { siteId, startedAt: { $gte: from, $lt: to } } },
+      {
+        $project: {
+          quiet: { $lt: ["$lastSeenAt", quietBefore] },
+          questions: { $size: { $ifNull: ["$questions", []] } },
+          suggestions: { $ifNull: ["$suggestions", []] },
+        },
+      },
+      {
+        $project: {
+          questions: 1,
+          shown: { $size: "$suggestions" },
+          accepted: { $size: { $filter: { input: "$suggestions", cond: { $eq: ["$$this.outcome", "accepted"] } } } },
+          dismissed: { $size: { $filter: { input: "$suggestions", cond: { $eq: ["$$this.outcome", "dismissed"] } } } },
+          ignored: {
+            $size: {
+              $filter: {
+                input: "$suggestions",
+                cond: { $or: [{ $eq: ["$$this.outcome", "ignored"] }, { $and: ["$quiet", { $eq: ["$$this.outcome", null] }] }] },
+              },
+            },
+          },
+          reached: { $size: { $filter: { input: "$suggestions", cond: { $ne: [{ $ifNull: ["$$this.reachedAt", null] }, null] } } } },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          sessions: { $sum: 1 },
+          shown: { $sum: "$shown" },
+          accepted: { $sum: "$accepted" },
+          dismissed: { $sum: "$dismissed" },
+          ignored: { $sum: "$ignored" },
+          reached: { $sum: "$reached" },
+          questions: { $sum: "$questions" },
+        },
+      },
+    ])
+    .toArray();
+  return { sessions: 0, shown: 0, accepted: 0, dismissed: 0, ignored: 0, reached: 0, questions: 0, ...(row ? { ...row, _id: undefined } : {}) };
+}
+
+/** The latest activity of any visitor session on the site, or null. */
+export async function lastAgentActivity(siteId) {
+  const doc = await agentSessions().find({ siteId }, { projection: { lastSeenAt: 1 } }).sort({ startedAt: -1 }).limit(1).next();
+  return doc?.lastSeenAt ?? null;
+}
+
+export async function deleteAgentSessions(siteId) {
+  const result = await agentSessions().deleteMany({ siteId });
+  return result.deletedCount;
+}
+
+/** Credits the site agent charged its owner for this site since `since` (a Date). */
+export async function agentCreditsSince(userId, siteId, since, until = null) {
+  const [row] = await claudeUsage()
+    .aggregate([
+      { $match: { siteId, kind: "site-agent", userId, charged: true, createdAt: until ? { $gte: since, $lt: until } : { $gte: since } } },
+      { $group: { _id: null, credits: { $sum: "$credits" } } },
+    ])
+    .toArray();
+  return row?.credits ?? 0;
 }

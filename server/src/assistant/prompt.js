@@ -87,6 +87,7 @@ const SCREENS = {
   details: "Business info (site-wide facts: contact details, social media, customer reviews, questions and answers, highlights)",
   publish: "What's changed (changes not yet on the live site, and any problems that stop it from updating)",
   analytics: "Visitors (who visits the site)",
+  agent: "Site agent (the chat helper on the published site: its name, greeting, tone, the goals it steers visitors to, and the history of its suggestions)",
   more: "More tools (the list of less common tools)",
   seo: "Google & sharing, under More tools (how pages show up in search results)",
   redirects: "Old web addresses, under More tools (redirects from the old site's addresses)",

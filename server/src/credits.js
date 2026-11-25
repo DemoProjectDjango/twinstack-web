@@ -309,10 +309,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * Resolves to a function that gives the running place back (once). Throws ClaudeAccessError
  * `rate_limited` (429) when no room comes within LIMIT_WAIT_MS.
  */
-async function enterGate(userId, limits) {
+async function enterGate(userId, limits, waitMs = LIMIT_WAIT_MS) {
   let gate = gates.get(userId);
   if (!gate) gates.set(userId, (gate = { running: 0, starts: [] }));
-  const deadline = Date.now() + LIMIT_WAIT_MS;
+  const deadline = Date.now() + waitMs;
   for (;;) {
     const now = Date.now();
     gate.starts = gate.starts.filter((t) => now - t < 60_000);
@@ -543,13 +543,14 @@ class Spend {
  *
  * A charged request also keeps to the account's limits (LIMITS): over the daily credits it throws
  * ClaudeAccessError `daily_limit`; over the running or per-minute limit it waits for room, and
- * throws `rate_limited` when none comes within LIMIT_WAIT_MS. Both are 429s.
+ * throws `rate_limited` when none comes within LIMIT_WAIT_MS. Both are 429s. `waitMs` shortens the
+ * wait (0: refused at once), for requests a visitor is waiting on (site-agent.js).
  */
-export async function beginSpend({ charged = true, ...info }) {
+export async function beginSpend({ charged = true, waitMs, ...info }) {
   if (!charged) return new Spend(info, null);
   const limits = await limitsFor(info.userId);
   await checkDailyLimit(info.userId, limits);
-  const leave = await enterGate(info.userId, limits);
+  const leave = await enterGate(info.userId, limits, waitMs ?? LIMIT_WAIT_MS);
   try {
     const { balance } = await getCredits(info.userId);
     let account = accounts.get(info.userId);
