@@ -14,13 +14,13 @@ afterEach(() => clearProviderDown());
 const apiError = (status, type, message) => Anthropic.APIError.generate(status, { type: "error", error: { type, message } }, undefined, new Headers());
 
 test("Claude hands over to DeepSeek's stronger model, then OpenAI's strongest", () => {
-  assert.deepEqual(failoverModels("claude-opus-5-5"), ["claude-opus-5-5", "deepseek-v4-pro", "gpt-6-astra"]);
+  assert.deepEqual(failoverModels("claude-opus-5-5"), ["claude-opus-5-5", "deepseek-v4-pro", "gpt-6.1-sol"]);
 });
 
 test("a fast model hands over to the other fast provider, then Claude", () => {
   assert.deepEqual(failoverModels("deepseek-flash"), ["deepseek-flash", "gpt-6-luna", "claude-opus-5-5"]);
   assert.deepEqual(failoverModels("gpt-6-luna"), ["gpt-6-luna", "deepseek-flash", "claude-opus-5-5"]);
-  assert.deepEqual(failoverModels("deepseek-v4-pro"), ["deepseek-v4-pro", "gpt-6-astra", "claude-opus-5-5"]);
+  assert.deepEqual(failoverModels("deepseek-v4-pro"), ["deepseek-v4-pro", "gpt-6.1-sol", "claude-opus-5-5"]);
 });
 
 test("only providers with a key are used", () => {
@@ -37,7 +37,7 @@ test("a provider out of balance is skipped for a while, then tried again", () =>
   const now = Date.now();
   markProviderDown("claude", "balance", now);
   assert.equal(isProviderDown("claude", now + 1000), true);
-  assert.deepEqual(attemptOrder("claude-opus-5-5"), ["deepseek-v4-pro", "gpt-6-astra"]);
+  assert.deepEqual(attemptOrder("claude-opus-5-5"), ["deepseek-v4-pro", "gpt-6.1-sol"]);
   assert.equal(isProviderDown("claude", now + DOWN_MS + 1), false);
 });
 
@@ -97,9 +97,9 @@ test("requests that can't run elsewhere aren't sent there", () => {
   const search = { model: "claude-opus-5-5", max_tokens: 10, messages: [{ role: "user", content: "x" }], tools: [{ type: "web_search_20260209", name: "web_search" }] };
   assert.equal(adaptRequest(search, "deepseek-v4-pro"), null);
   const tools = { model: "claude-opus-5-5", max_tokens: 10, messages: [{ role: "user", content: "x" }], tools: [{ name: "read", input_schema: {} }] };
-  assert.equal(adaptRequest(tools, "gpt-6-astra"), null);
+  assert.equal(adaptRequest(tools, "gpt-6.1-sol"), null);
   const plain = { model: "claude-opus-5-5", max_tokens: 10, messages: [{ role: "user", content: "x" }], output_config: { effort: "high" } };
-  assert.deepEqual(adaptRequest(plain, "gpt-6-astra").output_config, { effort: "high" });
+  assert.deepEqual(adaptRequest(plain, "gpt-6.1-sol").output_config, { effort: "high" });
 });
 
 test("withFailover hands an out-of-balance Claude request to the next provider", async () => {

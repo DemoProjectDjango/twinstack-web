@@ -29,7 +29,7 @@ export const DEEPSEEK_UPSTREAM = (process.env.DEEPSEEK_BASE_URL || "https://api.
 // the strong tier.
 export const STAND_INS = {
   deepseek: { strong: "deepseek-v4-pro", fast: "deepseek-flash" },
-  openai: { strong: "gpt-6-astra", fast: "gpt-6-luna" },
+  openai: { strong: "gpt-6.1-sol", fast: "gpt-6-luna" },
 };
 // The cheaper models; any other DeepSeek or OpenAI model counts as the strong tier.
 const FAST_TIER = new Set(["deepseek-flash", "gpt-6-luna", "gpt-5.6-luna", "gpt-5.4-nano", "gpt-5.4-mini"]);

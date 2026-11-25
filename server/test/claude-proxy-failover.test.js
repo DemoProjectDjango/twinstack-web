@@ -122,7 +122,7 @@ test("every provider out: the neutral message, not to be retried", async () => {
   assert.equal(reply.status, 503);
   assert.equal(reply.headers.get("x-should-retry"), "false");
   assert.equal(JSON.parse(reply.text).error.message, AI_BUSY);
-  assert.equal(mock.calls.openai[0].body.model, "gpt-6-astra");
+  assert.equal(mock.calls.openai[0].body.model, "gpt-6.1-sol");
   assert.equal(reply.spend.events.length, 0);
   for (const provider of ["claude", "deepseek", "openai"]) assert.equal(isProviderDown(provider), true, provider);
 });
