@@ -534,6 +534,36 @@ at once when a provider refuses a request for want of balance or refuses the key
 
 ---
 
+## Before going live: money and AI safety
+
+Everyone's AI work runs on the app's own keys and is paid from each account's credits. The app enforces the limits
+per account; these settings outside it are the backstop. Check each one before launch and after changing keys.
+
+1. **One key per environment.** Give production its own Anthropic key (and OpenAI/DeepSeek keys) in its own
+   Anthropic workspace (Console → Workspaces), never the key used on developers' computers. A leaked development key
+   then can't spend production's money, and either can be revoked alone. Don't create a key per customer: Anthropic's
+   rate limits are per organization, so separate keys add no speed, only more secrets to protect.
+2. **A spend ceiling on that workspace.** Console → Workspaces → the production workspace → Limits: set a monthly spend
+   limit well above normal use (say 3× last month), so a bug can't run up an unbounded bill even with auto-reload on.
+   Set an email alert at 50% and 80%.
+3. **Per-account limits** (in `server/.env`, defaults shown): `CLAUDE_MAX_RUNNING_PER_USER=4`,
+   `CLAUDE_REQUESTS_PER_MINUTE=40`, `CLAUDE_DAILY_CREDITS=100000` ($10 of AI a day per account), `MAX_JOBS_PER_USER=3`.
+   An account that needs more gets its own in MongoDB: `users.limits { running, perMinute, dailyCredits }`.
+4. **Free credits.** Each account gets 10,000 once, for a GitHub account no other account used. At most
+   `FREE_CREDITS_PER_ADDRESS_PER_DAY` (3) accounts from one network address and `FREE_CREDITS_GRANTS_PER_DAY` (500)
+   in all get them each day; past that they're held and added later by themselves. Lower the daily total if
+   `/admin/providers` shows free credits growing faster than purchases.
+5. **One API process.** `ecosystem.config.cjs` runs the API as a single fork-mode process, and the API refuses to
+   start a second instance: the running spend, jobs and workspaces live in its memory and on this disk. Grow by giving
+   the droplet more CPU and memory (`MAX_RUNNING_JOBS` follows the core count), never with PM2 cluster mode.
+6. **Stripe in live mode.** `STRIPE_SECRET_KEY` is `sk_live_…`, the live webhook endpoint exists with every event
+   listed under "Stripe payments", and `STRIPE_WEBHOOK_SECRET` is the live endpoint's (not the test one's). Make one
+   real $5 purchase and refund it: the balance goes up 40,000 and back down. Leave **Radar** on (it is by default; it
+   blocks the riskiest payments). A dispute takes the credits back by itself, so check Payments → Disputes weekly.
+7. **Nightly database backups** (see "Backups" below), copied off the server. Credit balances and purchases are money.
+
+---
+
 ## Deploying updates
 
 See [UPDATING.md](UPDATING.md). Once its one-time GitHub Actions setup is done, every push to `master` deploys

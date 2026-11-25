@@ -32,6 +32,12 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
             {params.credits === "granted" && " 10,000 free Claude credits were added to your account."}
           </Notice>
         )}
+        {params.github === "connected" && params.credits === "held" && (
+          <Notice tone="info">
+            Your 10,000 free Claude credits are on their way. So many people joined today that they&apos;re added within a
+            day, with nothing more to do. You can buy credits to start now.
+          </Notice>
+        )}
         {params.github === "connected" && params.credits === "used" && (
           <Notice tone="warning">
             That GitHub account already brought free credits to another Twinstack account, so none were added this time.

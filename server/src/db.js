@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import dns from "node:dns/promises";
 import { MongoClient, ObjectId } from "mongodb";
 import { DEFAULT_ASSISTANT_MODEL, DEFAULT_MODEL, isClaudeModel, USER_MODEL_CHOICE } from "./claude-models.js";
@@ -39,6 +39,8 @@ import { config } from "./config.js";
 //   passwordResets   the same for password resets
 //   freeCreditGrants one document per GitHub account that brought an account its
 //               free credits (_id = GitHub user id)
+//   freeGrantCounters free credits given per day, in all and per network address
+//               (_id = all:<day> or ip:<hash>:<day>), deleted after 2 days
 //
 // users.sessionVersion (0 when missing) is in every session cookie; raising it signs
 // out every other browser (bumpSessionVersion).
@@ -50,7 +52,9 @@ import { config } from "./config.js";
 // the account's Stripe customer ids ({ live, test }). New accounts start with no
 // credits and credits.freePending: the FREE_CREDITS come when GitHub is connected
 // (grantGithubCredits), once per account and once per GitHub account, which
-// freeCreditGrants records (_id = GitHub user id) so unlinking can't reuse it.
+// freeCreditGrants records (_id = GitHub user id) so unlinking can't reuse it, and
+// at most FREE_GRANT_LIMITS a day (freeGrantCounters). Past them the credits are
+// held (credits.freeHeld) and given when there's room again (retryHeldFreeCredits).
 //
 // Account ids leave this module as 24-character hex strings.
 
@@ -101,6 +105,7 @@ export async function connectDb() {
     scopeBlocks().createIndex({ userId: 1, createdAt: -1 }),
     // Kept 180 days: enough to spot someone using the assistant as a general chatbot.
     scopeBlocks().createIndex({ createdAt: 1 }, { expireAfterSeconds: 180 * 24 * 60 * 60 }),
+    freeGrantCounters().createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     creditPurchases().createIndex({ userId: 1, createdAt: -1 }),
     creditPurchases().createIndex({ createdAt: -1 }),
     creditPurchases().createIndex({ stripeSessionId: 1 }, { unique: true, partialFilterExpression: { stripeSessionId: { $type: "string" } } }),
@@ -165,6 +170,7 @@ const analyticsSalts = () => db.collection("analyticsSalts");
 const pendingSignups = () => db.collection("pendingSignups");
 const passwordResets = () => db.collection("passwordResets");
 const freeCreditGrants = () => db.collection("freeCreditGrants");
+const freeGrantCounters = () => db.collection("freeGrantCounters");
 const scopeBlocks = () => db.collection("scopeBlocks");
 
 /** How long a site's visits are kept (the TTL index on analyticsEvents.at). */
@@ -419,7 +425,8 @@ export async function saveGithubToken(id, token) {
 }
 
 export async function unlinkGithub(id) {
-  await users().updateOne({ _id: objectId(id) }, { $unset: { github: "" } });
+  // Held free credits wait for a connected GitHub account again.
+  await users().updateOne({ _id: objectId(id) }, { $unset: { github: "", "credits.freeHeld": "" } });
 }
 
 /**
@@ -433,7 +440,7 @@ export async function removeGithubAccess(id) {
   if (!_id) return null;
   const account = await users().findOneAndUpdate(
     { _id },
-    { $unset: { github: "" }, $set: { "credits.freePending": true } },
+    { $unset: { github: "", "credits.freeHeld": "" }, $set: { "credits.freePending": true } },
     { returnDocument: "before" },
   );
   if (account?.github?.id != null) await freeCreditGrants().deleteMany({ _id: account.github.id });
@@ -899,34 +906,127 @@ export async function chargedCreditsSince(userId, since) {
 
 export async function getCredits(id) {
   const doc = await users().findOne({ _id: objectId(id) }, { projection: { credits: 1 } });
-  const { purchaseIds: _ids, chargeIds: _charges, freePending, ...credits } = doc?.credits ?? {};
-  return { ...startingCredits(), ...credits, freePending: freePending === true };
+  const { purchaseIds: _ids, chargeIds: _charges, freePending, freeHeld, ...credits } = doc?.credits ?? {};
+  // Held (today's free-credit limits were reached): GitHub is connected, so nothing is asked of the
+  // owner; the credits come by themselves.
+  const held = freePending === true && freeHeld != null;
+  return { ...startingCredits(), ...credits, freePending: freePending === true && !held, freeHeld: held };
 }
 
+/* ------------------------------------------------------------ free credits */
+
+// Every account gets FREE_CREDITS once, for connecting a GitHub account no other account has used.
+// Making an email address and a GitHub account costs little, so free credits are also limited per
+// day: at most `perAddress` to accounts connecting from one network address (a hash of it is all
+// that's kept), and `perDay` in all, so a script making accounts by the hundred can't empty the
+// app's AI budget. No minimum GitHub account age: the business owners this is for often make their
+// GitHub account to sign up. Past a limit the credits aren't lost, only held (credits.freeHeld) and
+// given once there's room (retryHeldFreeCredits, from GET /api/credits).
+const envCount = (name, fallback) => {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value >= 0 ? value : fallback;
+};
+export const FREE_GRANT_LIMITS = {
+  perAddress: envCount("FREE_CREDITS_PER_ADDRESS_PER_DAY", 3),
+  perDay: envCount("FREE_CREDITS_GRANTS_PER_DAY", 500),
+};
+// How often a held account tries again.
+const HELD_RETRY_MS = 10 * 60_000;
+
+const utcDay = (date = new Date()) => date.toISOString().slice(0, 10);
+/** A network address as kept with the counters: a keyed hash, never the address itself. */
+const addressHash = (ip) => createHash("sha256").update(config.dataKey).update(`free-credits:${ip}`).digest("hex").slice(0, 32);
+
 /**
- * Gives the account its free credits for connecting this GitHub account. Returns "granted",
- * "used" when the GitHub account already got them for another Twinstack account (the account
- * keeps waiting, so a different GitHub account can still bring them), or null when the account
- * isn't waiting for any.
+ * Takes one place on the counter `_id` while it's under `limit`, atomically: two requests can never
+ * both take the last one. True when taken.
  */
-export async function grantGithubCredits(id, githubId) {
+async function takeGrantPlace(_id, limit) {
+  if (limit <= 0) return false;
+  const expiresAt = new Date(Date.now() + 2 * 24 * 60 * 60_000);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      // Upserting a counter at its limit tries to insert a second one with the same _id: 11000.
+      await freeGrantCounters().updateOne({ _id, count: { $lt: limit } }, { $inc: { count: 1 }, $setOnInsert: { expiresAt } }, { upsert: true });
+      return true;
+    } catch (err) {
+      if (err?.code !== 11000) throw err;
+      // Full, or two first requests of the day raced to make it: look again.
+      const doc = await freeGrantCounters().findOne({ _id });
+      if (doc && doc.count >= limit) return false;
+    }
+  }
+  return false;
+}
+
+const giveGrantPlaceBack = (_id) => freeGrantCounters().updateOne({ _id, count: { $gt: 0 } }, { $inc: { count: -1 } });
+
+/**
+ * Gives the account its free credits for connecting this GitHub account, from network address `ip`.
+ * Returns "granted"; "used" when the GitHub account already got them for another Twinstack account
+ * (the account keeps waiting, so a different GitHub account can still bring them); "held" when
+ * today's limits are reached (they come later by themselves); or null when the account isn't
+ * waiting for any.
+ */
+export async function grantGithubCredits(id, githubId, { ip = null } = {}) {
   const _id = objectId(id);
   const waiting = await users().findOne({ _id, "credits.freePending": true }, { projection: { _id: 1 } });
   if (!waiting) return null;
+  if (await freeCreditGrants().findOne({ _id: githubId }, { projection: { _id: 1 } })) return "used";
+
+  const day = utcDay();
+  const places = [];
+  const release = () => Promise.all(places.map(giveGrantPlaceBack)).catch((err) => console.error("Couldn't give back a free-credit place:", err.message));
+  const take = async (counter, limit) => {
+    const taken = await takeGrantPlace(counter, limit);
+    if (taken) places.push(counter);
+    return taken;
+  };
+  const room = (ip ? await take(`ip:${addressHash(ip)}:${day}`, FREE_GRANT_LIMITS.perAddress) : true) && (await take(`all:${day}`, FREE_GRANT_LIMITS.perDay));
+  if (!room) {
+    await release();
+    await users().updateOne({ _id, "credits.freePending": true }, { $set: { "credits.freeHeld": { at: new Date() } } });
+    return "held";
+  }
+
   try {
     await freeCreditGrants().insertOne({ _id: githubId, userId: id, grantedAt: new Date() });
   } catch (err) {
+    await release();
     if (err?.code === 11000) return "used";
     throw err;
   }
   const { modifiedCount } = await users().updateOne(
     { _id, "credits.freePending": true },
-    { $inc: { "credits.balance": FREE_CREDITS, "credits.granted": FREE_CREDITS }, $unset: { "credits.freePending": "" } },
+    { $inc: { "credits.balance": FREE_CREDITS, "credits.granted": FREE_CREDITS }, $unset: { "credits.freePending": "", "credits.freeHeld": "" } },
   );
   if (modifiedCount === 1) return "granted";
-  // Granted meanwhile by another request: give the GitHub account back.
+  // Granted meanwhile by another request: give the GitHub account and the places back.
   await freeCreditGrants().deleteOne({ _id: githubId, userId: id });
+  await release();
   return null;
+}
+
+/**
+ * For an account whose free credits were held (grantGithubCredits: "held") and that still has its
+ * GitHub account connected: tries again, at most every HELD_RETRY_MS. Never throws.
+ */
+export async function retryHeldFreeCredits(id, ip) {
+  try {
+    const _id = objectId(id);
+    const due = new Date(Date.now() - HELD_RETRY_MS);
+    // Claims this try, so two requests at once don't both try.
+    const account = await users().findOneAndUpdate(
+      { _id, "credits.freePending": true, "credits.freeHeld.at": { $lte: due }, "github.id": { $type: "number" } },
+      { $set: { "credits.freeHeld.at": new Date() } },
+      { projection: { "github.id": 1 } },
+    );
+    if (!account) return null;
+    return await grantGithubCredits(id, account.github.id, { ip });
+  } catch (err) {
+    console.error("Couldn't retry held free credits:", err.message);
+    return null;
+  }
 }
 
 /** A message the scope guard (scope-guard.js) turned away as not about the website. */

@@ -13,6 +13,8 @@ export type Credits = {
   used: number;
   /** The free credits are waiting for the account to connect GitHub (`freeCredits` of them). */
   freePending: boolean;
+  /** GitHub is connected but today's free-credit limits were reached: they're added by themselves later. */
+  freeHeld?: boolean;
   freeCredits: number;
   /** Whose key Claude runs on: credits on the app's key, the account's own key, or neither. */
   source: CreditsSource;

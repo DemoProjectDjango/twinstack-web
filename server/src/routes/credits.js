@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { config } from "../config.js";
 import { creditsForDollars, creditsView } from "../credits.js";
-import { createPurchase, listClaudeUsage, listCreditPurchases, usageByProvider } from "../db.js";
+import { createPurchase, listClaudeUsage, listCreditPurchases, retryHeldFreeCredits, usageByProvider } from "../db.js";
 import { requireAuth } from "../session.js";
 import { CheckoutError, checkoutStatus, startCheckout } from "../stripe.js";
 import { handle, requireJson } from "./helpers.js";
@@ -18,7 +18,10 @@ creditsRouter.get(
   "/",
   handle(async (req, res) => {
     res.set("Cache-Control", "no-store");
-    res.json(await creditsView(req.user.id));
+    const view = await creditsView(req.user.id);
+    // Free credits held back by the daily limits come by themselves once there's room (db.js).
+    if (view.freeHeld && (await retryHeldFreeCredits(req.user.id, req.ip)) === "granted") return res.json(await creditsView(req.user.id));
+    res.json(view);
   }),
 );
 
