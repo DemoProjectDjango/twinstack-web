@@ -118,7 +118,7 @@ export function DeleteSiteDialog({
           Delete “{title}”?
         </h2>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          It disappears from your sites here, along with changes you haven&apos;t published, your Ask Claude chats and the
+          It disappears from your sites here, along with changes you haven&apos;t published, your chats with the AI and the
           site&apos;s visitor numbers. This can&apos;t be undone.
         </p>
 

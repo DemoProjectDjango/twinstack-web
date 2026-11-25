@@ -151,7 +151,7 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
           next screen.
           {credits?.freePending && (
             <span className="mt-1 block font-medium text-sky-700 dark:text-sky-300">
-              Connecting it also gives you {formatCredits(credits.freeCredits)} free Claude credits.
+              Connecting it also gives you {formatCredits(credits.freeCredits)} free AI credits.
             </span>
           )}
         </>
@@ -195,9 +195,9 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
     },
     {
       id: "claude",
-      title: "Set up Claude",
+      title: "Set up the AI",
       optional: true,
-      text: "Claude can write and improve your pages for you. You can also write everything yourself.",
+      text: "The AI can write and improve your pages for you. You can also write everything yourself.",
       done: Boolean(claude?.ready),
       action: claude ? (
         <Link href={claude.setupHref} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900">
@@ -300,7 +300,7 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
 
       {setupDone && claude && !claude.ready && (
         <Notice>
-          <span className="font-medium">Want Claude to write for you?</span> It can draft pages from your notes and improve what
+          <span className="font-medium">Want the AI to write for you?</span> It can draft pages from your notes and improve what
           you&apos;ve written.{" "}
           <Link href={claude.setupHref} className="ml-1 underline">
             {claude.setupLabel}

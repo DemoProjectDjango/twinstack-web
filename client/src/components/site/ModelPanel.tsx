@@ -6,33 +6,37 @@ import { toast } from "@/lib/toast";
 import { useSite } from "./site-context";
 import { Notice, ScreenHeader, Spinner, inputClass } from "./ui";
 
-// The site's own AI models (GET/PUT …/ai-models): the cheaper model that does routine work
-// (server/src/fast-model.js) and the image model pictures are made with (server/src/image-model.js).
+// The site's AI settings (GET/PUT …/ai-models): how routine work is done (server/src/fast-model.js)
+// and how pictures are made (server/src/image-model.js), as neutral choices the server maps to
+// models (server/src/model-tiers.js). Owners never see a model's name; admins get them as `models`.
 // "default" follows the one chosen for everyone on /admin/models.
 
-type Choice = { id: string; name: string };
+type Tier = "default" | "best" | "balanced" | "fastest" | "custom";
 
-type FastModel = { id: string; name: string; description: string; available: boolean; price: { output: number } | null };
-type ImageModel = { id: string; name: string; description: string; pictureCredits: number };
+type Choice = { id: Tier; label: string; description: string; available: boolean };
+
+/** What an admin also sees: the models behind the choices. */
+type AdminModels = { choice: string; default: { name: string } | null; active: { name: string } | null };
 
 type FastView = {
-  choice: string;
-  /** The site's chosen model can't run any more, so it's on the default. */
+  choice: Tier;
+  /** The site's choice can't run any more, so it's on the default. */
   unavailable: boolean;
-  default: Choice | null;
-  active: Choice | null;
-  models: FastModel[];
-  creditsPerDollar: number;
+  default: Tier;
+  active: Tier;
+  options: (Choice & { creditsPer1000Words: number | null })[];
+  models?: AdminModels;
 };
 
 type ImageView = {
-  choice: string;
+  choice: Tier;
   unavailable: boolean;
-  /** Pictures can be made on this server at all (it has an OpenAI key). */
+  /** Pictures can be made on this server at all. */
   available: boolean;
-  default: Choice;
-  active: Choice | null;
-  models: ImageModel[];
+  default: Tier;
+  active: Tier | null;
+  options: (Choice & { pictureCredits: number | null })[];
+  models?: AdminModels;
 };
 
 type Views = { fast: FastView; image: ImageView };
@@ -42,43 +46,43 @@ type State = { status: "loading" } | { status: "error"; message: string } | { st
 /** One entry of a dropdown, with what's shown under it once picked. */
 type Option = { id: string; label: string; description: string; note: string | null };
 
-// A thousand words are about 1,333 tokens of writing.
-const TOKENS_PER_1000_WORDS = 1333;
+const wordsNote = (credits: number | null) => (credits ? `About ${credits.toLocaleString()} credits per 1,000 words it writes.` : null);
 
-/** "About 16 credits per 1,000 words it writes", from the model's output price. */
-function wordsNote(model: FastModel, creditsPerDollar: number) {
-  if (!model.price) return null;
-  const credits = Math.max(1, Math.round(((model.price.output * TOKENS_PER_1000_WORDS) / 1e6) * creditsPerDollar));
-  return `About ${credits.toLocaleString()} credits per 1,000 words it writes.`;
-}
+const pictureNote = (credits: number | null) => (credits ? `Up to about ${credits.toLocaleString()} credits for a medium-quality landscape picture.` : null);
 
-const pictureNote = (model: ImageModel) => `Up to about ${model.pictureCredits.toLocaleString()} credits for a medium-quality landscape picture.`;
+const labelOf = (options: Choice[], id: Tier | null) => options.find((o) => o.id === id)?.label ?? null;
 
 function fastOptions(view: FastView): Option[] {
-  const defaultModel = view.models.find((m) => m.id === view.default?.id);
-  return [
-    {
-      id: "default",
-      label: `Default (${view.default?.name ?? "Main AI only"})`,
-      description: "Twinstack's recommended choice. If it changes, this site follows it.",
-      note: defaultModel ? wordsNote(defaultModel, view.creditsPerDollar) : null,
-    },
-    ...view.models.filter((m) => m.available).map((m) => ({ id: m.id, label: m.name, description: m.description, note: wordsNote(m, view.creditsPerDollar) })),
-    { id: "off", label: "Main AI only", description: "The main AI does everything. The best results, at its prices.", note: null },
-  ];
+  return view.options
+    .filter((o) => o.available || o.id === view.choice)
+    .map((o) => ({
+      id: o.id,
+      label: o.id === "default" ? `${o.label} (${labelOf(view.options, view.default) ?? "Best quality"})` : o.label,
+      description: o.description,
+      note: wordsNote(o.creditsPer1000Words),
+    }));
 }
 
 function imageOptions(view: ImageView): Option[] {
-  const defaultModel = view.models.find((m) => m.id === view.default.id);
-  return [
-    {
-      id: "default",
-      label: `Default (${view.default.name})`,
-      description: "Twinstack's recommended choice. If it changes, this site follows it.",
-      note: defaultModel ? pictureNote(defaultModel) : null,
-    },
-    ...view.models.map((m) => ({ id: m.id, label: m.name, description: m.description, note: pictureNote(m) })),
-  ];
+  return view.options
+    .filter((o) => o.available || o.id === view.choice)
+    .map((o) => ({
+      id: o.id,
+      label: o.id === "default" ? `${o.label} (${labelOf(view.options, view.default) ?? "Balanced"})` : o.label,
+      description: o.description,
+      note: pictureNote(o.pictureCredits),
+    }));
+}
+
+/** For admins only: the model names behind a setting. */
+function AdminNote({ models }: { models?: AdminModels }) {
+  if (!models) return null;
+  return (
+    <p className="mt-2 text-xs text-zinc-400">
+      Admin: {models.active?.name ?? "main AI only"} now
+      {models.default && `, default ${models.default.name}`}.
+    </p>
+  );
 }
 
 export function ModelPanel() {
@@ -90,7 +94,7 @@ export function ModelPanel() {
     let cancelled = false;
     api<Views>(workspacePath(owner, repo, "/ai-models"))
       .then((views) => !cancelled && setState({ status: "ready", views }))
-      .catch((err) => !cancelled && setState({ status: "error", message: err instanceof Error ? err.message : "The models couldn't be loaded." }));
+      .catch((err) => !cancelled && setState({ status: "error", message: err instanceof Error ? err.message : "The settings couldn't be loaded." }));
     return () => {
       cancelled = true;
     };
@@ -100,16 +104,11 @@ export function ModelPanel() {
     if (state.status !== "ready" || model === state.views[kind].choice) return;
     setSaving(kind);
     try {
-      const views = await api<Views>(workspacePath(owner, repo, "/ai-models"), { method: "PUT", body: { kind, model } });
+      const views = await api<Views>(workspacePath(owner, repo, "/ai-models"), { method: "PUT", body: { kind, choice: model } });
       setState({ status: "ready", views });
-      const active = views[kind].active;
-      toast.success(
-        kind === "image"
-          ? `Pictures for this site are now made with ${active?.name ?? "the default model"}.`
-          : active
-            ? `${active.name} now does this site's routine work.`
-            : "The main AI now does all of this site's work.",
-      );
+      const view = views[kind];
+      const picked = labelOf(view.options, view.choice);
+      toast.success(kind === "image" ? `Pictures for this site: ${picked ?? "saved"}.` : `This site's AI work: ${picked ?? "saved"}.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Your choice couldn't be saved.");
     } finally {
@@ -117,7 +116,7 @@ export function ModelPanel() {
     }
   }
 
-  const header = <ScreenHeader title="AI settings" description="Choose which AI models do this site's work. The choices are shared by everyone who manages this site and apply from the next request." />;
+  const header = <ScreenHeader title="AI settings" description="Choose how the AI balances quality and credits for this site. The choices are shared by everyone who manages this site and apply from the next request." />;
 
   if (state.status !== "ready") {
     return (
@@ -125,7 +124,7 @@ export function ModelPanel() {
         {header}
         {state.status === "loading" ? (
           <p className="flex items-center gap-2 text-sm text-zinc-500">
-            <Spinner /> Loading models…
+            <Spinner /> Loading settings…
           </p>
         ) : (
           <Notice tone="warning">{state.message}</Notice>
@@ -142,11 +141,11 @@ export function ModelPanel() {
       <div className="grid gap-6 lg:grid-cols-2">
         <ModelCard
           title="Routine work"
-          description="The main AI designs and writes the important parts of your site. To save credits, routine work (small page edits, search text, the header and footer, site details) goes to a cheaper, faster model first, and the main AI does it again if that work doesn't pass the site's checks."
+          description="The main AI designs and writes the important parts of your site. To save credits, routine work (small page edits, search text, the header and footer, site details) can go to a quicker, lower-cost AI first, and the main AI does it again if that work doesn't pass the site's checks."
           control={
             <ModelSelect
               id="site-fast-model"
-              label="Model for routine work"
+              label="Quality for routine work"
               value={fast.choice}
               options={fastOptions(fast)}
               disabled={saving !== null}
@@ -158,7 +157,10 @@ export function ModelPanel() {
             <>
               <Picked options={fastOptions(fast)} value={fast.choice} />
               {fast.unavailable && <Unavailable />}
-              <p className="mt-3 text-xs text-zinc-500">{fast.active ? `${fast.active.name} is doing this site's routine work now.` : "The main AI is doing all of this site's work now."}</p>
+              <p className="mt-3 text-xs text-zinc-500">
+                {fast.active === "best" ? "The main AI is doing all of this site's work now." : `In use now: ${labelOf(fast.options, fast.active) ?? "a custom setting"}.`}
+              </p>
+              <AdminNote models={fast.models} />
             </>
           }
         />
@@ -169,7 +171,7 @@ export function ModelPanel() {
             image.available ? (
               <ModelSelect
                 id="site-image-model"
-                label="Model for pictures"
+                label="Quality for pictures"
                 value={image.choice}
                 options={imageOptions(image)}
                 disabled={saving !== null}
@@ -185,7 +187,8 @@ export function ModelPanel() {
               <>
                 <Picked options={imageOptions(image)} value={image.choice} />
                 {image.unavailable && <Unavailable />}
-                <p className="mt-3 text-xs text-zinc-500">{image.active && `${image.active.name} makes this site's pictures now.`}</p>
+                <p className="mt-3 text-xs text-zinc-500">{image.active && `In use now: ${labelOf(image.options, image.active) ?? "a custom setting"}.`}</p>
+                <AdminNote models={image.models} />
               </>
             )
           }
@@ -210,12 +213,12 @@ function ModelCard({ title, description, control, details }: { title: string; de
 function Unavailable() {
   return (
     <div className="mt-3">
-      <Notice tone="warning">The model chosen for this site isn&apos;t available any more, so it&apos;s using the default until you choose again.</Notice>
+      <Notice tone="warning">The option chosen for this site isn&apos;t available any more, so it&apos;s using the recommended one until you choose again.</Notice>
     </div>
   );
 }
 
-/** A dropdown of models, saved as soon as one is picked. */
+/** A dropdown of choices, saved as soon as one is picked. */
 function ModelSelect({
   id,
   label,
@@ -240,9 +243,9 @@ function ModelSelect({
         {label}
       </label>
       <div className="mt-1 flex items-center gap-2">
-        {/* A model that's no longer offered shows as unselected until another is picked. */}
+        {/* A choice that's no longer offered shows as unselected until another is picked. */}
         <select id={id} value={picked ? value : ""} disabled={disabled} onChange={(e) => onChange(e.target.value)} className={inputClass}>
-          {!picked && <option value="" disabled>Choose a model</option>}
+          {!picked && <option value="" disabled>Choose an option</option>}
           {options.map((o) => (
             <option key={o.id} value={o.id}>
               {o.label}
@@ -255,7 +258,7 @@ function ModelSelect({
   );
 }
 
-/** What the picked model is and what it costs. */
+/** What the picked choice does and what it costs. */
 function Picked({ options, value }: { options: Option[]; value: string }) {
   const picked = options.find((o) => o.id === value);
   if (!picked) return null;

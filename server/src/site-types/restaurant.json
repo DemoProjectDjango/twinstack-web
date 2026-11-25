@@ -44,7 +44,7 @@
           "choices": ["Vegetarian options", "Vegan options", "Halal", "Gluten-free options", "Kids' menu"],
           "hints": { "Vegetarian options": ["vegetarian"], "Vegan options": ["vegan"], "Halal": ["halal"], "Gluten-free options": ["gluten"], "Kids' menu": ["kids", "children"] } },
         { "id": "dishes", "type": "items", "label": "Signature dishes", "itemLabel": "Dish", "max": 6, "saveTo": "profile", "role": "items",
-          "hint": "Up to 6 for the homepage. Claude writes the full Menu page from these and asks for the rest." },
+          "hint": "Up to 6 for the homepage. The AI writes the full Menu page from these and asks for the rest." },
         { "id": "menuStyle", "type": "choice", "label": "How should the menu appear?", "saveTo": "profile",
           "choices": ["Full menu with prices", "Highlights only", "I'll add it later"] }
       ]

@@ -512,12 +512,12 @@ export function siteUpdateSteps({ key, accessToken, templateToken = accessToken,
         const files = s.conflicts.map((c) => c.file).join(", ");
         if (!anthropicKey) {
           throw new Error(
-            `You changed ${files}, and so does this update. Claude combines the two, but it can't run: ${noClaude ?? "set up Claude in Settings."} Try again then. Nothing on your site has changed.`,
+            `You changed ${files}, and so does this update. The AI combines the two, but it can't run: ${noClaude ?? "the AI isn't available right now."} Try again then. Nothing on your site has changed.`,
           );
         }
         const client = anthropicClient(anthropicKey);
         for (const conflict of s.conflicts) {
-          log(`  Claude is combining ${conflict.file}…`);
+          log(`  The AI is combining ${conflict.file}…`);
           await fs.writeFile(path.join(work, conflict.file), await mergeWithClaude(client, model, conflict, beginSpend));
         }
       },
@@ -648,7 +648,7 @@ export async function moveEditor(dir, target, args, log, resolve = null) {
       await fs.mkdir(path.dirname(full), { recursive: true });
       let text = merged && !merged.conflicts ? merged.text : null;
       if (merged?.conflicts && resolve) {
-        log(`  Claude is combining your unpublished changes to ${file} with the update…`);
+        log(`  The AI is combining your unpublished changes to ${file} with the update…`);
         text = await resolve({ file, ours: content, base: old, theirs: now, marked: merged.text }).catch(() => null);
       }
       if (text !== null) await fs.writeFile(full, text);

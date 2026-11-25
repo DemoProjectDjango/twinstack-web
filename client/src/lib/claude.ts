@@ -16,7 +16,7 @@ export type ClaudeAccess = {
   costNote: string;
 };
 
-export const CLAUDE_SETUP_HREF = "/settings#claude";
+export const CLAUDE_SETUP_HREF = "/settings#ai";
 export const BUY_CREDITS_HREF = "/credits";
 /** Where the account connects GitHub, which also brings its free credits. */
 export const CONNECT_GITHUB_HREF = "/settings#github";
@@ -24,39 +24,39 @@ export const CONNECT_GITHUB_HREF = "/settings#github";
 /** `credits` is null while it loads (Claude counts as not ready until then). */
 export function claudeAccess(credits: Credits | null): ClaudeAccess {
   if (!credits) {
-    return { ready: false, reason: "Checking your Claude credits…", setupHref: BUY_CREDITS_HREF, setupLabel: "Claude credits", costNote: "" };
+    return { ready: false, reason: "Checking your AI credits…", setupHref: BUY_CREDITS_HREF, setupLabel: "AI credits", costNote: "" };
   }
   if (credits.source === "own") {
     return {
       ready: true,
       reason: "",
       setupHref: CLAUDE_SETUP_HREF,
-      setupLabel: "Claude settings",
-      costNote: "Each try is one Claude request, billed to your own Anthropic account.",
+      setupLabel: "AI account settings",
+      costNote: "Each try is one AI request, billed to your own Anthropic account.",
     };
   }
   if (credits.source === "none") {
     return {
       ready: false,
-      reason: "Claude isn't available right now. Try again later.",
+      reason: "The AI isn't available right now. Try again later.",
       setupHref: BUY_CREDITS_HREF,
-      setupLabel: "Claude credits",
+      setupLabel: "AI credits",
       costNote: "",
     };
   }
-  const costNote = "Each try uses Claude credits from your balance.";
-  if (credits.balance > 0) return { ready: true, reason: "", setupHref: BUY_CREDITS_HREF, setupLabel: "Claude credits", costNote };
+  const costNote = "Each try uses AI credits from your balance.";
+  if (credits.balance > 0) return { ready: true, reason: "", setupHref: BUY_CREDITS_HREF, setupLabel: "AI credits", costNote };
   return credits.freePending
     ? {
         ready: false,
-        reason: `Connect GitHub to get ${formatCredits(credits.freeCredits)} free Claude credits.`,
+        reason: `Connect GitHub to get ${formatCredits(credits.freeCredits)} free AI credits.`,
         setupHref: CONNECT_GITHUB_HREF,
         setupLabel: "Connect GitHub",
         costNote,
       }
     : {
         ready: false,
-        reason: "You've used all your Claude credits. Buy more to let Claude write and change pages for you.",
+        reason: "You've used all your AI credits. Buy more to let the AI write and change pages for you.",
         setupHref: BUY_CREDITS_HREF,
         setupLabel: "Buy credits",
         costNote,

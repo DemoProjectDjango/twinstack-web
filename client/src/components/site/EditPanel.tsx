@@ -204,7 +204,7 @@ function InstructionEditor({ file }: { file: string }) {
   return (
     <>
       {!supportsImages && (
-        <OldToolsNotice files="scripts/edit-page.js and scripts/lib/claude-writer.js">
+        <OldToolsNotice files="scripts/edit-page.js and the scripts it uses">
           Your site&apos;s tools are too old for adding photos here or seeing the AI&apos;s version before it&apos;s kept.
         </OldToolsNotice>
       )}

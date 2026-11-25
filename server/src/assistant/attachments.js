@@ -129,7 +129,7 @@ export function docxText(buffer) {
  */
 function classify(name, buffer) {
   const image = sniffImage(buffer);
-  if (image) return buffer.length <= MAX_IMAGE_BYTES ? { kind: "image", mime: IMAGE_MIME[image] } : { kind: "file", mime: IMAGE_MIME[image], note: "too large for Claude to look at (over 5 MB)" };
+  if (image) return buffer.length <= MAX_IMAGE_BYTES ? { kind: "image", mime: IMAGE_MIME[image] } : { kind: "file", mime: IMAGE_MIME[image], note: "too large for the AI to look at (over 5 MB)" };
   if (buffer.subarray(0, 5).toString("latin1") === "%PDF-") return { kind: "pdf", mime: "application/pdf" };
   const ext = extensionOf(name);
   if (ext === "docx" && buffer.subarray(0, 2).toString("latin1") === "PK") {
@@ -138,7 +138,7 @@ function classify(name, buffer) {
   }
   if (looksLikeText(buffer)) {
     if (buffer.length <= MAX_TEXT_BYTES) return { kind: "text", mime: TEXT_MIME[ext] ?? "text/plain" };
-    return { kind: "file", mime: TEXT_MIME[ext] ?? "text/plain", note: "too long for Claude to read (over 2 MB of text)" };
+    return { kind: "file", mime: TEXT_MIME[ext] ?? "text/plain", note: "too long for the AI to read (over 2 MB of text)" };
   }
   return { kind: "file", mime: "application/octet-stream" };
 }

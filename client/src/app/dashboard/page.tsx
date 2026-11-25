@@ -29,12 +29,12 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
         {params.github === "connected" && user.github && (
           <Notice tone="success">
             GitHub connected as @{user.github.login}.
-            {params.credits === "granted" && " 10,000 free Claude credits were added to your account."}
+            {params.credits === "granted" && " 10,000 free AI credits were added to your account."}
           </Notice>
         )}
         {params.github === "connected" && params.credits === "held" && (
           <Notice tone="info">
-            Your 10,000 free Claude credits are on their way. So many people joined today that they&apos;re added within a
+            Your 10,000 free AI credits are on their way. So many people joined today that they&apos;re added within a
             day, with nothing more to do. You can buy credits to start now.
           </Notice>
         )}

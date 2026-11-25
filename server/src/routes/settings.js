@@ -56,7 +56,7 @@ for (const [path, save] of [
     path,
     handle(async (req, res) => {
       if (!req.is("application/json")) return res.status(415).json({ error: "Expected JSON" });
-      if (!USER_MODEL_CHOICE) return res.status(403).json({ error: "The builder chooses the Claude models; they can't be changed here." });
+      if (!USER_MODEL_CHOICE) return res.status(403).json({ error: "The builder chooses the AI models; they can't be changed here." });
       const model = req.body?.model;
       if (!isClaudeModel(model)) return res.status(400).json({ error: "Choose one of the models listed." });
       await save(req.user.id, model);
@@ -69,7 +69,7 @@ settingsRouter.put(
   "/anthropic-key",
   handle(async (req, res) => {
     if (!req.is("application/json")) return res.status(415).json({ error: "Expected JSON" });
-    if (!OWN_KEYS) return res.status(403).json({ error: "Claude runs on your credits; your own Anthropic key can't be used." });
+    if (!OWN_KEYS) return res.status(403).json({ error: "The AI runs on your credits; your own Anthropic key can't be used." });
     const key = typeof req.body?.key === "string" ? req.body.key.trim() : "";
     if (!KEY_PATTERN.test(key)) {
       return res.status(400).json({ error: "That doesn't look like an Anthropic API key (sk-ant-…)." });

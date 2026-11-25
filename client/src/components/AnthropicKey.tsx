@@ -53,18 +53,18 @@ export function AnthropicKey() {
   }
 
   return (
-    <section id="claude" className="mt-6 scroll-mt-20 rounded-lg border border-zinc-200 p-6 dark:border-zinc-800">
+    <section id="ai" className="mt-6 scroll-mt-20 rounded-lg border border-zinc-200 p-6 dark:border-zinc-800">
       {ownKeys ? (
         <>
           <h2 className="text-lg font-semibold">
             Your own Anthropic key <span className="text-sm font-normal text-zinc-500">(optional)</span>
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
-            Claude runs on your{" "}
+            The AI runs on your{" "}
             <Link href="/credits" className="underline">
-              Claude credits
+              AI credits
             </Link>
-            . If you&apos;d rather pay Anthropic directly, add your own API key: Claude then uses it, and no credits are taken.
+            . If you&apos;d rather pay Anthropic directly, add your own API key: the AI then uses it, and no credits are taken.
           </p>
           {saved === null && (
             <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-zinc-600 dark:text-zinc-400">
@@ -80,7 +80,7 @@ export function AnthropicKey() {
             </ol>
           )}
           <p className="mt-3 text-xs text-zinc-500">
-            With your own key, Claude&apos;s use is billed to your Anthropic account. The key is checked with Anthropic, then stored
+            With your own key, the AI&apos;s use is billed to your Anthropic account. The key is checked with Anthropic, then stored
             encrypted for your account, so it works on any device you sign in from. Only a masked version is ever shown again. Remove
             it any time to go back to credits.
           </p>
@@ -89,7 +89,7 @@ export function AnthropicKey() {
             <p className="mt-4 text-sm text-zinc-500">Loading…</p>
           ) : saved ? (
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              <span className="text-sm text-green-700 dark:text-green-400">✓ Claude uses your own key</span>
+              <span className="text-sm text-green-700 dark:text-green-400">✓ The AI uses your own key</span>
               <code className="rounded bg-zinc-100 px-2 py-1 font-mono text-sm dark:bg-zinc-900">{saved}</code>
               <button
                 type="button"
@@ -137,11 +137,11 @@ export function AnthropicKey() {
         </>
       ) : (
         <>
-          <h2 className="text-lg font-semibold">Claude</h2>
+          <h2 className="text-lg font-semibold">AI</h2>
           <p className="mt-1 text-sm text-zinc-500">
-            Claude writes and changes your pages, and answers in Ask Claude. Each request uses your{" "}
+            The AI writes and changes your pages, and answers in Ask the AI. Each request uses your{" "}
             <Link href="/credits" className="underline">
-              Claude credits
+              AI credits
             </Link>
             .
           </p>
@@ -152,11 +152,11 @@ export function AnthropicKey() {
         <ModelPicker
           name="claude-model"
           path="/api/settings/model"
-          title={assistantModel ? "Which Claude writes your pages" : "Which Claude to use"}
+          title={assistantModel ? "Which AI writes your pages" : "Which AI to use"}
           description={
             assistantModel
-              ? "Used when Claude designs, writes or changes a page. More capable models use more credits."
-              : "Used when Claude writes or changes your pages and when you ask Claude. More capable models use more credits."
+              ? "Used when the AI designs, writes or changes a page. More capable models use more credits."
+              : "Used when the AI writes or changes your pages and when you ask the AI. More capable models use more credits."
           }
           model={model}
           models={models}
@@ -167,8 +167,8 @@ export function AnthropicKey() {
         <ModelPicker
           name="assistant-model"
           path="/api/settings/assistant-model"
-          title="Which Claude answers in Ask Claude"
-          description="Ask Claude reads your site, plans and suggests changes; the pages themselves are still written by the Claude above. Sonnet does this well for about half the credits."
+          title="Which AI answers in Ask the AI"
+          description="Ask the AI reads your site, plans and suggests changes; the pages themselves are still written by the AI above. A lighter model does this well for about half the credits."
           model={assistantModel}
           models={models}
           onSaved={setAssistantModel}
@@ -250,7 +250,7 @@ function ModelPicker({
             {error}
           </span>
         ) : savedNote ? (
-          <span className="text-green-700 dark:text-green-400">✓ Saved. Claude uses it from the next request.</span>
+          <span className="text-green-700 dark:text-green-400">✓ Saved. The AI uses it from the next request.</span>
         ) : null}
       </p>
     </fieldset>

@@ -75,11 +75,11 @@ const PHASES = [
 const STATUS: Record<Status, [string, string]> = {
   ask: ["Will ask", "bg-foreground text-background"],
   later: [
-    "Claude asks later",
+    "The AI asks later",
     "bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
   ],
   skipped: [
-    "Skipped: Claude asks later",
+    "Skipped: the AI asks later",
     "bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
   ],
 };
@@ -673,7 +673,7 @@ export function SetupFlow({
           )}
           {skipped.has(group.id) && (
             <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
-              You skipped this. Answer it now, or Claude asks you later.
+              You skipped this. Answer it now, or the AI asks you later.
             </p>
           )}
           <SetupFields
@@ -1159,16 +1159,16 @@ function ReviewStep({
     <span className="text-amber-700 dark:text-amber-300">Not given</span>
   );
   const tabs = {
-    pages: ["Pages", "What Claude makes, rewrites or keeps"],
+    pages: ["Pages", "What the AI makes, rewrites or keeps"],
     profile: [
       "Site profile",
-      "knowledge/notes.md: Claude reads it before every request",
+      "knowledge/notes.md: the AI reads it before every request",
     ],
     config: [
       "Site details",
       "site.config.json: name, contact details and links",
     ],
-    request: ["Build request", "Sent to Ask Claude once your site opens"],
+    request: ["Build request", "Sent to the AI once your site opens"],
   } as const;
   const tabText = !preview
     ? ""
@@ -1186,7 +1186,7 @@ function ReviewStep({
         Check your answers
       </h2>
       <p className="mt-2 text-sm text-zinc-500">
-        Everything below is saved into your new site, then Claude builds it.
+        Everything below is saved into your new site, then the AI builds it.
       </p>
       <div className="mt-5 grid gap-2.5 text-sm">
         <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
@@ -1336,7 +1336,7 @@ function ReviewStep({
           </div>
         ) : (
           <p className="mt-1 text-sm text-zinc-500">
-            No plan yet: Claude designs your homepage and asks what else you
+            No plan yet: the AI designs your homepage and asks what else you
             need.
           </p>
         )

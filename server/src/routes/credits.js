@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { config } from "../config.js";
 import { creditsForDollars, creditsView } from "../credits.js";
-import { createPurchase, listClaudeUsage, listCreditPurchases, retryHeldFreeCredits, usageByProvider } from "../db.js";
+import { createPurchase, listClaudeUsage, listCreditPurchases, retryHeldFreeCredits, usageByPurpose } from "../db.js";
 import { requireAuth } from "../session.js";
 import { CheckoutError, checkoutStatus, startCheckout } from "../stripe.js";
 import { handle, requireJson } from "./helpers.js";
@@ -27,8 +27,9 @@ creditsRouter.get(
 
 /**
  * `?type=usage|purchases&before=<ISO date>&limit=<1-100>`, newest first. Usage comes a run per
- * item (one job or assistant answer, its credits merged and split by model), and its newest page
- * also carries `summary`: the credits used, merged and split by provider (Claude, DeepSeek, OpenAI).
+ * item (one job or assistant answer: the site and part of it, the purpose, its credits and tokens
+ * merged), and its newest page also carries `summary`: the credits used, merged and split by
+ * purpose. Owners never see which model or provider did the work (usage-history.js).
  */
 creditsRouter.get(
   "/history",
@@ -40,7 +41,7 @@ creditsRouter.get(
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 25, 1), 100);
     const [items, summary] = await Promise.all([
       list(req.user.id, { before, limit }),
-      req.query.type === "usage" && !before ? usageByProvider(req.user.id) : null,
+      req.query.type === "usage" && !before ? usageByPurpose(req.user.id) : null,
     ]);
     res.json({ items, more: items.length === limit, ...(summary && { summary }) });
   }),

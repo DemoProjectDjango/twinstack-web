@@ -125,7 +125,7 @@ export function CreditBadge() {
         aria-expanded={open}
         aria-controls={menuId}
         onClick={() => setOpen((o) => !o)}
-        title={own ? "Claude uses your own Anthropic key" : off ? "Claude isn't available yet" : `${formatCredits(credits.balance)} Claude credits left`}
+        title={own ? "The AI uses your own Anthropic key" : off ? "The AI isn't available yet" : `${formatCredits(credits.balance)} AI credits left`}
         className={`group flex items-center gap-2 rounded-full border py-1 pl-1 pr-2.5 text-sm tabular-nums shadow-sm transition-all hover:-translate-y-px hover:shadow focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 active:translate-y-0 motion-reduce:transform-none ${TONE[tone]} ${open ? "ring-2 ring-zinc-300 dark:ring-zinc-700" : ""}`}
       >
         <span className="relative grid place-items-center">
@@ -137,14 +137,14 @@ export function CreditBadge() {
         {own ? (
           <span>Own key</span>
         ) : off ? (
-          <span>Claude off</span>
+          <span>AI off</span>
         ) : (
           <span>
             {formatCredits(shownBalance)}
             <span className="hidden lg:inline"> credits</span>
           </span>
         )}
-        {credits.active && <span className="sr-only">Claude is working</span>}
+        {credits.active && <span className="sr-only">The AI is working</span>}
         <svg aria-hidden="true" viewBox="0 0 12 12" className={`size-3 opacity-60 transition-transform ${open ? "rotate-180" : ""}`}>
           <path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -157,7 +157,7 @@ export function CreditBadge() {
         >
           {own ? (
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              Claude uses your own Anthropic API key, so no credits are used. Your balance of {formatCredits(credits.balance)} credits
+              The AI uses your own Anthropic API key, so no credits are used. Your balance of {formatCredits(credits.balance)} credits
               is kept for when you remove the key in{" "}
               <Link href={CLAUDE_SETUP_HREF} onClick={() => setOpen(false)} className="underline">
                 Settings
@@ -165,7 +165,7 @@ export function CreditBadge() {
               .
             </p>
           ) : credits.source === "none" ? (
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">Claude isn&apos;t available right now. Try again later.</p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">The AI isn&apos;t available right now. Try again later.</p>
           ) : (
             <>
               <div className="flex items-center gap-4">
@@ -174,14 +174,14 @@ export function CreditBadge() {
                   <span className="absolute text-sm font-semibold tabular-nums">{Math.round(Math.min(1, remainingShare) * 100)}%</span>
                 </span>
                 <div className="min-w-0">
-                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Claude credits</p>
+                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">AI credits</p>
                   <p className="text-2xl font-semibold tabular-nums">{formatCredits(shownBalance)}</p>
                   <p className="text-xs text-zinc-500">
                     {credits.balance > 0
-                      ? "Credits left to use with Claude"
+                      ? "Credits left to use with the AI"
                       : credits.freePending
                         ? "Connect GitHub to get your free credits."
-                        : "Buy more credits to keep using Claude."}
+                        : "Buy more credits to keep using the AI."}
                   </p>
                 </div>
               </div>
@@ -203,7 +203,7 @@ export function CreditBadge() {
                 aria-valuenow={Math.max(0, credits.balance)}
               >
                 {formatCredits(credits.used)} used of {formatCredits(total)}
-                {credits.active && " · updating while Claude works"}
+                {credits.active && " · updating while the AI works"}
               </p>
               <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
                 <p className="mb-2 text-sm font-medium">Buy credits</p>

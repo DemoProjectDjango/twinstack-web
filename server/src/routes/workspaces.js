@@ -4,6 +4,8 @@ import path from "node:path";
 import express, { Router } from "express";
 import { COMMANDS, jobEnv } from "../commands.js";
 import { describeTaskSize, taskSize } from "../task-size.js";
+import { usageTarget } from "../usage-history.js";
+import { publicJobView } from "../model-words.js";
 import { listOriginalPages, prepareOriginalPage } from "../original-pages.js";
 import { DEFAULT_PAGES, MAX_PAGES, clearCopiedWebsite, copiedPageShot, copyWebsiteStep, finishCopiedWebsite, normaliseStartUrl, prepareCopiedPage, readCopiedWebsite } from "../copy-website.js";
 import { config } from "../config.js";
@@ -12,6 +14,7 @@ import { issueProxyToken } from "../claude-proxy.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeKeyFor } from "../credits.js";
 import { FastModelError, chooseSiteFastModel, fastModelForSite, siteFastModelView } from "../fast-model.js";
 import { ImageModelError, chooseSiteImageModel, siteImageModelView } from "../image-model.js";
+import { fastModelForTier, imageModelForTier, neutralFastView, neutralImageView } from "../model-tiers.js";
 import { acceptIncoming, incomingChanges } from "../github-changes.js";
 import { clashForAi, resolveForPublish, syncForPublish } from "../publish-sync.js";
 import { syncSiteTree } from "../site-tree-sync.js";
@@ -69,6 +72,7 @@ import {
   logQuote,
   logWork,
   pageAddresses,
+  frontmatter,
 } from "../site-files.js";
 import { getStaticInfo, saveStaticInfo, staticInfoSection } from "../static-info.js";
 import { getBrand, replaceHeaderLogo, saveBrand, saveBrandImage } from "../brand.js";
@@ -277,6 +281,14 @@ async function supportsTaskSize(key) {
   return script.includes("TWINSTACK_TASK_SIZE");
 }
 
+/** The title and own address of the page a command works on (`input.page`), or null. */
+async function pageFields(key, input) {
+  if (typeof input?.page !== "string") return null;
+  const { content } = await readPage(key, input.page);
+  const fields = frontmatter(content);
+  return { title: fields.title || null, url: fields.url || null };
+}
+
 workspacesRouter.post(
   "/:owner/:repo/commands/:command",
   handle(async (req, res) => {
@@ -323,7 +335,9 @@ workspacesRouter.post(
         if (first) model = firstDesignModel(model, first);
         if (claude.charged) {
           const siteId = await siteIdFor(key).catch(() => null);
-          proxy = issueProxyToken({ userId: req.user.id, siteId, command: name });
+          // What the job works on, so the owner's usage history can name the part of the site.
+          const target = usageTarget(name, input, await pageFields(key, input).catch(() => null));
+          proxy = issueProxyToken({ userId: req.user.id, siteId, command: name, target });
           // The site's own choice of the cheaper model, else the admin's.
           let fastModel = first ? null : await fastModelForSite(siteId);
           if (fastModel && command.sized) {
@@ -395,7 +409,7 @@ workspacesRouter.post(
     });
     // Claude work in a new site's first week, for the setup numbers.
     if (command.claude) siteIdFor(key).then((siteId) => noteSetupSignal(siteId, "commands"), () => {});
-    res.status(202).json({ job });
+    res.status(202).json({ job: publicJobView(job, { admin: req.user.admin }) });
   }),
 );
 
@@ -427,28 +441,43 @@ async function openSiteId(req) {
   }
 }
 
-const aiModels = async (siteId) => ({ fast: await siteFastModelView(siteId), image: await siteImageModelView(siteId) });
+// Owners see neutral choices (model-tiers.js: "Best quality", "Balanced", "Fastest and cheapest"),
+// never a model's name; admins also get the names behind them.
+const aiModels = async (siteId, user) => {
+  const admin = user?.admin === true;
+  return {
+    fast: neutralFastView(await siteFastModelView(siteId), { admin }),
+    image: neutralImageView(await siteImageModelView(siteId), { admin }),
+  };
+};
 
 workspacesRouter.get(
   "/:owner/:repo/ai-models",
-  handle(async (req, res) => res.json(await aiModels(await openSiteId(req)))),
+  handle(async (req, res) => res.json(await aiModels(await openSiteId(req), req.user))),
 );
 
+/** `{ kind: "fast" | "image", choice }`: "default" or a tier id (model-tiers.js). */
 workspacesRouter.put(
   "/:owner/:repo/ai-models",
   handle(async (req, res) => {
     const siteId = await openSiteId(req);
-    const { kind, model } = req.body ?? {};
-    if (kind !== "fast" && kind !== "image") throw new WorkspaceError("Choose which model to change.", 400);
-    if (typeof model !== "string" || !model) throw new WorkspaceError("Choose a model.", 400);
+    const { kind } = req.body ?? {};
+    // `model` is the name older pages sent the choice under.
+    const choice = req.body?.choice ?? req.body?.model;
+    if (kind !== "fast" && kind !== "image") throw new WorkspaceError("Choose which setting to change.", 400);
+    if (typeof choice !== "string" || !choice) throw new WorkspaceError("Choose one of the options.", 400);
     try {
+      const model = kind === "fast" ? fastModelForTier(choice, await siteFastModelView(siteId)) : imageModelForTier(choice, await siteImageModelView(siteId));
+      if (model === undefined) throw new WorkspaceError("Choose one of the options.", 400);
+      if (model === null) throw new WorkspaceError("That option isn't available right now. Choose another.", 400);
       if (kind === "fast") await chooseSiteFastModel(siteId, model, req.user.id);
       else await chooseSiteImageModel(siteId, model, req.user.id);
     } catch (err) {
-      if (err instanceof FastModelError || err instanceof ImageModelError) throw new WorkspaceError(err.message, 400);
+      // Their messages can name a model or a server setting: owners get plain words.
+      if (err instanceof FastModelError || err instanceof ImageModelError) throw new WorkspaceError(req.user.admin ? err.message : "That option couldn't be saved. Try again, or choose another.", 400);
       throw err;
     }
-    res.json(await aiModels(siteId));
+    res.json(await aiModels(siteId, req.user));
   }),
 );
 
@@ -619,7 +648,7 @@ workspacesRouter.post(
         env: jobEnv(null, null),
         release,
       });
-      res.status(202).json({ job });
+      res.status(202).json({ job: publicJobView(job, { admin: req.user.admin }) });
     } catch (err) {
       release();
       throw err;
@@ -964,7 +993,7 @@ workspacesRouter.post(
             release();
           }),
       });
-      res.status(202).json({ job });
+      res.status(202).json({ job: publicJobView(job, { admin: req.user.admin }) });
     } catch (err) {
       endActivity();
       release();
@@ -1274,7 +1303,7 @@ jobsRouter.get(
     const job = getJob(req.params.id, req.user.id);
     if (!job) throw new WorkspaceError("Job not found. It may have expired or the server restarted.", 404);
     const since = Number(req.query.since ?? 0);
-    res.json({ job: serializeJob(job, Number.isFinite(since) && since > 0 ? since : 0) });
+    res.json({ job: publicJobView(serializeJob(job, Number.isFinite(since) && since > 0 ? since : 0), { admin: req.user.admin }) });
   }),
 );
 
@@ -1284,6 +1313,6 @@ jobsRouter.post(
     const job = getJob(req.params.id, req.user.id);
     if (!job) throw new WorkspaceError("Job not found.", 404);
     cancelJob(job);
-    res.json({ job: serializeJob(job, Number.MAX_SAFE_INTEGER) });
+    res.json({ job: publicJobView(serializeJob(job, Number.MAX_SAFE_INTEGER), { admin: req.user.admin }) });
   }),
 );

@@ -9,29 +9,26 @@ import { api } from "@/lib/site-api";
 import { BuyCredits } from "./BuyCredits";
 import { Button, ErrorText, Notice, Segmented, Spinner } from "./site/ui";
 
-type Provider = "claude" | "deepseek" | "openai";
-
-type Tokens = { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number };
-
-/** One model's part of a run. */
-type ModelUse = Tokens & { model: string; provider: Provider; requests: number; credits: number };
-
-/** One run (a Claude command, an Ask Claude answer, a site update): its credits merged, split by model. */
+/**
+ * One run (a job, an answer from the AI, a site update) as the server describes it: which site and
+ * part of it, why, and its credits and tokens merged. The server never says which AI did the work.
+ */
 type Usage = {
   id: string;
-  kind: string;
-  command: string | null;
+  site: { name: string | null } | null;
+  part: string;
+  purpose: string;
+  pictures: number;
+  tokensIn: number;
+  tokensOut: number;
   charged: boolean;
   ownKey: boolean;
   credits: number;
-  models: ModelUse[];
   createdAt: string;
 };
 
-/** The credits used, merged (`credits`) and split by provider. */
-type UsageSummary = { credits: number; providers: Record<Provider, Tokens & { requests: number; credits: number }> };
-
-const PROVIDER_NAMES: Record<Provider, string> = { claude: "Claude", deepseek: "DeepSeek", openai: "ChatGPT" };
+/** The credits used, merged (`credits`) and split by purpose, largest first. */
+type UsageSummary = { credits: number; purposes: { purpose: string; credits: number; tokensIn: number; tokensOut: number }[] };
 
 type Purchase = {
   id: string;
@@ -61,53 +58,9 @@ const money = (cents: number, currency: string) =>
 const PAGE = 25;
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-const COMMAND_LABELS: Record<string, string> = {
-  "page-edit": "Changing a page",
-  "page-generate": "Writing a page",
-  "page-convert": "Bringing in a web page",
-  "chrome-design": "Designing the header and footer",
-  "md-edit": "Editing a file",
-  "seo-claude": "Writing search text",
-  scaffold: "Creating pages",
-  schedule: "Scheduled pages",
-};
-
-function usageLabel(u: Usage) {
-  if (u.kind === "assistant") return "Ask Claude";
-  if (u.kind === "site-update") return "Updating your site";
-  if (u.kind === "publish-combine") return "Combining changes before publishing";
-  if (u.kind === "setup") return "Setting up your site";
-  return (u.command && COMMAND_LABELS[u.command]) ?? "Claude command";
-}
-
-const MODEL_NAMES: Record<string, string> = {
-  "claude-opus-5-5": "Opus 5.5",
-  "claude-sonnet-5-5": "Sonnet 5.5",
-  "claude-fable-5-1": "Fable 5.1",
-  // Work-log summaries.
-  "claude-haiku-4-5": "Haiku 4.5",
-  // Routine page work on a site that already has a design (the server's TWINSTACK_FAST_MODEL).
-  "deepseek-flash": "DeepSeek Flash",
-  "deepseek-v4-pro": "DeepSeek V4 Pro",
-  "gpt-6-luna": "GPT-6 Luna",
-  "gpt-6.1-sol": "GPT-6.1 Sol",
-  "gpt-6-sol": "GPT-6 Sol",
-  "gpt-6-astra": "GPT-6 Astra",
-  "gpt-5.6-luna": "GPT-5.6 Luna",
-  "gpt-5.6-terra": "GPT-5.6 Terra",
-  "gpt-5.6-sol": "GPT-5.6 Sol",
-  "gpt-5.5": "GPT-5.5",
-  "gpt-5.4": "GPT-5.4",
-  "gpt-5.4-mini": "GPT-5.4 mini",
-  "gpt-5.4-nano": "GPT-5.4 nano",
-};
-
-/** A model's display name; replies name dated snapshots (claude-haiku-4-5-20251001, gpt-6-luna-2026-09-01), shown as their alias. */
-const modelName = (model: string) => MODEL_NAMES[model] ?? MODEL_NAMES[model.replace(/-\d{8}$|-\d{4}-\d{2}-\d{2}$/, "")] ?? model;
-
 const tokens = (n: number) => formatCredits(n);
 
-/** Balance, buying credits, and the history of Claude requests and purchases. */
+/** Balance, buying credits, and the history of AI work and purchases. */
 export function CreditsOverview() {
   const credits = useCredits();
   const failed = useCreditsFailed();
@@ -150,13 +103,13 @@ function Balance({ credits }: { credits: Credits }) {
       <p className="mt-1 text-4xl font-semibold tabular-nums">{formatCredits(credits.balance)}</p>
       <p className="mt-1 text-sm text-zinc-500">
         {credits.balance > 0
-          ? "Credits left. Each Claude request uses some, depending on how much it reads and writes."
+          ? "Credits left. Each request to the AI uses some, depending on how much it reads and writes."
           : credits.freePending
             ? "Connect GitHub to get your free credits."
             : credits.freeHeld
               ? `Your ${formatCredits(credits.freeCredits)} free credits are on their way: so many people joined today that they're added within a day. Buy credits to start now.`
-              : "You've used all your credits. Buy more to keep using Claude."}
-        {credits.active && " Claude is working now, so this updates every few seconds."}
+              : "You've used all your credits. Buy more to keep using the AI."}
+        {credits.active && " The AI is working now, so this updates every few seconds."}
       </p>
       <dl className="mt-6 grid grid-cols-3 gap-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
         {stats.map((s) => (
@@ -184,7 +137,7 @@ function Balance({ credits }: { credits: Credits }) {
       {credits.source === "own" && (
         <div className="mt-4">
           <Notice>
-            Claude uses your own Anthropic API key right now, so no credits are used. Remove the key in{" "}
+            The AI uses your own Anthropic API key right now, so no credits are used. Remove the key in{" "}
             <Link href={CLAUDE_SETUP_HREF} className="underline">
               Settings
             </Link>{" "}
@@ -194,7 +147,7 @@ function Balance({ credits }: { credits: Credits }) {
       )}
       {credits.source === "none" && (
         <div className="mt-4">
-          <Notice tone="warning">Claude isn&apos;t available right now. Your credits are kept for when it&apos;s back.</Notice>
+          <Notice tone="warning">The AI isn&apos;t available right now. Your credits are kept for when it&apos;s back.</Notice>
         </div>
       )}
     </section>
@@ -331,33 +284,29 @@ function HistoryList<T extends { id: string; createdAt: string }, S = never>({
 const TH = "px-3 py-2 text-left text-xs font-medium text-zinc-500";
 const TD = "px-3 py-2 align-top";
 
-const inputOf = (t: Tokens) => t.inputTokens + t.cacheReadTokens + t.cacheWriteTokens;
-
-/** The credits used, merged (one balance pays for them all) and split between Claude, DeepSeek and ChatGPT. */
+/** The credits used, merged (one balance pays for everything) and split by what the work was for. */
 function UsageSplit({ summary }: { summary: UsageSummary }) {
   const share = (credits: number) => (summary.credits > 0 ? `${Math.round((credits / summary.credits) * 100)}%` : "–");
+  // The biggest few purposes; the rest are counted in the total.
+  const top = summary.purposes.filter((p) => p.credits > 0).slice(0, 3);
   return (
     <dl className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
         <dt className="text-xs text-zinc-500">Credits used</dt>
         <dd className="text-lg font-medium tabular-nums">{formatCredits(summary.credits)}</dd>
-        <dd className="text-xs text-zinc-500">Every model, from one balance</dd>
+        <dd className="text-xs text-zinc-500">All your sites, from one balance</dd>
       </div>
-      {(Object.keys(PROVIDER_NAMES) as Provider[]).map((p) => {
-        const use = summary.providers[p];
-        if (!use) return null;
-        return (
-          <div key={p} className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
-            <dt className="text-xs text-zinc-500">{PROVIDER_NAMES[p]}</dt>
-            <dd className="text-lg font-medium tabular-nums">
-              {formatCredits(use.credits)} <span className="text-sm font-normal text-zinc-500">({share(use.credits)})</span>
-            </dd>
-            <dd className="text-xs text-zinc-500 tabular-nums">
-              {formatCredits(use.requests)} {use.requests === 1 ? "request" : "requests"} · {tokens(inputOf(use))} / {tokens(use.outputTokens)} tokens
-            </dd>
-          </div>
-        );
-      })}
+      {top.map((p) => (
+        <div key={p.purpose} className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+          <dt className="text-xs text-zinc-500">{p.purpose}</dt>
+          <dd className="text-lg font-medium tabular-nums">
+            {formatCredits(p.credits)} <span className="text-sm font-normal text-zinc-500">({share(p.credits)})</span>
+          </dd>
+          <dd className="text-xs text-zinc-500 tabular-nums">
+            {tokens(p.tokensIn)} / {tokens(p.tokensOut)} tokens
+          </dd>
+        </div>
+      ))}
     </dl>
   );
 }
@@ -370,44 +319,39 @@ function runCredits(u: Usage) {
 
 function UsageRows({ items }: { items: Usage[] }) {
   return (
-    <table className="w-full min-w-[36rem] text-sm">
+    <table className="w-full min-w-[40rem] text-sm">
       <thead className="border-b border-zinc-200 dark:border-zinc-800">
         <tr>
           <th className={TH}>When</th>
-          <th className={TH}>What</th>
+          <th className={TH}>Site and part</th>
+          <th className={TH}>What for</th>
           <th className={`${TH} text-right`}>Tokens in / out</th>
           <th className={`${TH} text-right`}>Credits</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
-        {items.map((u) => {
-          const split = u.models.length > 1;
-          return (
-            <tr key={u.id}>
-              <td className={`${TD} whitespace-nowrap text-zinc-500`}>{dateFormat.format(new Date(u.createdAt))}</td>
-              <td className={TD}>
-                {usageLabel(u)}
-                {/* The split: each model's part of this run, with its own credits when there's more than one. */}
-                {u.models.map((m) => (
-                  <span key={m.model} className="block text-xs text-zinc-500">
-                    {modelName(m.model)}
-                    {m.requests > 1 && ` · ${m.requests} requests`}
-                    {split && u.charged && ` · ${formatCredits(m.credits)} credits`}
-                  </span>
-                ))}
-              </td>
-              <td className={`${TD} whitespace-nowrap text-right tabular-nums`}>
-                {u.models.map((m) => (
-                  <span key={m.model} className={`block ${split ? "text-xs text-zinc-500" : ""}`}>
-                    {tokens(inputOf(m))} / {tokens(m.outputTokens)}
-                  </span>
-                ))}
-              </td>
-              {/* Merged: what the whole run took from the balance. */}
-              <td className={`${TD} whitespace-nowrap text-right tabular-nums`}>{runCredits(u)}</td>
-            </tr>
-          );
-        })}
+        {items.map((u) => (
+          <tr key={u.id}>
+            <td className={`${TD} whitespace-nowrap text-zinc-500`}>{dateFormat.format(new Date(u.createdAt))}</td>
+            <td className={TD}>
+              {u.part}
+              {u.site && <span className="block text-xs text-zinc-500">{u.site.name ?? "A site you removed"}</span>}
+            </td>
+            <td className={TD}>
+              {u.purpose}
+              {u.pictures > 0 && (
+                <span className="block text-xs text-zinc-500">
+                  {u.pictures} {u.pictures === 1 ? "picture" : "pictures"} made
+                </span>
+              )}
+            </td>
+            <td className={`${TD} whitespace-nowrap text-right tabular-nums`}>
+              {tokens(u.tokensIn)} / {tokens(u.tokensOut)}
+            </td>
+            {/* Merged: what the whole run took from the balance. */}
+            <td className={`${TD} whitespace-nowrap text-right tabular-nums`}>{runCredits(u)}</td>
+          </tr>
+        ))}
       </tbody>
     </table>
   );

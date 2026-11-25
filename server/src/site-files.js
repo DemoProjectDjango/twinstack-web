@@ -409,7 +409,7 @@ export async function prepareProposalPreview(key, content) {
     proposal = null;
   }
   if (!proposal || typeof proposal.file !== "string" || typeof proposal.content !== "string") {
-    throw new WorkspaceError("There's no proposal to preview. Ask Claude again.", 409);
+    throw new WorkspaceError("There's no proposal to preview. Ask the AI again.", 409);
   }
   // A header and footer proposal is built with them and shown on the homepage.
   const chrome = proposal.mode === "chrome" && proposal.file === HEADER_PARTIAL;
@@ -737,7 +737,7 @@ async function appendCommittedWorkLog(dir, entry) {
     // The oldest entries move to the archive, which is never sent to Claude.
     const moving = entries.length - LOG_KEEP;
     const archivePath = path.join(dir, WORK_LOG_ARCHIVE, `work-log-${entryDate(entry)}.md`);
-    const archive = (await readText(archivePath)) ?? "# Work log archive\n\nOlder entries from knowledge/work-log.md. Not sent to Claude.\n";
+    const archive = (await readText(archivePath)) ?? "# Work log archive\n\nOlder entries from knowledge/work-log.md. Not sent to the AI.\n";
     await fs.mkdir(path.dirname(archivePath), { recursive: true });
     await fs.writeFile(archivePath, `${archive.replace(/\n*$/, "\n")}${entries.slice(0, moving).join("\n")}\n`);
     let seen = 0;
@@ -822,12 +822,12 @@ export async function applyProposal(key, content) {
   if (typeof content !== "string" || !content.trim() || Buffer.byteLength(content) > MAX_FILE_BYTES) {
     throw new WorkspaceError("The page content is empty or too large.", 400);
   }
-  const release = acquire(key, "applying the Claude edit");
+  const release = acquire(key, "applying the AI's edit");
   try {
     const proposal = await readProposal(key);
     if (!proposal) throw new WorkspaceError("There's no preview to apply. Preview the change again.", 409);
     if (!proposalAllowed(proposal.mode, proposal.file)) {
-      throw new WorkspaceError("The preview isn't for a file Claude may edit.", 400);
+      throw new WorkspaceError("The preview isn't for a file the AI may edit.", 400);
     }
     const dir = workspaceDir(key);
     const target = inside(dir, proposal.file);

@@ -3,6 +3,7 @@ import dns from "node:dns/promises";
 import { MongoClient, ObjectId } from "mongodb";
 import { DEFAULT_ASSISTANT_MODEL, DEFAULT_MODEL, isClaudeModel, USER_MODEL_CHOICE } from "./claude-models.js";
 import { PROVIDERS, providerOf } from "./ai-providers.js";
+import { usageRunView, usageSummary } from "./usage-history.js";
 import { config } from "./config.js";
 
 // MongoDB holds everything that outlives a browser session:
@@ -1039,7 +1040,7 @@ export async function recordScopeBlock({ userId, siteId = null, where, text, rea
  * on the app's key). Charging may take the balance below zero: a request is only refused before it
  * starts. `usage` is the API's usage object.
  */
-export async function recordClaudeUsage({ userId, siteId = null, runId = null, kind, command = null, model, usage, credits = 0, charged = false }) {
+export async function recordClaudeUsage({ userId, siteId = null, runId = null, kind, command = null, target = null, model, usage, credits = 0, charged = false }) {
   // Each write is tried again on its own, so a passing database error doesn't leave a request
   // unpaid. Both are safe to repeat (there's no replica set, so no retryable writes): the charge
   // carries an id kept in `credits.chargeIds` (the last 200, never sent to the browser), and the
@@ -1061,6 +1062,8 @@ export async function recordClaudeUsage({ userId, siteId = null, runId = null, k
     runId,
     kind,
     command,
+    // What the work was for (usageTarget in usage-history.js): a page, every page..., or null.
+    target,
     model,
     inputTokens: usage.input_tokens ?? 0,
     outputTokens: usage.output_tokens ?? 0,
@@ -1236,7 +1239,9 @@ export function usageRunsPipeline(userId, { before = null, limit }) {
         startedAt: { $min: "$createdAt" },
         kind: { $first: "$kind" },
         command: { $first: "$command" },
-        requests: { $push: { model: "$model", credits: "$credits", charged: "$charged", ...Object.fromEntries(TOKEN_FIELDS.map((f) => [f, `$${f}`])) } },
+        // What the run worked on (a page, every page...); records from before it was kept have none.
+        target: { $max: "$target" },
+        requests: { $push: { model: "$model", siteId: "$siteId", credits: "$credits", charged: "$charged", ...Object.fromEntries(TOKEN_FIELDS.map((f) => [f, `$${f}`])) } },
       },
     },
     ...(before ? [{ $match: { createdAt: { $lt: before } } }] : []),
@@ -1246,58 +1251,25 @@ export function usageRunsPipeline(userId, { before = null, limit }) {
 }
 
 /**
- * One run as the credits history shows it: its credits merged (`credits`, what the account was
- * charged) and split by model (`models`, each with its provider, requests, tokens and credits).
+ * The account's usage, a run per entry, newest first, as owners see it (usageRunView in
+ * usage-history.js): the site and part of it, the purpose, credits and tokens. No model or provider.
  */
-export function usageRun({ _id, createdAt, startedAt, kind, command, requests }) {
-  const models = new Map();
-  for (const r of requests) {
-    const name = r.model ?? "unknown";
-    const entry = models.get(name) ?? { model: name, provider: providerOf(r.model), requests: 0, credits: 0, ...Object.fromEntries(TOKEN_FIELDS.map((f) => [f, 0])) };
-    entry.requests += 1;
-    if (r.charged === true) entry.credits += r.credits ?? 0;
-    for (const f of TOKEN_FIELDS) entry[f] += r[f] ?? 0;
-    models.set(name, entry);
-  }
-  const list = [...models.values()];
-  return {
-    id: String(_id),
-    createdAt,
-    startedAt,
-    kind,
-    command: command ?? null,
-    // Charged when any request ran on the app's key; "own key" when every one ran on the account's.
-    charged: requests.some((r) => r.charged === true),
-    ownKey: requests.every((r) => r.charged === false),
-    credits: list.reduce((sum, m) => sum + m.credits, 0),
-    models: list,
-  };
-}
-
-/** The account's Claude, DeepSeek and OpenAI use, a run per entry, newest first. */
 export async function listClaudeUsage(userId, page) {
   const runs = await claudeUsage().aggregate(usageRunsPipeline(userId, page)).toArray();
-  return runs.map(usageRun);
+  const siteIds = [...new Set(runs.flatMap((run) => run.requests.map((r) => r.siteId)).filter((id) => typeof id === "number"))];
+  const sites = siteIds.length ? await siteCopies().find({ _id: { $in: siteIds } }, { projection: { displayName: 1, fullName: 1 } }).toArray() : [];
+  const names = new Map(sites.map((s) => [s._id, (typeof s.displayName === "string" && s.displayName) || String(s.fullName ?? "").split("/").pop() || null]));
+  return runs.map((run) => usageRunView(run, names));
 }
 
-/** The aggregation behind usageByProvider: charged credits, requests and tokens per provider. */
-export function usageByProviderPipeline(userId) {
+/** The aggregation behind usageByPurpose: charged credits and tokens per kind and command. */
+export function usageByPurposePipeline(userId) {
   const sum = (field) => ({ $sum: { $ifNull: [`$${field}`, 0] } });
   return [
     { $match: { userId } },
     {
       $group: {
-        // The same rule as providerOf.
-        _id: {
-          $switch: {
-            branches: [
-              { case: { $regexMatch: { input: { $ifNull: ["$model", ""] }, regex: "^deepseek-" } }, then: "deepseek" },
-              { case: { $regexMatch: { input: { $ifNull: ["$model", ""] }, regex: "^(gpt-|o[0-9])" } }, then: "openai" },
-            ],
-            default: "claude",
-          },
-        },
-        requests: { $sum: 1 },
+        _id: { kind: "$kind", command: { $ifNull: ["$command", null] } },
         credits: { $sum: { $cond: [{ $eq: ["$charged", true] }, { $ifNull: ["$credits", 0] }, 0] } },
         ...Object.fromEntries(TOKEN_FIELDS.map((f) => [f, sum(f)])),
       },
@@ -1306,19 +1278,11 @@ export function usageByProviderPipeline(userId) {
 }
 
 /**
- * The account's use split by provider (`providers.claude`, `.deepseek`, `.openai`) and merged
- * (`credits`: everything charged, from the one balance they're all paid from).
+ * The account's use merged (`credits`: everything charged, from the one balance) and split by
+ * purpose ("Changing a page", "Answering your message"...), never by provider.
  */
-export async function usageByProvider(userId) {
-  const rows = await claudeUsage().aggregate(usageByProviderPipeline(userId)).toArray();
-  return usageTotals(rows);
-}
-
-export function usageTotals(rows) {
-  const empty = () => ({ requests: 0, credits: 0, ...Object.fromEntries(TOKEN_FIELDS.map((f) => [f, 0])) });
-  const providers = Object.fromEntries(PROVIDERS.map((p) => [p, empty()]));
-  for (const { _id, ...totals } of rows) Object.assign(providers[_id], totals);
-  return { credits: PROVIDERS.reduce((sum, p) => sum + providers[p].credits, 0), providers };
+export async function usageByPurpose(userId) {
+  return usageSummary(await claudeUsage().aggregate(usageByPurposePipeline(userId)).toArray());
 }
 
 /** The account's credit purchases, newest first. */

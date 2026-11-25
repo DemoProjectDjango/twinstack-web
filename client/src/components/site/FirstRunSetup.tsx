@@ -184,7 +184,7 @@ function AskSetup({ onDone }: { onDone: () => void }) {
       title="Set up your site"
       planUrl={workspacePath(owner, repo, "/setup/plan")}
       finishLabel={claude.ready ? "Build my site" : "Save my answers"}
-      finishNote={claude.ready ? "Then Claude builds your site from your answers." : undefined}
+      finishNote={claude.ready ? "Then the AI builds your site from your answers." : undefined}
       onCancel={onDone}
       onDone={async (setup) => {
         await apply(setup);

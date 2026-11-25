@@ -1,5 +1,5 @@
 import { FAST_MODELS, providerOf } from "./ai-providers.js";
-import { CLAUDE_MODELS } from "./claude-models.js";
+import { CLAUDE_MODELS, DEFAULT_MODEL } from "./claude-models.js";
 import { config } from "./config.js";
 import { CREDITS_PER_USD, listedPrices } from "./credits.js";
 import { getAppSetting, getSiteModels, setAppSetting, setSiteModel } from "./db.js";
@@ -135,6 +135,8 @@ export async function siteFastModelView(siteId) {
     active: active && { id: active, name: nameOf(active) },
     models: FAST_MODELS.map((m) => ({ ...m, available: Boolean(fastModelKey(m.id)), price: listedPrices(m.id) })),
     creditsPerDollar: CREDITS_PER_USD,
+    // The main AI's price, for what "the main AI does everything" costs.
+    mainPrice: listedPrices(DEFAULT_MODEL),
   };
 }
 
