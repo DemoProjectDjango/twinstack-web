@@ -423,6 +423,8 @@ export const COMMANDS = {
         // The owner's choice for this page alone: its own header and footer, or the site's.
         if (input?.chrome === "own") args.push("--own-chrome");
         if (input?.chrome === "site") args.push("--site-chrome");
+        // A copied website's page keeps its own breadcrumbs and sidebars (copy-website.js; copies that support it).
+        if (flag(input, "keepSidebars")) args.push("--keep-sidebars");
       }
       const direction = text(input, "instruction", "Direction", { max: 4000, multiline: true, optional: true });
       if (direction) args.push(direction);

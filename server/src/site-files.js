@@ -212,6 +212,7 @@ export async function getOverview(key) {
       pageConvertChrome: editScript.includes("--with-header"),
       // Copies whose conversion can keep a page's own header and footer on that page alone.
       pageConvertOwnChrome: editScript.includes("--own-chrome"),
+      pageConvertSidebars: editScript.includes("--keep-sidebars"),
       // Copies whose scripts/lib/content.js reads a page's frontmatter `menu` (it adds itself to the menus).
       pageMenus: ((await readText(path.join(dir, "scripts/lib/content.js"))) ?? "").includes("selfListed"),
       globalCss,

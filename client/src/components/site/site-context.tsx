@@ -130,6 +130,8 @@ export type SiteContextValue = {
   run: (command: string, input?: Record<string, unknown>) => Promise<boolean>;
   /** Starts a command and resolves with the finished job (its whole output); throws if it couldn't start. */
   runAndWait: (command: string, input?: Record<string, unknown>) => Promise<Job>;
+  /** Starts a job at a route of its own (POST …<rest> with `body`) and resolves with it once it ends. */
+  runJobAt: (rest: string, body?: Record<string, unknown>) => Promise<Job>;
   /** Takes the status a change returned; the preview then rebuilds by itself. */
   setStatus: (status: WorkspaceStatus) => void;
   /** Re-reads status and overview after a change made outside a command; the preview then rebuilds by itself. */

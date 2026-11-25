@@ -129,6 +129,8 @@ function describe(action: AssistantAction, pages: SitePage[]): { doing: string; 
         return { doing: `Removing ${named}`, item: `Remove ${named}` };
       case "check_site":
         return { doing: "Checking your site", item: "Site check" };
+      case "copy_website":
+        return { doing: `Copying ${text(meta.host) ?? "the website"}`, item: `Copy ${text(meta.host) ?? "a website"}` };
       case "create_missing_pages":
         return {
           doing: "Creating the pages in your plan",

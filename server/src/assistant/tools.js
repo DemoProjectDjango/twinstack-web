@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { addAttachmentToSite, attachmentBlock, attachmentText, ensureUploaded, readAttachment, readAttachmentMeta, saveMadeImage, sitePathFor } from "./attachments.js";
 import { SCREENS, describeView, viewPage } from "./view-page.js";
+import { DEFAULT_PAGES, MAX_PAGES, lookAtWebsite, normaliseStartUrl } from "../copy-website.js";
 import { appended, describePlan, outlineOf, planBlocks } from "./copy-blocks.js";
 import { analyticsSummary } from "../analytics.js";
 import { getBrand, saveBrand } from "../brand.js";
@@ -221,6 +222,16 @@ const TOOLS = [
     },
     ["page"],
     { kind: "read", activity: (input) => `Looking at ${input.page ?? "a page"}`, working: () => "Looking at your page" },
+  ),
+  tool(
+    "look_at_website",
+    "Opens another website (one the owner named, to copy, to take after or to beat) and shows a part of one of its pages on a computer and a phone, with its design facts: fonts, the colours covering most of it, its menu, headings and its other pages. Use it to study a design before copy_website or before proposing improvements. Costs a little, so look at what you need.",
+    {
+      url: { type: "string", description: "The page's address, e.g. https://example.com/about." },
+      from_y: { type: "integer", description: "Where to start on a long page (computer pixels), from the last result." },
+    },
+    ["url"],
+    { kind: "read", activity: (input) => `Looking at ${input.url ?? "a website"}`, working: () => "Looking at the website" },
   ),
   tool(
     "search_site",
@@ -454,6 +465,19 @@ const TOOLS = [
     },
     ["file", "attachment", "summary"],
     { kind: "change", runs: "client", title: "Bring in a page" },
+  ),
+  tool(
+    "copy_website",
+    "Proposes copying another website into this site: its pages (the start page, then those its menus lead to) come in looking the same, with their pictures, fonts and styles, and its header and footer become the site's. Takes a few minutes and some credits per page. Only after the owner has said the website is theirs or they have permission to copy it: ask with offer_choices first. Pages at the same addresses are replaced. Afterwards look at the result (view_page) and offer improvements.",
+    {
+      url: { type: "string", description: "The website's start page." },
+      max_pages: { type: "integer", description: `How many pages at most (default ${DEFAULT_PAGES}, at most ${MAX_PAGES}).` },
+      owner_confirmed_permission: { type: "boolean", description: "true only when the owner said in this conversation that the website is theirs or they may copy it." },
+      ...summaryField,
+      ...continueField,
+    },
+    ["url", "owner_confirmed_permission", "summary"],
+    { kind: "change", runs: "client", title: "Copy a website" },
   ),
   tool(
     "update_site_plan",
@@ -802,6 +826,42 @@ async function viewPageBlocks(input, key, context) {
   return { blocks };
 }
 
+/** look_at_website: the pictures go through the Files API like view_page's, the design facts as text. */
+async function lookAtWebsiteBlocks(input, key, context) {
+  const url = str(input, "url", { max: 2000 });
+  if (!context.client) throw new ToolInputError("Websites can't be looked at here.");
+  let look;
+  try {
+    look = await lookAtWebsite(url, Math.trunc(Number(input.from_y)) || 0);
+  } catch (err) {
+    throw new ToolInputError(err.message);
+  }
+  const { facts } = look;
+  const lines = [
+    `${look.url}: "${facts.title}"${facts.description ? ` — ${facts.description}` : ""}`,
+    `The page is ${facts.height} px tall on a computer; the pictures start at ${look.fromY} px.${look.fromY + 2400 < facts.height ? ` from_y ${look.fromY + 2400} shows the next part.` : ""}`,
+    `Fonts: ${facts.fonts.join(", ") || "not found"}.`,
+    `Colours covering the most of it: ${facts.colours.join(", ") || "none set"}. Buttons and links: ${facts.accents.join(", ") || "none"}.`,
+    `Menu: ${facts.menu.join(" · ") || "none found"}.`,
+    `Headings: ${facts.headings.join(" | ") || "none"}.`,
+    `Its other pages (${facts.pages.length}): ${facts.pages.slice(0, 25).join(", ")}${facts.pages.length > 25 ? "…" : ""}.`,
+  ];
+  const blocks = [{ type: "text", text: lines.join("\n") }];
+  for (const [screen, bytes] of Object.entries(look.shots)) {
+    if (!bytes) continue;
+    let uploaded;
+    try {
+      const made = await saveMadeImage(key, { name: `website-${screen}.jpg`, bytes });
+      uploaded = await ensureUploaded(context.client, key, made);
+    } catch (err) {
+      throw new ToolInputError(`The picture of the website couldn't be sent: ${err.message}`);
+    }
+    context.madeFiles?.push(uploaded.id);
+    blocks.push({ type: "text", text: screen === "phone" ? "On a phone, 390 px wide:" : "On a computer, 1280 px wide:" }, attachmentBlock(uploaded));
+  }
+  return { blocks };
+}
+
 /** A part of a long attachment. A very long line is cut around what was searched for, or at its start. */
 async function readAttachmentPart(input, key) {
   const meta = await attachmentOf(input.attachment, key);
@@ -944,6 +1004,8 @@ async function runRead(name, input, key, context) {
     }
     case "view_page":
       return viewPageBlocks(input, key, context);
+    case "look_at_website":
+      return lookAtWebsiteBlocks(input, key, context);
     case "search_site": {
       const text = str(input, "text", { max: 300 }).trim();
       if (text.length < 2) throw new ToolInputError("Search for at least 2 characters.");
@@ -1186,6 +1248,24 @@ async function prepareChange(name, input, key, context) {
     case "check_site":
       // Always carries on: a result nobody reads back is no use.
       return { ...base, continueAfter: true, input: {}, meta: {} };
+    case "copy_website": {
+      if (input?.owner_confirmed_permission !== true) {
+        throw new ToolInputError("Ask the owner first (offer_choices) whether the website is theirs or they have permission to copy it, and only then propose copy_website.");
+      }
+      let url;
+      try {
+        url = normaliseStartUrl(input?.url);
+      } catch (err) {
+        throw new ToolInputError(err.message);
+      }
+      const overview = await getOverview(key);
+      if (!overview.features.pageConvert || !overview.features.pageConvertStyles) {
+        throw new ToolInputError("This site's tools are too old to bring pages in. Ask the owner to update them (Technical log, under More tools).");
+      }
+      const maxPages = Math.min(MAX_PAGES, Math.max(1, Math.trunc(Number(input?.max_pages)) || DEFAULT_PAGES));
+      // Always carries on, so the AI looks at what came in and offers improvements.
+      return { ...base, continueAfter: true, input: { url, maxPages }, meta: { host: new URL(url).hostname.replace(/^www\./, "") } };
+    }
     case "create_missing_pages":
       return { ...base, input: {}, meta: {} };
     case "update_page_search_settings": {

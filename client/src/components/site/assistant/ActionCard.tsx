@@ -47,6 +47,7 @@ const APPLY_LABEL: Partial<Record<AssistantAction["tool"], string>> = {
   undo_changes: "Undo them",
   create_image: "Save it",
   convert_page_from_html: "Bring it in",
+  copy_website: "Copy it",
   check_site: "Check it",
   create_missing_pages: "Create them",
   write_search_text_for_all_pages: "Write it",
@@ -214,6 +215,16 @@ function ChangeDetails({ action }: { action: AssistantAction }) {
       );
     case "check_site":
       return <Rows rows={[["What it does", "Builds your site and looks for what would stop the live site from updating. It changes nothing."]]} />;
+    case "copy_website":
+      return (
+        <Rows
+          rows={[
+            ["Website", show(input.url)],
+            ["Pages, at most", show(input.maxPages)],
+            ["What it does", "Opens the website's pages and brings them into your site looking the same, with their pictures, fonts and styles. Its header and footer become your site's, and pages at the same addresses are replaced. It takes a few minutes and uses some AI credits per page. Nothing is live until you publish."],
+          ]}
+        />
+      );
     case "append_blocks_from_attachment": {
       const failed = (meta.failed ?? []) as { file: string; reason: string }[];
       return (

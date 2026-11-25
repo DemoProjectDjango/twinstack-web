@@ -6,6 +6,7 @@ import { recordScopeBlock } from "./db.js";
 export const SCOPE_RULE = `WHAT YOU HELP WITH
 - You only help with the owner's website and with using Twinstack: its pages, wording, design, pictures, menus, contact details, search results (SEO), visits, publishing and address (domain), and questions about how any of that works. Writing that goes on the site (a blog post, an About page, a menu, a price list, a translation of a page) is website work, whatever its subject: a bakery's site talks about bread, a lawyer's about law.
 - Advice that shapes the site counts too: what pages to have, what to say to visitors, a tagline, how to describe their services.
+- Other websites the owner names are website work too: looking at one they like, a competitor's or their old site, studying its design, pages or content, copying it into this site (when it's theirs or they may copy it), or building a similar or better design from it. A web address or a link to a video in a message is usually that kind of reference.
 - Anything else (homework, essays, emails or letters that aren't for the site, code for other projects, general questions, chatting) you decline in one friendly sentence and offer something you can do for their website instead. Don't do part of it.
 - When it's unclear whether a request is for the site, assume it is, or ask.`;
 
@@ -25,7 +26,7 @@ const CLASSIFIER = `You check messages sent to the assistant inside a website bu
 ${SCOPE_RULE}
 
 Decide whether the NEW MESSAGE asks for website work, judged by the task, never by the subject (any subject can be written about on a website). Use the earlier conversation to read short replies.
-- in: it's website work, a question about the site or the builder, a reply in the conversation, or plausibly content for the site.
+- in: it's website work, a question about the site or the builder, a reply in the conversation, plausibly content for the site, or a request to look at, copy or take after another website (a web address on its own counts).
 - out: it clearly asks for something that is not for the website (homework, a cover letter, an email to a customer, code for another project, general knowledge or chat, role-play).
 - unsure: anything else.
 When in doubt, answer in or unsure, never out.
@@ -39,6 +40,15 @@ REASON: a few words`;
  * `recent` is the conversation's last few shown entries (display entries), for context.
  */
 export async function checkScope({ text, recent = [], userId = null, siteId = null, where = "assistant", signal }) {
+  const message = typeof text === "string" ? text.trim() : "";
+  const result = await classifyScope({ text: message, recent, signal });
+  if (result.verdict !== "out") return result;
+  await recordScopeBlock({ userId, siteId, where, text: message, reason: result.reason }).catch((err) => console.error("Couldn't record a scope block:", err.message));
+  return result;
+}
+
+/** The classifier alone, recording nothing (checkScope records blocks): `{ allowed, verdict, reason }`. */
+export async function classifyScope({ text, recent = [], signal }) {
   const message = typeof text === "string" ? text.trim() : "";
   if (message.length < MIN_CHARS || !config.platformAnthropicKey) return { allowed: true, verdict: "skipped", reason: "" };
   const earlier = recent
@@ -67,9 +77,7 @@ export async function checkScope({ text, recent = [], userId = null, siteId = nu
   }
   const verdict = /VERDICT:\s*(in|out|unsure)/i.exec(reply)?.[1]?.toLowerCase() ?? "unsure";
   const reason = /REASON:\s*(.+)/i.exec(reply)?.[1]?.trim() ?? "";
-  if (verdict !== "out") return { allowed: true, verdict, reason };
-  await recordScopeBlock({ userId, siteId, where, text: message, reason }).catch((err) => console.error("Couldn't record a scope block:", err.message));
-  return { allowed: false, verdict, reason };
+  return { allowed: verdict !== "out", verdict, reason };
 }
 
 function entryText(entry) {
