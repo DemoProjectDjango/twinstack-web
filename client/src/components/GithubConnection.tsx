@@ -82,7 +82,7 @@ export function GithubConnection({ github, error, justConnected = false }: { git
           </p>
           {credits?.freePending && (
             <p className="mt-3 rounded-md bg-sky-500/10 px-3 py-2 text-sm text-sky-900 dark:text-sky-200">
-              Connecting GitHub also gives you {formatCredits(credits.freeCredits)} free Claude credits.
+              Connecting GitHub also gives you {formatCredits(credits.freeCredits)} free AI credits.
             </p>
           )}
           {/* Plain <a>: a full-page navigation to the Express OAuth route. */}

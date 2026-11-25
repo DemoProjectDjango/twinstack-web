@@ -23,8 +23,8 @@ const STEPS = [
 const FEATURES = [
   ["Pages", "Add pages, blog posts, services and products, and write them in plain text."],
   ["Design", "Upload your logo, pick colours, and arrange the menu and footer with a live preview."],
-  ["Ask Claude", "Tell Claude what you want in your own words: write a page from your notes, change a section, or fix the design."],
-  ["Bring your old site", "Upload pages saved from your old website and Claude fits them into the new one."],
+  ["Ask the AI", "Tell the AI what you want in your own words: write a page from your notes, change a section, or fix the design."],
+  ["Bring your old site", "Upload pages saved from your old website and the AI fits them into the new one."],
   ["Found on Google", "See how each page shows up in search results and when it's shared, and improve it."],
   ["You decide what goes live", "Every change waits in a preview until you press Publish, and you can undo anything you don't want first."],
 ];
@@ -44,7 +44,7 @@ const HELP = [
   },
   {
     q: "What does it cost?",
-    a: "Building and publishing your site is free, and so is GitHub, which hosts it. Claude is optional and runs on credits: every account gets 10,000 free credits when it connects GitHub, and the Credits page shows your balance and what each request used. Everything else works without Claude.",
+    a: "Building and publishing your site is free, and so is GitHub, which hosts it. The AI is optional and runs on credits: every account gets 10,000 free credits when it connects GitHub, and the Credits page shows your balance and what each request used. Everything else works without the AI.",
   },
   {
     q: "What will my web address be? Can I use my own domain?",

@@ -48,7 +48,7 @@ function saveQueue(owner: string, repo: string, files: string[]) {
 
 /** A failure no retry fixes: out of credits, or Claude or GitHub access gone. Stops the whole run. */
 class StopAll extends Error {}
-export const OUT_OF_CREDITS = /used all your Claude credits|billing_error/i;
+export const OUT_OF_CREDITS = /used all your (?:Claude |AI )?credits|billing_error/i;
 
 /** What the conversion said went wrong: its "Refused to write" list when there is one, else its last lines. */
 export function reasonOf(output: string) {
@@ -152,7 +152,7 @@ export function OriginalPages() {
       throw err;
     }
     if (job.status === "succeeded") return;
-    if (OUT_OF_CREDITS.test(job.output)) throw new StopAll("You've used all your Claude credits. Buy more credits, then bring in the rest.");
+    if (OUT_OF_CREDITS.test(job.output)) throw new StopAll("You've used all your credits. Buy more credits, then bring in the rest.");
     throw new Error(reasonOf(job.output));
   }
 

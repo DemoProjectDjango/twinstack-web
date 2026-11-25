@@ -248,7 +248,7 @@ export function CreateSite({ template, login, onCreated, onCancel }: { template:
               embedded
               name={siteName.trim()}
               finishLabel="Create my site"
-              finishNote="Then your site is made, and Claude builds it from your answers."
+              finishNote="Then your site is made, and the AI builds it from your answers."
               onBack={() => setAsking(false)}
               onCancel={close}
               onDone={(setup) => create(setup)}
