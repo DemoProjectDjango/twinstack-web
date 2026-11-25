@@ -463,7 +463,10 @@
       if (scrollTimer) return;
       scrollTimer = setTimeout(function () {
         scrollTimer = null;
-        send({ type: "scroll", path: window.location.pathname, y: Math.round(window.scrollY) });
+        // The share of the page scrolled too: the editor reloads the page at another width when the
+        // owner switches between computer and phone, and the same y would be somewhere else there.
+        var room = document.documentElement.scrollHeight - window.innerHeight;
+        send({ type: "scroll", path: window.location.pathname, y: Math.round(window.scrollY), ratio: room > 0 ? Math.min(1, window.scrollY / room) : 0 });
       }, 200);
     },
     { passive: true },
@@ -482,6 +485,9 @@
       placeAsk();
     }
     else if (data.type === "go" && typeof data.path === "string" && data.path.charAt(0) === "/") window.location.replace(data.path);
+    else if (data.type === "scroll" && typeof data.ratio === "number" && data.ratio >= 0 && data.ratio <= 1) {
+      window.scrollTo(0, data.ratio * Math.max(0, document.documentElement.scrollHeight - window.innerHeight));
+    }
     else if (data.type === "scroll" && typeof data.y === "number") window.scrollTo(0, data.y);
     else if (data.type === "result" && pending[data.id]) {
       var saved = pending[data.id];
