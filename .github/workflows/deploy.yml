@@ -1,17 +1,16 @@
 # Deploys every push to master to the droplet (see UPDATING.md).
 # Lint and build run on GitHub first, so broken code never reaches the live site.
 # Then it SSHes in and runs deploy.sh, which pulls, installs, builds and restarts what changed.
+# Pull requests into master run only the lint and build ("check"), which branch
+# protection requires before a PR can merge; they never deploy.
 name: Deploy
 
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
   workflow_dispatch:
-
-# Only one deploy at a time, and never cancel one halfway through.
-concurrency:
-  group: deploy-production
-  cancel-in-progress: false
 
 jobs:
   check:
@@ -29,8 +28,13 @@ jobs:
 
   deploy:
     needs: check
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Only one deploy at a time, and never cancel one halfway through.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     steps:
       # Secrets pasted from a Windows browser can carry CRLF line endings and stray spaces,
       # which break the key and every known_hosts line, so they're stripped here.
