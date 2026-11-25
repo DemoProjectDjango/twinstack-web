@@ -17,6 +17,10 @@ import { Button, ErrorText, Notice, Spinner } from "./ui";
 // (`previewTarget` in the context). While editing, the frame's "Ask the AI to change this section"
 // opens the AI's conversation with that request started (`ask-section`: the section's heading,
 // first words and place), for the owner to finish. The page shown is the AI's open page.
+// "Refresh preview" reloads only the frame, on the same page and scroll position. Switching between
+// computer and phone loads the page again at the new width too: a page's own script that sizes things
+// once when it loads (a slider, a carousel, a "phone or not" check) would otherwise keep the old
+// width's layout, which a real phone never shows.
 
 const SOURCE = "twinstack-preview";
 // The width "Computer" shows the site at: a common laptop screen, wide enough for desktop menus.
@@ -24,7 +28,8 @@ const DESKTOP_WIDTH = 1280;
 
 type FrameMessage =
   | { type: "ready"; path: string }
-  | { type: "scroll"; path: string; y: number }
+  // `ratio`: the share of the page scrolled (0 at the top, 1 at the end).
+  | { type: "scroll"; path: string; y: number; ratio?: number }
   | { type: "typing"; on: boolean }
   | { type: "edit"; id: number; path: string; before: string; after: string; index: number; count: number; tag?: string }
   // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y pressed in the frame while nothing is being typed: undo or redo the owner's last edit.
@@ -103,7 +108,10 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
       const ran = readySinceLoad.current;
       readySinceLoad.current = false;
       setSilent(!ran);
-      if (!ran) setFramePath("");
+      if (!ran) {
+        setFramePath("");
+        setReloading(false);
+      }
     }, 800);
   }
   // The page the frame shows (its full path, preview prefix included).
@@ -116,11 +124,35 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
   if (shownVersion !== build && !typing) setShownVersion(build);
 
   // Where the frame is (the page's path and scroll), and where a reloaded frame should go back to.
-  const place = useRef({ path: "", y: 0 });
-  const restore = useRef<{ path: string; y: number; went: boolean } | null>(null);
+  // A restore with a `ratio` scrolls to that share of the page instead of to `y`.
+  const place = useRef<{ path: string; y: number; ratio?: number }>({ path: "", y: 0 });
+  const restore = useRef<{ path: string; y: number; ratio?: number; went: boolean } | null>(null);
   useEffect(() => {
-    restore.current = place.current.path ? { ...place.current, went: false } : null;
+    restore.current = place.current.path ? { path: place.current.path, y: place.current.y, went: false } : null;
   }, [shownVersion]);
+
+  // "Refresh preview" (and a switch of width) loads a new frame: `reload` is part of its key.
+  const [reload, setReload] = useState(0);
+  const [reloading, setReloading] = useState(false);
+  function refreshFrame() {
+    restore.current = place.current.path ? { path: place.current.path, y: place.current.y, went: false } : null;
+    setTyping(false);
+    setReloading(true);
+    setReload((n) => n + 1);
+  }
+  // Computer ↔ phone: the frame's key has the width in it, so the page loads afresh at the new
+  // width. The same place on the page is a different y there, so it goes back by share of the page.
+  const device = phone ? "phone" : "computer";
+  const [shownDevice, setShownDevice] = useState(device);
+  if (shownDevice !== device) {
+    setShownDevice(device);
+    setTyping(false);
+    setReloading(true);
+  }
+  useEffect(() => {
+    const { path, ratio } = place.current;
+    restore.current = path ? { path, y: 0, ratio: ratio ?? 0, went: false } : null;
+  }, [device]);
 
   const previewUrl = status.previewUrl;
 
@@ -335,14 +367,17 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
           return;
         }
         restore.current = null;
-        const back = wanted && bare(wanted.path) === bare(data.path) ? wanted.y : 0;
-        place.current = { path: data.path, y: back };
+        setReloading(false);
+        const here = wanted && bare(wanted.path) === bare(data.path);
+        const back = here ? wanted.y : 0;
+        place.current = { path: data.path, y: back, ratio: here ? wanted.ratio : undefined };
         setFramePath(data.path);
-        if (back) post(frameRef.current, { type: "scroll", y: back });
+        if (here && wanted.ratio) post(frameRef.current, { type: "scroll", ratio: wanted.ratio });
+        else if (back) post(frameRef.current, { type: "scroll", y: back });
         post(frameRef.current, { type: "mode", editing: editingRef.current });
         post(frameRef.current, { type: "scale", value: scaleRef.current });
       } else if (data.type === "scroll") {
-        place.current = { path: data.path, y: data.y };
+        place.current = { path: data.path, y: data.y, ratio: typeof data.ratio === "number" ? data.ratio : undefined };
       } else if (data.type === "typing") {
         setTyping(data.on);
       } else if (data.type === "edit") {
@@ -386,6 +421,28 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
             ? "Click any words on your site and type: Enter or clicking away saves, Esc puts it back. To change more, use \"Ask the AI to change this section\"."
             : "Links and buttons work as they do on your live site."}
         </p>
+        <Button
+          variant="ghost"
+          title="Refresh preview"
+          aria-label="Refresh preview"
+          aria-busy={reloading}
+          onClick={refreshFrame}
+          className="inline-flex items-center gap-1.5 text-zinc-600 hover:text-foreground dark:text-zinc-400 dark:hover:text-zinc-100"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            className={`size-4 ${reloading ? "animate-spin" : ""}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+            <path d="M21 3v6h-6" />
+          </svg>
+        </Button>
         <Button
           variant="ghost"
           title={history?.undoLabel ? `Undo the ${history.undoLabel} (Ctrl+Z)` : "Nothing to undo (Ctrl+Z)"}
@@ -453,7 +510,7 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
         {/* Sandboxed without allow-same-origin: the site's scripts can't act as the user on this app. */}
         <iframe
           ref={frameRef}
-          key={shownVersion}
+          key={`${shownVersion}:${device}:${reload}`}
           src={previewUrl}
           onLoad={frameLoaded}
           title="Your site"
