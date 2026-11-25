@@ -205,7 +205,8 @@ async function* toClaudeEvents(stream, model) {
 
 /**
  * Sends a Claude messages `request` (an object) to OpenAI with `apiKey`. Resolves to one of
- * `{ status, body }` (an error, as Claude's), `{ status: 200, message }` (not streamed), or
+ * `{ status, body, upstreamStatus?, detail? }` (an error, as Claude's; OpenAI's own status and words
+ * when it answered), `{ status: 200, message }` (not streamed), or
  * `{ status: 200, events }` (streamed: an async iterable of Claude stream events). `headers` holds
  * the reply headers worth passing on (retry-after).
  */
@@ -227,8 +228,10 @@ export async function sendToOpenAI(request, { apiKey, signal }) {
   const headers = retryAfter ? { "retry-after": retryAfter } : {};
   if (!upstream.ok) {
     const payload = await upstream.json().catch(() => null);
-    if (apiKey === config.openaiKey) noteProviderError("openai", upstream.status, `${payload?.error?.code ?? ""} ${payload?.error?.message ?? ""}`);
-    return { ...toError(upstream.status, payload), headers };
+    const detail = `${payload?.error?.code ?? ""} ${payload?.error?.message ?? ""}`;
+    if (apiKey === config.openaiKey) noteProviderError("openai", upstream.status, detail);
+    // OpenAI's own status and words too, for deciding on failover (ai-failover.js); never shown.
+    return { ...toError(upstream.status, payload), headers, upstreamStatus: upstream.status, detail };
   }
   if (body.stream) return { status: 200, events: toClaudeEvents(upstream.body, request.model), headers };
   return { status: 200, message: toMessage(await upstream.json(), request.model), headers };

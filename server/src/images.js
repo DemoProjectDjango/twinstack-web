@@ -1,6 +1,6 @@
 import { config } from "./config.js";
 import { CREDITS_PER_USD, listedPrices } from "./credits.js";
-import { noteProviderError } from "./provider-health.js";
+import { errorKind, noteProviderError } from "./provider-health.js";
 import { sniffImage } from "./site-files.js";
 
 // Pictures "Ask Claude" makes (create_image with a prompt): photos and illustrations for pages, from
@@ -70,16 +70,18 @@ async function errorOf(res) {
   const body = await res.json().catch(() => null);
   const message = typeof body?.error?.message === "string" ? body.error.message.slice(0, 300) : null;
   noteProviderError("openai", res.status, `${body?.error?.code ?? ""} ${message ?? ""}`);
+  // Words for the assistant, which may repeat them to the owner: no provider names or raw errors.
   if (body?.error?.code === "moderation_blocked" || /safety|moderation/i.test(message ?? "")) {
-    return new ImageError("OpenAI's safety checks refused this picture. Describe it differently, or tell the owner it can't be made.");
+    return new ImageError("The picture service's safety checks refused this picture. Describe it differently, or tell the owner it can't be made.");
   }
-  if (res.status === 429) return new ImageError("OpenAI is getting too many picture requests right now. Tell the owner to try again in a minute.");
-  if (res.status >= 500) return new ImageError("OpenAI couldn't make the picture right now. Tell the owner to try again shortly.");
-  if (res.status === 401 || res.status === 403) {
-    console.error(`OpenAI refused the image request (${res.status}): ${message}`);
-    return new ImageError("Pictures can't be made on this server right now. Draw it as SVG instead, or tell the owner.");
+  if (errorKind("openai", res.status, `${body?.error?.code ?? ""} ${message ?? ""}`) === "balance" || res.status === 401 || res.status === 403) {
+    console.error(`The image request was refused (${res.status}): ${message}`);
+    return new ImageError("Pictures can't be made right now (short maintenance). Draw it as SVG instead, or tell the owner to try again in about 10 minutes.");
   }
-  return new ImageError(`OpenAI refused the picture request: ${message ?? `status ${res.status}`}.`);
+  if (res.status === 429) return new ImageError("The picture service is getting too many requests right now. Tell the owner to try again in a minute.");
+  if (res.status >= 500) return new ImageError("The picture couldn't be made right now. Tell the owner to try again shortly.");
+  console.error(`The image request was refused (${res.status}): ${message}`);
+  return new ImageError("The picture request was refused. Describe the picture differently, or draw it as SVG instead.");
 }
 
 /**
@@ -89,7 +91,7 @@ async function errorOf(res) {
  * ImageError, with a message for Claude, when it can't be made or paid for.
  */
 export async function generateImage({ model, prompt, shape = "landscape", quality = "medium", transparent = false, beginSpend, signal }) {
-  if (!imagesAvailable() || !model) throw new ImageError("Pictures can't be made on this server (no OpenAI key). Draw it as SVG instead, or tell the owner.");
+  if (!imagesAvailable() || !model) throw new ImageError("Pictures can't be made on this server. Draw it as SVG instead, or tell the owner.");
   const size = sizeFor(model, shape);
   const guess = estimate(model, size, quality, prompt);
 
@@ -121,7 +123,7 @@ export async function generateImage({ model, prompt, shape = "landscape", qualit
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     }).catch((err) => {
       if (signal?.aborted) throw err;
-      throw new ImageError(err?.name === "TimeoutError" ? "OpenAI took too long to make the picture. Try a lower quality." : "Couldn't reach OpenAI to make the picture. Tell the owner to try again shortly.");
+      throw new ImageError(err?.name === "TimeoutError" ? "The picture took too long to make. Try a lower quality." : "The picture service couldn't be reached. Tell the owner to try again shortly.");
     });
     if (!res.ok) throw await errorOf(res);
     const reply = await res.json();
@@ -131,7 +133,7 @@ export async function generateImage({ model, prompt, shape = "landscape", qualit
     const data = reply?.data?.[0]?.b64_json;
     const bytes = typeof data === "string" ? Buffer.from(data, "base64") : null;
     const type = bytes && sniffImage(bytes);
-    if (!type || !MIME[type]) throw new ImageError("OpenAI's reply had no picture in it. Try again.");
+    if (!type || !MIME[type]) throw new ImageError("The reply had no picture in it. Try again.");
     return { bytes, extension: type, mime: MIME[type], size, model: answered };
   } finally {
     // Nothing is charged when no image was made (usage stays null).

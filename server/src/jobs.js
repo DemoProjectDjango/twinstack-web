@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { availableParallelism } from "node:os";
+import { neutralText } from "./ai-errors.js";
 
 // In-memory job runner. A job is a sequence of processes run in a workspace;
 // the browser polls for output by offset. Jobs don't survive a server restart.
@@ -99,6 +100,39 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000).unref();
 
+// A provider's error never reaches a job's log as it came back (status codes, raw JSON, provider
+// names): every line goes through neutralText (ai-errors.js) on its way in. A process's output is
+// passed on in whole lines for that; a part line waits at most LINE_WAIT_MS (a progress line).
+const LINE_WAIT_MS = 400;
+
+/** What a process writes to one of its streams, appended to the job's output a whole line at a time. */
+function lineWriter(job) {
+  let partial = "";
+  let timer = null;
+  const flush = () => {
+    clearTimeout(timer);
+    timer = null;
+    if (partial) append(job, neutralText(partial));
+    partial = "";
+  };
+  return {
+    write(chunk) {
+      const text = partial + chunk;
+      const end = text.lastIndexOf("\n");
+      if (end >= 0) {
+        append(job, neutralText(text.slice(0, end + 1)));
+        partial = text.slice(end + 1);
+      } else partial = text;
+      clearTimeout(timer);
+      timer = partial ? setTimeout(flush, LINE_WAIT_MS) : null;
+    },
+    flush,
+  };
+}
+
+/** append, with any provider error put in plain words. */
+const appendSafe = (job, text) => append(job, neutralText(text));
+
 function append(job, text) {
   job.text += text;
   // Keep the tail; offsets stay absolute so pollers can tell what they missed.
@@ -125,10 +159,10 @@ async function runStep(job, step, { cwd, env }) {
     return { code, output: job.text.slice(Math.max(0, start - job.base)) };
   };
   try {
-    await step.run({ log: (text) => append(job, text.endsWith("\n") ? text : `${text}\n`), exec, cwd: step.cwd ?? cwd });
+    await step.run({ log: (text) => appendSafe(job, text.endsWith("\n") ? text : `${text}\n`), exec, cwd: step.cwd ?? cwd });
     return job.cancelled ? 1 : 0;
   } catch (err) {
-    append(job, `\n${err.message}\n`);
+    appendSafe(job, `\n${err.message}\n`);
     return 1;
   }
 }
@@ -142,13 +176,17 @@ function runProcess(job, { file, args, display, timeoutMs }, { cwd, env }) {
       append(job, `\nTimed out after ${Math.round(timeoutMs / 60000)} minutes.\n`);
       child.kill();
     }, timeoutMs);
-    child.stdout.setEncoding("utf8").on("data", (chunk) => append(job, chunk));
-    child.stderr.setEncoding("utf8").on("data", (chunk) => append(job, chunk));
+    const out = lineWriter(job);
+    const err = lineWriter(job);
+    child.stdout.setEncoding("utf8").on("data", (chunk) => out.write(chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk) => err.write(chunk));
     let settled = false;
     const finish = (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      out.flush();
+      err.flush();
       job.child = null;
       resolve(code);
     };
@@ -200,7 +238,7 @@ export function startJob({ key, userId, command, label, steps, cwd, env, release
       }
       if (exitCode === 0 && !job.cancelled && onSuccess) await onSuccess();
     } catch (err) {
-      append(job, `\n${err.message}\n`);
+      appendSafe(job, `\n${err.message}\n`);
       exitCode = exitCode || 1;
     } finally {
       givePlaceBack?.();
@@ -208,14 +246,14 @@ export function startJob({ key, userId, command, label, steps, cwd, env, release
         try {
           await onEnd({ exitCode, output: job.text });
         } catch (err) {
-          append(job, `\n${err.message}\n`);
+          appendSafe(job, `\n${err.message}\n`);
         }
       }
       // May be async (saving the work log): the job only reads as finished once it's done.
       try {
         await release();
       } catch (err) {
-        append(job, `\n${err.message}\n`);
+        appendSafe(job, `\n${err.message}\n`);
       }
       job.exitCode = exitCode;
       job.status = job.cancelled ? "cancelled" : exitCode === 0 ? "succeeded" : "failed";
