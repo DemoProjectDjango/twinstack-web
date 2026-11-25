@@ -49,6 +49,42 @@ const SECTIONS = [
 
 const MAX_BYTES = 256 * 1024;
 
+// Old web addresses (content/data/redirects.json) always have the same three fields, whatever the
+// file holds: an old address, a new one and whether it's on. Older files carry an HTTP "status"
+// (301…) instead, which owners don't understand and GitHub Pages never sends: such a rule reads as
+// active, and saving writes the three fields. The template's build makes a page at each active old
+// address that sends visitors on (GitHub Pages ignores a _redirects file). The fixed shape also lets a
+// new site add its first one: its file starts as an empty list, which said nothing about its items.
+const REDIRECT_SHAPE = [{ from: "", to: "", active: true }];
+const MAX_REDIRECTS = 500;
+
+/** The redirects as the screen shows them: { from, to, active } each. */
+function redirectsView(data) {
+  return (Array.isArray(data) ? data : []).filter(isObject).map((rule) => ({ from: String(rule.from ?? ""), to: String(rule.to ?? ""), active: rule.active !== false }));
+}
+
+/** What's wrong with a new list of redirects, in words, or null. */
+function redirectsError(next) {
+  if (!Array.isArray(next)) return "The old web addresses must be a list.";
+  if (next.length > MAX_REDIRECTS) return `Add at most ${MAX_REDIRECTS} old web addresses.`;
+  const seen = new Set();
+  for (const [i, rule] of next.entries()) {
+    const line = `Line ${i + 1}`;
+    if (!isObject(rule)) return `${line} needs an old address and a new one.`;
+    for (const key of Object.keys(rule)) if (!["from", "to", "active"].includes(key)) return `${line}: "${key}" isn't a field this file has.`;
+    const from = typeof rule.from === "string" ? rule.from.trim() : null;
+    const to = typeof rule.to === "string" ? rule.to.trim() : null;
+    if (!from || !/^\/[^\s?#"'<>]*$/.test(from) || from.split("/").includes("..")) return `${line}: the old address must start with / (like /old-page.html), without spaces.`;
+    if (from === "/") return `${line}: the homepage can't be sent somewhere else.`;
+    if (!to || !(/^\/[^\s"'<>]*$/.test(to) || /^https?:\/\/[^\s"'<>]+$/i.test(to))) return `${line}: the new address must start with / or https://.`;
+    if (to === from) return `${line} sends the address to itself.`;
+    if (rule.active !== undefined && typeof rule.active !== "boolean") return `${line}: Active must be yes or no.`;
+    if (seen.has(from)) return `${line}: ${from} is listed twice.`;
+    seen.add(from);
+  }
+  return null;
+}
+
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
 function pick(data, keys) {
@@ -132,8 +168,8 @@ export async function getStaticInfo(key) {
       label: section.label,
       file: section.file,
       description: section.description,
-      data: pick(data, section.keys),
-      shape: shapeOf(section, pick(data, section.keys)),
+      data: section.id === "redirects" ? redirectsView(data) : pick(data, section.keys),
+      shape: section.id === "redirects" ? REDIRECT_SHAPE : shapeOf(section, pick(data, section.keys)),
     });
   }
   return { sections };
@@ -155,6 +191,7 @@ function parsedData(next) {
 
 /** What's wrong with `next` as a section's data, in words, or null. A top-level error has no field name. */
 function sectionError(section, data, next) {
+  if (section.id === "redirects") return redirectsError(next);
   const error = shapeError(shapeOf(section, pick(data, section.keys)), next, "");
   return error ? error.replace(/^: /, "").replace(/^ must/, "The data must") : null;
 }
@@ -210,7 +247,10 @@ export async function saveStaticInfo(key, id, value) {
     if (error) throw new WorkspaceError(error, 400);
 
     // Only the picked keys change; everything else (and key order) is kept.
-    const merged = section.keys ? Object.fromEntries(Object.entries(data).map(([k, v]) => [k, section.keys.includes(k) && k in next ? next[k] : v])) : next;
+    const merged =
+      section.id === "redirects"
+        ? next.map((rule) => ({ from: rule.from.trim(), to: rule.to.trim(), active: rule.active !== false }))
+        : section.keys ? Object.fromEntries(Object.entries(data).map(([k, v]) => [k, section.keys.includes(k) && k in next ? next[k] : v])) : next;
     const newline = text.includes("\r\n") ? "\r\n" : "\n";
     const output = `${JSON.stringify(merged, null, 2)}\n`.replace(/\n/g, newline);
     if (Buffer.byteLength(output) > MAX_BYTES) throw new WorkspaceError("That's too much data for one file.", 400);

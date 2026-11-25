@@ -27,6 +27,12 @@ const IDS = new Set(CLAUDE_MODELS.map((m) => m.id));
 export const isClaudeModel = (id) => typeof id === "string" && IDS.has(id);
 
 // ASSISTANT_MODEL (server env) changes the default for accounts that haven't chosen one.
+// Whether owners choose the Claude models themselves (Settings → Claude). Off since Nov 24: the
+// models are set here on the server (DEFAULT_MODEL, DEFAULT_ASSISTANT_MODEL, or the ASSISTANT_MODEL /
+// ASSISTANT_CHAT_MODEL environment variables), any stored choice is ignored, and the settings API
+// neither offers nor accepts one. Turning it back on restores both pickers.
+export const USER_MODEL_CHOICE = false;
+
 export const DEFAULT_MODEL = isClaudeModel(process.env.ASSISTANT_MODEL) ? process.env.ASSISTANT_MODEL : "claude-opus-5-5";
 
 // The "Ask Claude" assistant has its own choice (users.assistantModel), because it mostly reads the

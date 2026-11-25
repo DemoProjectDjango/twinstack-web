@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, isHomePage, workspacePath, type WorkspaceStatus } from "@/lib/site-api";
 import { useAssistant } from "./assistant/AssistantProvider";
 import { noteFeature } from "./FeatureGuide";
@@ -26,7 +26,21 @@ type FrameMessage =
   | { type: "ready"; path: string }
   | { type: "scroll"; path: string; y: number }
   | { type: "typing"; on: boolean }
-  | { type: "edit"; id: number; path: string; before: string; after: string; index: number; count: number }
+  | { type: "edit"; id: number; path: string; before: string; after: string; index: number; count: number; tag?: string }
+  // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y pressed in the frame while nothing is being typed: undo or redo the owner's last edit.
+  | { type: "history"; direction: "undo" | "redo" }
+  // The style bar (bold/italic/underline on picked words, alignment or colour): POST …/pages/style, no AI.
+  | {
+      type: "style";
+      id: number;
+      path: string;
+      text: string;
+      index: number;
+      count: number;
+      tag: string;
+      selection: { start: number; end: number } | null;
+      style: { kind: "bold" | "italic" | "underline" | "align" | "color"; value?: string };
+    }
   | { type: "not-editable" }
   | { type: "ask-section"; path: string; heading: string; start: string; position: number; count: number };
 
@@ -70,6 +84,9 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
   const [editing, setEditing] = useState(true);
   const [typing, setTyping] = useState(false);
   const [note, setNote] = useState<Note | null>(null);
+  // Undo and redo of the owner's own edits here (server/src/undo-history.js), by button or Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y.
+  const [history, setHistory] = useState<{ canUndo: boolean; canRedo: boolean; undoLabel: string | null; redoLabel: string | null } | null>(null);
+  const stepping = useRef(false);
   // The frame's script says "ready" before the page's load event. A load without it means the script
   // never ran: the page is broken (a tag never closed hides the rest of it, the script included), so
   // editing can't work there and the owner is told instead of clicks doing nothing.
@@ -195,6 +212,60 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, base]);
 
+  const loadHistory = useCallback(() => {
+    api<{ history: NonNullable<typeof history> }>(workspacePath(owner, repo, "/pages/history"))
+      .then((data) => setHistory(data.history))
+      .catch(() => {});
+  }, [owner, repo]);
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory, version]);
+
+  const stepHistory = useCallback(
+    async (direction: "undo" | "redo") => {
+      if (stepping.current) return;
+      stepping.current = true;
+      setNote({ tone: "saving" });
+      try {
+        const result = await api<{ label: string; history: NonNullable<typeof history>; status: WorkspaceStatus }>(workspacePath(owner, repo, `/pages/${direction}`), { method: "POST", body: {} });
+        setHistory(result.history);
+        setStatus(result.status);
+        setNote({ tone: "saved", text: `${direction === "undo" ? "Undid" : "Redid"} the ${result.label}. The preview updates by itself.` });
+      } catch (err) {
+        setNote({ tone: "error", error: err });
+        loadHistory();
+      } finally {
+        stepping.current = false;
+      }
+    },
+    [owner, repo, setStatus, loadHistory],
+  );
+
+  // The frame's messages are handled in an effect set up once per preview: it reaches the latest through this.
+  const stepHistoryRef = useRef(stepHistory);
+  useEffect(() => {
+    stepHistoryRef.current = stepHistory;
+  }, [stepHistory]);
+
+  // Ctrl+Z (Cmd+Z on a Mac) undoes, Ctrl+Shift+Z or Ctrl+Y redoes, while the editor itself has the
+  // keyboard (not a box being typed in, which keeps its own undo). The frame sends the same keys.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey;
+      if (!mod || event.altKey) return;
+      const key = event.key.toLowerCase();
+      const direction = key === "z" ? (event.shiftKey ? "redo" : "undo") : key === "y" ? "redo" : null;
+      if (!direction) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(input|textarea|select)$/i.test(el.tagName))) return;
+      if (el?.closest?.("dialog[open]")) return;
+      event.preventDefault();
+      void stepHistory(direction);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [stepHistory]);
+
   useEffect(() => {
     if (!previewUrl) return;
 
@@ -209,16 +280,40 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
       try {
         const result = await api<SaveResult>(workspacePath(owner, repo, "/pages/text"), {
           method: "POST",
-          body: { address, before: message.before, after: message.after, index: message.index, count: message.count },
+          body: { address, before: message.before, after: message.after, index: message.index, count: message.count, tag: message.tag },
         });
         post(frameRef.current, { type: "result", id: message.id, ok: true });
         if (result.file) {
           setStatus(result.status);
           setNote({ tone: "saved", text: savedText(result) });
           noteFeature("edit-text");
+          loadHistory();
         } else {
           setNote(null);
         }
+      } catch (err) {
+        post(frameRef.current, { type: "result", id: message.id, ok: false });
+        setNote({ tone: "error", error: err });
+      }
+    }
+
+    async function saveStyle(message: Extract<FrameMessage, { type: "style" }>) {
+      if (message.path !== base && !message.path.startsWith(`${base}/`)) {
+        post(frameRef.current, { type: "result", id: message.id, ok: false });
+        return;
+      }
+      const address = message.path.slice(base.length) || "/";
+      setNote({ tone: "saving" });
+      try {
+        const result = await api<{ file: string; status: WorkspaceStatus }>(workspacePath(owner, repo, "/pages/style"), {
+          method: "POST",
+          body: { address, text: message.text, index: message.index, count: message.count, tag: message.tag, selection: message.selection, style: message.style },
+        });
+        post(frameRef.current, { type: "result", id: message.id, ok: true });
+        setStatus(result.status);
+        setNote({ tone: "saved", text: "Saved. The preview updates by itself, and it goes live when you publish." });
+        loadHistory();
+        noteFeature("edit-text");
       } catch (err) {
         post(frameRef.current, { type: "result", id: message.id, ok: false });
         setNote({ tone: "error", error: err });
@@ -252,6 +347,10 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
         setTyping(data.on);
       } else if (data.type === "edit") {
         if (editingRef.current) void save(data);
+      } else if (data.type === "style") {
+        if (editingRef.current) void saveStyle(data);
+      } else if (data.type === "history") {
+        void stepHistoryRef.current(data.direction);
       } else if (data.type === "ask-section") {
         askAbout.current(data);
         noteFeature("ask-section");
@@ -261,7 +360,7 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [owner, repo, previewUrl, base, setStatus]);
+  }, [owner, repo, previewUrl, base, setStatus, loadHistory]);
 
   if (!previewUrl) return null;
   // Text the server couldn't place (the design's own words, text in two places…): the AI can still change it.
@@ -287,6 +386,22 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
             ? "Click any words on your site and type: Enter or clicking away saves, Esc puts it back. To change more, use \"Ask the AI to change this section\"."
             : "Links and buttons work as they do on your live site."}
         </p>
+        <Button
+          variant="ghost"
+          title={history?.undoLabel ? `Undo the ${history.undoLabel} (Ctrl+Z)` : "Nothing to undo (Ctrl+Z)"}
+          disabled={!history?.canUndo}
+          onClick={() => void stepHistory("undo")}
+        >
+          ↶ Undo
+        </Button>
+        <Button
+          variant="ghost"
+          title={history?.redoLabel ? `Redo the ${history.redoLabel} (Ctrl+Shift+Z)` : "Nothing to redo (Ctrl+Shift+Z)"}
+          disabled={!history?.canRedo}
+          onClick={() => void stepHistory("redo")}
+        >
+          ↷ Redo
+        </Button>
         <Button
           variant="ghost"
           data-tour="try-links"

@@ -83,7 +83,6 @@ export const STEP_DEMOS: Record<string, DemoKind> = {
   memory: "notes",
   styles: "code",
   models: "models",
-  tree: "plan",
   log: "log",
   publish: "changes",
   undo: "undo",

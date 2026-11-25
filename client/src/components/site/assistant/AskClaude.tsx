@@ -73,10 +73,13 @@ export function AskClaude({ placeholder, suggestions }: { placeholder?: string; 
   async function submit(value: string) {
     const message = value.trim();
     if ((!message && !uploads.ready.length) || running || uploads.uploading) return;
-    if (await send(message, uploads.ready)) {
-      setText("");
-      uploads.clear();
+    // The box clears at once, as the message shows at once; it comes back if sending fails.
+    setText("");
+    if (!(await send(message, uploads.ready))) {
+      setText(value);
+      return;
     }
+    uploads.clear();
   }
 
   return (

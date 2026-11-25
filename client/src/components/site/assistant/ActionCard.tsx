@@ -1,6 +1,8 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { COPY_PROGRESS_EVENT, type CopyProgress } from "@/lib/copy-website";
+import { api, workspacePath } from "@/lib/site-api";
 import { attachmentUrl, type AssistantAction } from "@/lib/assistant-api";
 import { LiveDiff } from "../LiveDiff";
 import { useSite } from "../site-context";
@@ -47,7 +49,7 @@ const APPLY_LABEL: Partial<Record<AssistantAction["tool"], string>> = {
   undo_changes: "Undo them",
   create_image: "Save it",
   convert_page_from_html: "Bring it in",
-  copy_website: "Copy it",
+  copy_website: "Make the prototype",
   check_site: "Check it",
   create_missing_pages: "Create them",
   write_search_text_for_all_pages: "Write it",
@@ -221,7 +223,9 @@ function ChangeDetails({ action }: { action: AssistantAction }) {
           rows={[
             ["Website", show(input.url)],
             ["Pages, at most", show(input.maxPages)],
-            ["What it does", "Opens the website's pages and brings them into your site looking the same, with their pictures, fonts and styles. Its header and footer become your site's, and pages at the same addresses are replaced. It takes a few minutes and uses some AI credits per page. Nothing is live until you publish."],
+            ["Design", input.mode === "upgrade" ? "Copied, then upgraded" : "Same as the original"],
+            ...(input.mode === "upgrade" && Array.isArray(input.upgrades) ? ([["Upgrades", (input.upgrades as string[]).join("; ")]] as [string, ReactNode][]) : []),
+            ["What it does", "First a prototype: the pages it will build, pictured here (no credits). Build it brings them into your site looking the same, with their pictures, fonts and styles; its header and footer become your site's, and pages at the same addresses are replaced. Building uses some AI credits per page. Nothing is live until you publish."],
           ]}
         />
       );
@@ -357,6 +361,99 @@ function StatusBadge({ action, busy }: { action: AssistantAction; busy: boolean 
   return <span className={`rounded-full border px-2 py-0.5 text-xs ${tone}`}>{label}</span>;
 }
 
+type CopiedPage = { id: string; url: string; address: string; title: string | null; shots: string[]; broughtIn: boolean; chromeSource: boolean; replaces?: boolean };
+
+/**
+ * A copied website's prototype (copy_website, "ready"): every page it will build, pictured on a
+ * computer or a phone, with the design the owner chose and the upgrades planned. Nothing is in the
+ * site yet; "Build it" builds it. While it builds, the progress shows here.
+ */
+function CopyPrototype({ action, building }: { action: AssistantAction; building: boolean }) {
+  const { owner, repo, version } = useSite();
+  const [copy, setCopy] = useState<{ host: string; url: string; pages: CopiedPage[]; skipped: { url: string; reason: string }[] } | null>(null);
+  const [screen, setScreen] = useState<"computer" | "phone">("computer");
+  const [progress, setProgress] = useState<CopyProgress | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api<{ copy: typeof copy }>(workspacePath(owner, repo, "/copy-website"))
+      .then((data) => !cancelled && setCopy(data.copy))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [owner, repo, version, action.status]);
+
+  useEffect(() => {
+    const onProgress = (event: Event) => setProgress((event as CustomEvent<CopyProgress>).detail);
+    window.addEventListener(COPY_PROGRESS_EVENT, onProgress);
+    return () => window.removeEventListener(COPY_PROGRESS_EVENT, onProgress);
+  }, []);
+
+  if (!copy) return null;
+  const upgrade = action.meta.mode === "upgrade";
+  const upgrades = (action.meta.upgrades as string[] | undefined) ?? [];
+  return (
+    <div className="mt-2 space-y-2 rounded-md border border-sky-200 bg-sky-50/50 p-2 dark:border-sky-900 dark:bg-sky-950/20">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-sky-800 dark:text-sky-300">Prototype</span>
+        <Badge>{upgrade ? "Copied, then upgraded" : "Same as the original"}</Badge>
+        <span className="ml-auto inline-flex overflow-hidden rounded border border-zinc-300 text-xs dark:border-zinc-700">
+          {(["computer", "phone"] as const).map((s) => (
+            <button key={s} type="button" onClick={() => setScreen(s)} className={`px-2 py-0.5 ${screen === s ? "bg-foreground text-background" : ""}`}>
+              {s === "computer" ? "Computer" : "Phone"}
+            </button>
+          ))}
+        </span>
+      </div>
+      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+        {copy.pages.length} {copy.pages.length === 1 ? "page" : "pages"} of {copy.host} {action.status === "applied" ? "were built into your site." : "will be built into your site, looking like this. Nothing is added until you press Build it."}
+      </p>
+      <ul className={`grid gap-2 ${screen === "computer" ? "grid-cols-2" : "grid-cols-3"}`}>
+        {copy.pages.map((page) => {
+          const src = workspacePath(owner, repo, `/copy-website/shots/${page.id}/${page.shots.includes(screen) ? screen : "computer"}`);
+          return (
+            <li key={page.id} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+              <a href={src} target="_blank" rel="noreferrer" title="Open the full picture">
+                {/* A private workspace picture: next/image adds nothing here. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={src} alt={`${page.title ?? page.address}, on a ${screen}`} loading="lazy" className={`w-full object-cover object-top ${screen === "computer" ? "h-28" : "h-40"}`} />
+              </a>
+              <div className="px-1.5 py-1">
+                <span className="block truncate text-xs font-medium">{page.title ?? page.address}</span>
+                <span className="block truncate text-[11px] text-zinc-500">
+                  {page.address}
+                  {page.chromeSource ? " · its header and footer" : ""}
+                  {page.broughtIn ? " · built" : ""}
+                </span>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {upgrade && upgrades.length > 0 && (
+        <div className="text-xs">
+          <span className="font-medium">Upgrades once it&apos;s built:</span>
+          <ul className="mt-0.5 list-disc pl-5 text-zinc-700 dark:text-zinc-300">
+            {upgrades.map((u) => (
+              <li key={u}>{u}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {copy.skipped.length > 0 && <p className="text-[11px] text-zinc-500">Left out: {copy.skipped.map((s) => s.url).join(", ")}</p>}
+      {building && progress && (
+        <p role="status" className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+          <Spinner />
+          {progress.retryPass
+            ? `Trying the pages that didn't work again in a moment (try ${progress.retryPass} of 3)…`
+            : `Building page ${Math.min(progress.done + 1, progress.total)} of ${progress.total}${progress.working ? `: ${progress.working}` : ""}. You can keep working or reload: it carries on.`}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function ActionCard({ id }: { id: string }) {
   const { actions, working, apply, retry, skip, keep, throwAway, turn, applyingAll } = useAssistant();
   const { busy: siteBusy, editFile, showSection, showOnSite, overview } = useSite();
@@ -386,6 +483,8 @@ export function ActionCard({ id }: { id: string }) {
           <DrawnImage preview={(action.meta as Record<string, unknown>).preview} markPreview={(action.meta as Record<string, unknown>).markPreview} />
         ))}
 
+      {action.tool === "copy_website" && (action.status === "ready" || action.status === "applied" || (busy && action.result)) && <CopyPrototype action={action} building={busy} />}
+
       <div className="mt-2">
         <Details summary="What exactly changes">
           <ChangeDetails action={action} />
@@ -413,7 +512,17 @@ export function ActionCard({ id }: { id: string }) {
             </Button>
           </>
         )}
-        {action.status === "ready" && !busy && (
+        {action.status === "ready" && !busy && action.tool === "copy_website" && (
+          <>
+            <Button variant="primary" className="text-xs" disabled={siteBusy} onClick={() => void keep(action)}>
+              Build it
+            </Button>
+            <Button className="text-xs" disabled={siteBusy} onClick={() => void throwAway(action)}>
+              Not now
+            </Button>
+          </>
+        )}
+        {action.status === "ready" && !busy && action.tool !== "copy_website" && (
           <>
             <Button variant="primary" className="text-xs" disabled={siteBusy} onClick={() => void keep(action)}>
               Keep this version

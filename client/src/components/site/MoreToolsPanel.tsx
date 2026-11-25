@@ -12,7 +12,6 @@ export const MORE_TOOLS: { id: SiteSection; label: string; text: string }[] = [
   { id: "seo", label: "Google & sharing", text: "How your pages look in Google and when shared, plus site-wide search settings" },
   { id: "redirects", label: "Old web addresses", text: "Send visitors from your old site's addresses to the new pages" },
   { id: "sections", label: "Homepage sections", text: "Older sites only: which sections the homepage shows, in order" },
-  { id: "tree", label: "Page plan", text: "A list of the pages your site should have" },
   { id: "schedule", label: "Planned posts", text: "Pages and posts the AI writes on the dates you choose" },
   { id: "memory", label: "AI notes about your site", text: "What the AI remembers from earlier work, and your standing notes" },
   { id: "files", label: "Files", text: "Add PDFs and other files to your site, in the folders you choose" },

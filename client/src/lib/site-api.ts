@@ -89,7 +89,9 @@ export const isHomePage = (page: SitePage) => page.url === "/" || (page.url === 
 /** site.config.json → brand: images are site paths ("/assets/img/…"), "" when not set. */
 export type Brand = { logoText: string; logo: string; logoDark: string; logoMark: string; favicon: string };
 /** The brand with data: URL previews of its images (null when missing or large); `supported` is false for copies whose templates only show the mark and name. */
-export type BrandInfo = { brand: Brand; previews: Partial<Record<"logo" | "logoDark" | "logoMark" | "favicon", string | null>>; supported: boolean };
+/** `headerLogo`: the logo a designed or copied header draws itself (its own <img>), which brand.logo doesn't change. */
+export type HeaderLogo = { src: string; alt: string; designed: "claude" | "copied"; preview: string | null; replaceable: boolean };
+export type BrandInfo = { brand: Brand; previews: Partial<Record<"logo" | "logoDark" | "logoMark" | "favicon", string | null>>; supported: boolean; headerLogo?: HeaderLogo | null };
 
 /**
  * content/data/navigation.json as the Header & footer tab edits it. Items keep any other fields

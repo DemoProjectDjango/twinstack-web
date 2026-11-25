@@ -118,7 +118,7 @@ const VIEWS: Record<StaticInfoView, { title: string; description?: string; tabs:
   redirects: {
     title: "Old web addresses",
     description: "Addresses from your old site, and the page each one should now open, so old links and search results keep working.",
-    tabs: [{ id: "redirects", label: "Old web addresses", section: "redirects", description: "", labels: { from: "Old address", to: "New address" } }],
+    tabs: [{ id: "redirects", label: "Old web addresses", section: "redirects", description: "Visitors who open an old address go to the new one. Untick Active to stop sending them, without losing the line.", labels: { from: "Old address", to: "New address", active: "Active" } }],
   },
   sections: {
     title: "Homepage sections",

@@ -56,8 +56,12 @@ async function readConfig(dir) {
   }
 }
 
-/** A data: URL of a site image for the web UI's preview, or null if it's missing or large. */
+/**
+ * What the web UI shows as an image's preview: a data: URL of a site image (null if it's missing or
+ * large), or the address itself for an image on the web (a favicon on a CDN, say).
+ */
 async function preview(dir, src) {
+  if (typeof src === "string" && /^https:\/\/[^\s"'<>]+$/i.test(src)) return src;
   if (typeof src !== "string" || !BRAND_IMAGE.test(src) || src.split("/").includes("..")) return null;
   const file = path.join(dir, src.slice(1));
   try {
@@ -76,11 +80,59 @@ async function preview(dir, src) {
  * templates predate the logo, favicon and dark-footer fields (only the mark
  * and name show there).
  */
+// A header the AI designed (data-designed="claude") or copied from an old page or website
+// (data-designed="copied") draws its own logo: an <img> in its HTML, not site.config.json's brand.
+// So the logo it shows is found there (the first image before its menu, usually a link home), and
+// "Replace" changes that image in the header and the footer instead of brand.logo, which such a
+// header never reads.
+const HEADER = "templates/partials/header.html";
+const FOOTER = "templates/partials/footer.html";
+const IMG_SRC = /<img\b[^>]*?\bsrc\s*=\s*(["'])([^"']+)\1[^>]*>/i;
+
+/** The logo a designed or copied header draws: `{ src, alt, designed }`, or null. */
+export function headerLogoOf(header) {
+  const designed = /data-designed\s*=\s*["'](claude|copied)["']/i.exec(header)?.[1] ?? null;
+  if (!designed) return null;
+  const nav = header.search(/<nav\b|<ul\b/i);
+  const img = IMG_SRC.exec(nav > 0 ? header.slice(0, nav) : header) ?? IMG_SRC.exec(header);
+  if (!img) return null;
+  const alt = /\balt\s*=\s*(["'])([^"']*)\1/i.exec(img[0])?.[2] ?? "";
+  return { src: img[2], alt, designed };
+}
+
+/** A site address or a web address for an image in a partial ("{{ site.url }}/…" and data: aren't). */
+const plainSrc = (src) => /^\/assets\/img\/[\w./-]+$/i.test(src) || /^https?:\/\/[^\s"'<>{}]+$/i.test(src);
+
+/**
+ * Puts `next` (an image under assets/img/ that exists) in place of the designed header's logo, in
+ * the header and wherever the footer uses the same image. Returns getBrand's result.
+ */
+export async function replaceHeaderLogo(key, next) {
+  if (typeof next !== "string" || !BRAND_IMAGE.test(next) || next.split("/").includes("..")) throw new WorkspaceError("Choose an image under assets/img/.", 400);
+  const release = acquire(key, "changing the logo in the header");
+  try {
+    const dir = workspaceDir(key);
+    if (!existsSync(path.join(dir, next.slice(1)))) throw new WorkspaceError(`${next} doesn't exist. Upload it again.`, 400);
+    const header = await fs.readFile(path.join(dir, HEADER), "utf8").catch(() => "");
+    const logo = headerLogoOf(header);
+    if (!logo) throw new WorkspaceError("The header doesn't draw a logo of its own.", 409);
+    if (!plainSrc(logo.src)) throw new WorkspaceError("The header's logo is set in a way this screen can't change. Ask the AI to change it.", 409);
+    const swap = (text) => text.split(`"${logo.src}"`).join(`"${next}"`).split(`'${logo.src}'`).join(`'${next}'`);
+    await fs.writeFile(path.join(dir, HEADER), swap(header));
+    const footer = await fs.readFile(path.join(dir, FOOTER), "utf8").catch(() => null);
+    if (footer !== null && footer.includes(logo.src)) await fs.writeFile(path.join(dir, FOOTER), swap(footer));
+  } finally {
+    release();
+  }
+  return getBrand(key);
+}
+
 export async function getBrand(key) {
   const dir = workspaceDir(key);
   const { data } = await readConfig(dir);
   const brand = data.brand ?? {};
-  const header = await fs.readFile(path.join(dir, "templates/partials/header.html"), "utf8").catch(() => "");
+  const header = await fs.readFile(path.join(dir, HEADER), "utf8").catch(() => "");
+  const drawn = headerLogoOf(header);
   const previews = {};
   for (const field of IMAGE_FIELDS) previews[field] = await preview(dir, brand[field]);
   return {
@@ -91,6 +143,8 @@ export async function getBrand(key) {
     previews,
     // Newer headers pick the logo for their background through nav.appearance (scripts/lib/content.js).
     supported: header.includes("site.brand.logo }}") || header.includes("nav.appearance.header.logo"),
+    // The logo a designed or copied header draws itself, with a preview and whether it can be replaced here.
+    headerLogo: drawn ? { ...drawn, preview: await preview(dir, drawn.src), replaceable: plainSrc(drawn.src) } : null,
   };
 }
 
