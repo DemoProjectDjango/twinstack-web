@@ -16,7 +16,7 @@ export const MORE_TOOLS: { id: SiteSection; label: string; text: string }[] = [
   { id: "memory", label: "AI notes about your site", text: "What the AI remembers from earlier work, and your standing notes" },
   { id: "files", label: "Files", text: "Add PDFs and other files to your site, in the folders you choose" },
   { id: "styles", label: "Custom code", text: "Google Analytics and other services' scripts, and extra styling (CSS)" },
-  { id: "models", label: "AI settings", text: "Which AI models write your pages and pictures" },
+  { id: "models", label: "AI settings", text: "How the AI balances quality and credits" },
   { id: "tools", label: "Technical log", text: "What happened when something didn't work, and site updates" },
 ];
 

@@ -13,6 +13,7 @@ import { issueProxyToken } from "../claude-proxy.js";
 import { ClaudeAccessError, beginClaudeActivity, beginSpend, claudeKeyFor } from "../credits.js";
 import { FastModelError, chooseSiteFastModel, fastModelForSite, siteFastModelView } from "../fast-model.js";
 import { ImageModelError, chooseSiteImageModel, siteImageModelView } from "../image-model.js";
+import { fastModelForTier, imageModelForTier, neutralFastView, neutralImageView } from "../model-tiers.js";
 import { acceptIncoming, incomingChanges } from "../github-changes.js";
 import { clashForAi, resolveForPublish, syncForPublish } from "../publish-sync.js";
 import { syncSiteTree } from "../site-tree-sync.js";
@@ -439,28 +440,43 @@ async function openSiteId(req) {
   }
 }
 
-const aiModels = async (siteId) => ({ fast: await siteFastModelView(siteId), image: await siteImageModelView(siteId) });
+// Owners see neutral choices (model-tiers.js: "Best quality", "Balanced", "Fastest and cheapest"),
+// never a model's name; admins also get the names behind them.
+const aiModels = async (siteId, user) => {
+  const admin = user?.admin === true;
+  return {
+    fast: neutralFastView(await siteFastModelView(siteId), { admin }),
+    image: neutralImageView(await siteImageModelView(siteId), { admin }),
+  };
+};
 
 workspacesRouter.get(
   "/:owner/:repo/ai-models",
-  handle(async (req, res) => res.json(await aiModels(await openSiteId(req)))),
+  handle(async (req, res) => res.json(await aiModels(await openSiteId(req), req.user))),
 );
 
+/** `{ kind: "fast" | "image", choice }`: "default" or a tier id (model-tiers.js). */
 workspacesRouter.put(
   "/:owner/:repo/ai-models",
   handle(async (req, res) => {
     const siteId = await openSiteId(req);
-    const { kind, model } = req.body ?? {};
-    if (kind !== "fast" && kind !== "image") throw new WorkspaceError("Choose which model to change.", 400);
-    if (typeof model !== "string" || !model) throw new WorkspaceError("Choose a model.", 400);
+    const { kind } = req.body ?? {};
+    // `model` is the name older pages sent the choice under.
+    const choice = req.body?.choice ?? req.body?.model;
+    if (kind !== "fast" && kind !== "image") throw new WorkspaceError("Choose which setting to change.", 400);
+    if (typeof choice !== "string" || !choice) throw new WorkspaceError("Choose one of the options.", 400);
     try {
+      const model = kind === "fast" ? fastModelForTier(choice, await siteFastModelView(siteId)) : imageModelForTier(choice, await siteImageModelView(siteId));
+      if (model === undefined) throw new WorkspaceError("Choose one of the options.", 400);
+      if (model === null) throw new WorkspaceError("That option isn't available right now. Choose another.", 400);
       if (kind === "fast") await chooseSiteFastModel(siteId, model, req.user.id);
       else await chooseSiteImageModel(siteId, model, req.user.id);
     } catch (err) {
-      if (err instanceof FastModelError || err instanceof ImageModelError) throw new WorkspaceError(err.message, 400);
+      // Their messages can name a model or a server setting: owners get plain words.
+      if (err instanceof FastModelError || err instanceof ImageModelError) throw new WorkspaceError(req.user.admin ? err.message : "That option couldn't be saved. Try again, or choose another.", 400);
       throw err;
     }
-    res.json(await aiModels(siteId));
+    res.json(await aiModels(siteId, req.user));
   }),
 );
 
