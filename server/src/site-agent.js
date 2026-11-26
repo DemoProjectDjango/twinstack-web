@@ -11,12 +11,16 @@ import { appKeyFor, withFailover } from "./ai-failover.js";
 import {
   AGENT_RETENTION_DAYS,
   agentCostsSince,
+  agentInsights,
   agentCreditsSince,
   agentTotals,
   deleteAgentSessions,
   findAgentSession,
   findAgentVisitor,
   forgetAgentVisitor,
+  forgetAgentVisitors,
+  deleteAgentVisitors,
+  countAgentVisitors,
   findSiteAgent,
   findSiteByAgentKey,
   getCredits,
@@ -44,6 +48,7 @@ import {
   SESSION_ID,
   SettingsError,
   VISITOR_ID,
+  ANIMATIONS,
   ICONS,
   PACES,
   applyBatch,
@@ -270,8 +275,17 @@ async function takeBatch(ctx, batch) {
 async function rememberVisitor(site, session, vid, now) {
   if (!site.agent.remember || session.memory) return;
   let visitor = await findAgentVisitor(site.siteId, vid);
+  // The owner forgot this visitor: never remembered again (the record is kept, empty, while they
+  // keep coming back), and this visit asks no more.
+  if (visitor?.forgotten) {
+    visitor.lastSeenAt = now;
+    await saveAgentVisitor(visitor, REMEMBER_DAYS);
+    session.memory = { forgotten: true, visit: 0 };
+    return;
+  }
   const previousVisitAt = visitor?.lastSeenAt ?? null;
   if (!visitor) visitor = newVisitor({ siteId: site.siteId, vid, now });
+  visitor.ref ??= visitorRef(site.siteId, vid);
   if (visitor.lastSid !== session.sid) {
     const earlier = visitor.lastSid ? await findAgentSession(site.siteId, visitor.lastSid) : null;
     if (earlier) foldVisit(visitor, earlier);
@@ -280,7 +294,17 @@ async function rememberVisitor(site, session, vid, now) {
   }
   visitor.lastSeenAt = now;
   await saveAgentVisitor(visitor, REMEMBER_DAYS);
-  session.memory = visitorMemory(visitor, previousVisitAt);
+  session.memory = { ...visitorMemory(visitor, previousVisitAt), ref: visitor.ref };
+}
+
+/** What the owner's History knows a returning visitor by: a hash of the id, never the id. */
+const visitorRef = (siteId, vid) => createHash("sha256").update(`${siteId}:${vid}`).digest("hex").slice(0, 16);
+
+/** The owner forgets one returning visitor (`ref` from History), or all of them. */
+export async function forgetAgentVisitorsFor({ siteId, userId }, ref = null) {
+  await ownedSite(siteId, userId);
+  if (ref !== null && !/^[0-9a-f]{16}$/.test(ref)) throw new WorkspaceError("Not found.", 404);
+  return { forgotten: await forgetAgentVisitors(siteId, ref) };
 }
 
 /** "Read my site again now": forgets what the agent read, re-reads the owner's copy and the published site. */
@@ -373,7 +397,7 @@ async function answerQuestion(ctx, { sid, vid, id, question, pagePath, keep }) {
   const answer = await writeAnswer(ctx, session, question, pagePath);
   if (keep) {
     session.lastSeenAt = now;
-    session.questions.push({ id, at: now, path: pagePath, question, answer: answer?.text ?? null, target: answer?.target ?? null, label: answer?.label ?? null, ...(answer?.offTopic && { offTopic: true }) });
+    session.questions.push({ id, at: now, path: pagePath, question, answer: answer?.text ?? null, target: answer?.target ?? null, label: answer?.label ?? null, ...(answer?.offTopic && { offTopic: true }), ...(answer?.unanswered && { unanswered: true }) });
     await saveAgentSession(session);
   } else if (vid && session.memory) await saveAgentSession(session);
   return answer ? { answer: { text: answer.text, target: answer.target, label: answer.label } } : UNAVAILABLE;
@@ -728,7 +752,7 @@ async function writeAnswer(ctx, session, question, pagePath) {
   const system = `${intro(site.agent)} Answer a visitor's question about this website, its business and what it offers.
 
 Reply with one JSON object and nothing else:
-{"about_site": <true when the question is about this website, its business, what it offers or how to reach it; false for anything else>, "answer": "<at most three short sentences>", "target": "<the one address from PAGES or GOALS that helps most, or \\"\\">", "label": "<button text for it, 2 to 4 words, or \\"\\">"}
+{"about_site": <true when the question is about this website, its business, what it offers or how to reach it; false for anything else>, "found": <true when PAGES, GOALS or CONTACT held the answer; false when they didn't and you had to say you're not sure>, "answer": "<at most three short sentences>", "target": "<the one address from PAGES or GOALS that helps most, or \\"\\">", "label": "<button text for it, 2 to 4 words, or \\"\\">"}
 
 Rules:
 - Answer only from PAGES, GOALS and CONTACT. When they don't say, say you're not sure and point to the page most likely to help (a contact page if there is one).
@@ -830,6 +854,7 @@ const configBlock = (agent) => ({
   ...(agent.icon && agent.icon !== DEFAULT_SETTINGS.icon && { icon: agent.icon }),
   ...(agent.icon === "image" && agent.iconImage && { iconImage: agent.iconImage }),
   ...(agent.label && { label: agent.label }),
+  ...(agent.animation && agent.animation !== DEFAULT_SETTINGS.animation && { animation: agent.animation }),
 });
 
 const CONTACT_FIELDS = ["email", "phone", "address", "hours", "whatsapp"];
@@ -912,6 +937,7 @@ const settingsOf = (agent) => ({
   icon: agent?.icon ?? DEFAULT_SETTINGS.icon,
   iconImage: agent?.iconImage ?? "",
   label: agent?.label ?? DEFAULT_SETTINGS.label,
+  animation: agent?.animation ?? DEFAULT_SETTINGS.animation,
 });
 
 /** The Site agent screen: its settings, whether it's live, the site's pages and today's spend. */
@@ -922,7 +948,7 @@ export async function agentView({ key, siteId, userId, accessToken }) {
   const { data } = await readConfig(dir).catch(() => ({ data: {} }));
   const settings = settingsOf(agent);
   const enabled = agent?.enabled === true;
-  const [supported, pages, spent, credits, model, lastActivityAt, measured, known] = await Promise.all([
+  const [supported, pages, spent, credits, model, lastActivityAt, measured, known, remembered] = await Promise.all([
     supportsAgent(dir),
     ownPages(dir, data),
     agentCreditsSince(userId, siteId, new Date(Date.now() - DAY_MS)),
@@ -931,6 +957,7 @@ export async function agentView({ key, siteId, userId, accessToken }) {
     agent?.key ? lastAgentActivity(siteId) : null,
     agentCostsSince(userId, siteId, new Date(Date.now() - 30 * DAY_MS)),
     agent?.enabled ? siteKnowledge({ siteId, agent }).catch(() => []) : [],
+    countAgentVisitors(siteId),
   ]);
   const written = data.agent;
   const costs = agentCosts(measured, model?.model ?? null, settings.reads);
@@ -948,6 +975,7 @@ export async function agentView({ key, siteId, userId, accessToken }) {
     canAnswer: Boolean(model) && (credits.balance ?? 0) > 0,
     limits: { dailyCredits: DAILY_CREDITS, suggestionsPerSession: paceOf(settings.pace).suggestionsPerSession, questionsPerSession: LIMITS.questionsPerSession },
     icons: ICONS,
+    animations: ANIMATIONS,
     iconPreview: agent?.iconImage ? await imagePreview(key, agent.iconImage).catch(() => null) : null,
     // What the agent knows of the site now: which pages, how much of each, and from where.
     knowledge: {
@@ -959,6 +987,7 @@ export async function agentView({ key, siteId, userId, accessToken }) {
     lastActivityAt,
     retentionDays: AGENT_RETENTION_DAYS,
     rememberDays: REMEMBER_DAYS,
+    rememberedVisitors: remembered,
   };
 }
 
@@ -980,6 +1009,8 @@ export async function saveAgentSettings(ctx, input) {
   }
   const knowledge = await workspaceKnowledge(dir);
   await updateSiteAgent(ctx.siteId, { ...settings, pages, ...(knowledge && { knowledge }), contact: contactOf(data), siteName: siteNameOf(data, site.fullName) });
+  // Turned off: everything remembered about visitors goes now, not when it would have expired.
+  if (site.agent?.remember && !settings.remember) await deleteAgentVisitors(ctx.siteId);
   if (site.agent?.enabled && site.agent.key) await writeConfigAgent(ctx.key, configBlock({ ...site.agent, ...settings }));
   forgetKey(site.agent?.key);
   knowledgeCache.delete(ctx.siteId);
@@ -1059,10 +1090,21 @@ export async function agentHistory({ siteId, userId }, query = {}) {
   if (to - from > MAX_HISTORY_DAYS * DAY_MS) from = new Date(to.getTime() - MAX_HISTORY_DAYS * DAY_MS);
   const before = dateOf(query.before);
   const quietBefore = new Date(now.getTime() - QUIET_MS);
-  const [totals, sessions, credits] = await Promise.all([
+  // The owner's time zone, for days in the insights.
+  let tz = "UTC";
+  if (typeof query.tz === "string" && query.tz.length <= 64) {
+    try {
+      tz = new Intl.DateTimeFormat("en", { timeZone: query.tz }).resolvedOptions().timeZone;
+    } catch {
+      // Not a time zone: UTC.
+    }
+  }
+  const [totals, sessions, credits, insights] = await Promise.all([
     agentTotals(siteId, { from, to, quietBefore }),
     listAgentSessions(siteId, { from, to, before, limit: HISTORY_PAGE + 1 }),
     agentCreditsSince(userId, siteId, from, to),
+    // Only with the first page (the same for every page of one period).
+    before ? null : agentInsights(siteId, { from, to, tz }),
   ]);
   const shown = sessions.slice(0, HISTORY_PAGE);
   return {
@@ -1077,6 +1119,7 @@ export async function agentHistory({ siteId, userId }, query = {}) {
         lastSeenAt: s.lastSeenAt,
         device: s.device ?? "Unknown",
         visit: s.memory?.visit > 1 ? s.memory.visit : null,
+        visitorRef: s.memory?.visit > 1 && s.memory.ref ? s.memory.ref : null,
         pages: (s.pages ?? []).map((p) => p.path),
         suggestions: (s.suggestions ?? []).map((x) => ({
           at: x.at,
@@ -1092,5 +1135,6 @@ export async function agentHistory({ siteId, userId }, query = {}) {
       };
     }),
     next: sessions.length > HISTORY_PAGE ? shown.at(-1).startedAt : null,
+    insights,
   };
 }

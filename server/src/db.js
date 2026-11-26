@@ -36,8 +36,11 @@ import { config } from "./config.js";
 //               asked; deleted AGENT_RETENTION_DAYS after the last activity
 //   agentVisitors    one document per returning visitor who said yes to being
 //               remembered (_id = <siteId>:<visitor id from their device>):
-//               what earlier visits showed; deleted REMEMBER_DAYS after their
-//               last visit, or at once when they say "Forget me"
+//               what earlier visits showed, and `ref` (a hash of the id, what
+//               the owner's History knows them by); deleted REMEMBER_DAYS after
+//               their last visit. When the owner forgets one, the record keeps
+//               only `forgotten: true` (so the id isn't remembered again) until
+//               it expires; turning the feature off deletes them all
 //   providerErrors   one document per refusal from Anthropic, OpenAI or
 //               DeepSeek on the app's keys (out of balance, rate limited, key
 //               refused…), kept 30 days (provider-health.js)
@@ -127,7 +130,7 @@ export async function connectDb() {
     agentSessions().createIndex({ siteId: 1, startedAt: -1 }),
     agentSessions().createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
     agentVisitors().createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
-    agentVisitors().createIndex({ siteId: 1 }),
+    agentVisitors().createIndex({ siteId: 1, ref: 1 }),
     claudeUsage().createIndex({ siteId: 1, kind: 1, createdAt: -1 }, { partialFilterExpression: { kind: "site-agent" } }),
     providerErrors().createIndex({ at: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 }),
     claudeUsage().createIndex({ charged: 1, createdAt: -1 }),
@@ -1792,7 +1795,7 @@ export async function listAgentSessions(siteId, { from, to, before = null, limit
   return agentSessions()
     .find(
       { siteId, startedAt, $or: [{ "suggestions.0": { $exists: true } }, { "questions.0": { $exists: true } }] },
-      { projection: { sid: 1, startedAt: 1, lastSeenAt: 1, device: 1, pages: 1, suggestions: 1, questions: 1, "memory.visit": 1 } },
+      { projection: { sid: 1, startedAt: 1, lastSeenAt: 1, device: 1, pages: 1, suggestions: 1, questions: 1, "memory.visit": 1, "memory.ref": 1 } },
     )
     .sort({ startedAt: -1 })
     .limit(limit)
@@ -1859,6 +1862,119 @@ export async function agentTotals(siteId, { from, to, quietBefore }) {
   return { sessions: 0, shown: 0, accepted: 0, dismissed: 0, ignored: 0, reached: 0, questions: 0, returning: 0, ...(row ? { ...row, _id: undefined } : {}) };
 }
 
+// Answers from before the agent said whether the site held the answer: its usual way of saying no.
+const NOT_FOUND_WORDS = /\b(not sure|don't know|do not know|couldn't find|could not find|isn't (on|in) (our|the|this)|no information|doesn't (say|mention))\b/i;
+
+/**
+ * What the owner learns from every visit from `from` to `to` (the History's Insights): visits and
+ * suggestions per local day (`tz`), how each kind of suggestion and each place suggested did,
+ * what visitors rested on and clicked most, what they asked (and what the site couldn't answer),
+ * and their devices.
+ */
+export async function agentInsights(siteId, { from, to, tz }) {
+  const match = { $match: { siteId, startedAt: { $gte: from, $lt: to } } };
+  const reachedScreen = { $or: [{ $gt: ["$suggestions.shownAt", null] }, { $in: ["$suggestions.outcome", ["accepted", "dismissed"]] }] };
+  const suggestionGroup = (key) => [
+    match,
+    { $unwind: "$suggestions" },
+    {
+      $group: {
+        _id: key,
+        made: { $sum: 1 },
+        shown: { $sum: { $cond: [reachedScreen, 1, 0] } },
+        accepted: { $sum: { $cond: [{ $eq: ["$suggestions.outcome", "accepted"] }, 1, 0] } },
+        dismissed: { $sum: { $cond: [{ $eq: ["$suggestions.outcome", "dismissed"] }, 1, 0] } },
+        reached: { $sum: { $cond: [{ $ne: [{ $ifNull: ["$suggestions.reachedAt", null] }, null] }, 1, 0] } },
+      },
+    },
+    { $sort: { made: -1 } },
+    { $limit: 20 },
+  ];
+  const [days, triggers, targets, interests, devices, asked] = await Promise.all([
+    agentSessions()
+      .aggregate([
+        match,
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m-%d", date: "$startedAt", timezone: tz } },
+            visits: { $sum: 1 },
+            suggestions: { $sum: { $size: { $ifNull: ["$suggestions", []] } } },
+            accepted: { $sum: { $size: { $filter: { input: { $ifNull: ["$suggestions", []] }, cond: { $eq: ["$$this.outcome", "accepted"] } } } } },
+            questions: { $sum: { $size: { $ifNull: ["$questions", []] } } },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ])
+      .toArray(),
+    agentSessions().aggregate(suggestionGroup("$suggestions.trigger")).toArray(),
+    agentSessions().aggregate(suggestionGroup("$suggestions.target")).toArray(),
+    agentSessions()
+      .aggregate([
+        match,
+        { $project: { things: { $objectToArray: { $ifNull: ["$interests", {}] } } } },
+        { $unwind: "$things" },
+        {
+          $group: {
+            _id: "$things.k",
+            label: { $last: "$things.v.label" },
+            link: { $last: "$things.v.link" },
+            visitors: { $sum: 1 },
+            hover: { $sum: { $ifNull: ["$things.v.hover", 0] } },
+            clicks: { $sum: { $ifNull: ["$things.v.clicks", 0] } },
+          },
+        },
+        { $sort: { visitors: -1, hover: -1 } },
+        { $limit: 12 },
+      ])
+      .toArray(),
+    agentSessions()
+      .aggregate([match, { $group: { _id: { $ifNull: ["$device", "Unknown"] }, visits: { $sum: 1 } } }, { $sort: { visits: -1 } }])
+      .toArray(),
+    agentSessions()
+      .aggregate([
+        match,
+        { $unwind: "$questions" },
+        { $sort: { "questions.at": -1 } },
+        { $limit: 500 },
+        { $project: { _id: 0, question: "$questions.question", answer: "$questions.answer", offTopic: "$questions.offTopic", unanswered: "$questions.unanswered", at: "$questions.at" } },
+      ])
+      .toArray(),
+  ]);
+
+  // Questions grouped by their words (case, spacing and end punctuation aside).
+  const keyOf = (q) => String(q ?? "").toLowerCase().replace(/[\s?!.]+$/g, "").replace(/\s+/g, " ").trim();
+  const grouped = new Map();
+  const unanswered = new Map();
+  let offTopic = 0;
+  for (const q of asked) {
+    if (q.offTopic) {
+      offTopic += 1;
+      continue;
+    }
+    const key = keyOf(q.question);
+    if (!key) continue;
+    const entry = grouped.get(key) ?? { question: q.question, count: 0, lastAt: q.at };
+    entry.count += 1;
+    grouped.set(key, entry);
+    const missed = q.unanswered === true || (q.unanswered === undefined && q.answer && NOT_FOUND_WORDS.test(q.answer));
+    if (missed) {
+      const gap = unanswered.get(key) ?? { question: q.question, count: 0, lastAt: q.at };
+      gap.count += 1;
+      unanswered.set(key, gap);
+    }
+  }
+  const top = (map) => [...map.values()].sort((a, b) => b.count - a.count || new Date(b.lastAt) - new Date(a.lastAt)).slice(0, 10);
+  const row = ({ _id, ...rest }) => rest;
+  return {
+    days: days.map((d) => ({ day: d._id, ...row(d) })),
+    triggers: triggers.map((t) => ({ trigger: t._id ?? "other", ...row(t) })),
+    targets: targets.filter((t) => t._id).map((t) => ({ target: t._id, ...row(t) })),
+    interests: interests.map((t) => ({ label: t.label ?? null, link: t.link ?? null, visitors: t.visitors, seconds: Math.round(t.hover / 1000), clicks: t.clicks })),
+    devices: devices.map((d) => ({ device: d._id, visits: d.visits })),
+    questions: { total: asked.length, offTopic, top: top(grouped), unanswered: top(unanswered) },
+  };
+}
+
 /** The latest activity of any visitor session on the site, or null. */
 export async function lastAgentActivity(siteId) {
   const doc = await agentSessions().find({ siteId }, { projection: { lastSeenAt: 1 } }).sort({ startedAt: -1 }).limit(1).next();
@@ -1883,12 +1999,39 @@ export async function saveAgentVisitor(visitor, days) {
   await agentVisitors().replaceOne({ _id: agentVisitorId(visitor.siteId, visitor.vid) }, { ...doc, expireAt }, { upsert: true });
 }
 
-/** "Forget me": the visitor's record, and the memory a current visit holds of it. */
+/** The site's cookie banner said no: the visitor's record, and the memory a current visit holds of it. */
 export async function forgetAgentVisitor(siteId, vid, sid) {
   await Promise.all([
     agentVisitors().deleteOne({ _id: agentVisitorId(siteId, vid) }),
     sid ? agentSessions().updateOne({ _id: agentSessionId(siteId, sid) }, { $unset: { memory: "" } }) : null,
   ]);
+}
+
+// What a forgotten visitor's record keeps: only that it was forgotten (agentVisitors above).
+const FORGOTTEN = { forgotten: true, interests: {}, pages: [], suggestions: [], questions: [], visits: 0, lastSid: null };
+
+/**
+ * The owner forgets remembered visitors: one (`ref`, from History) or all of them. What was
+ * learned is deleted, visits stop showing them as returning, and their ids aren't remembered again
+ * while they keep coming back. Returns how many were forgotten.
+ */
+export async function forgetAgentVisitors(siteId, ref = null) {
+  const match = ref ? { siteId, ref, forgotten: { $ne: true } } : { siteId, forgotten: { $ne: true } };
+  const [result] = await Promise.all([
+    agentVisitors().updateMany(match, { $set: FORGOTTEN }),
+    agentSessions().updateMany(ref ? { siteId, "memory.ref": ref } : { siteId, memory: { $exists: true } }, { $unset: { memory: "" } }),
+  ]);
+  return result.modifiedCount;
+}
+
+/** The remember feature turned off: every visitor record of the site goes, at once. */
+export async function deleteAgentVisitors(siteId) {
+  await Promise.all([agentVisitors().deleteMany({ siteId }), agentSessions().updateMany({ siteId, memory: { $exists: true } }, { $unset: { memory: "" } })]);
+}
+
+/** How many visitors the agent remembers on the site now. */
+export async function countAgentVisitors(siteId) {
+  return agentVisitors().countDocuments({ siteId, forgotten: { $ne: true } });
 }
 
 /** The site agent's requests for this site since `since`, by command (suggest, answer): how many and their credits and tokens. */

@@ -5,8 +5,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BUY_CREDITS_HREF } from "@/lib/claude";
 import { confirmModal } from "@/lib/confirm";
 import { readAsBase64 } from "@/lib/setup";
-import { api, workspacePath } from "@/lib/site-api";
-import type { AgentCost, AgentGoal, AgentHistory, AgentIcon, AgentOutcome, AgentPace, AgentSession, AgentSettings, AgentTone, AgentView } from "@/lib/site-agent";
+import { api, workspaceImageUrl, workspacePath } from "@/lib/site-api";
+import type { AgentAnimation, AgentCost, AgentGoal, AgentHistory, AgentInsights, AgentIcon, AgentOutcome, AgentPace, AgentSession, AgentSettings, AgentTone, AgentView } from "@/lib/site-agent";
 import { toast } from "@/lib/toast";
 import { useSite } from "./site-context";
 import { Button, EmptyState, ErrorText, Field, Notice, ScreenHeader, Section, Segmented, Spinner, inputClass } from "./ui";
@@ -189,7 +189,26 @@ export function SiteAgentPanel() {
           <LookForm view={view} draft={draft} setDraft={setDraft} owner={owner} repo={repo} />
           <KnowledgeForm view={view} draft={draft} setDraft={setDraft} working={working === "reread"} onReread={() => void act("reread", "/reread", "POST", {}, "Read your site again.")} />
           <PaceForm view={view} draft={draft} setDraft={setDraft} />
-          <RememberForm view={view} draft={draft} setDraft={setDraft} />
+          <RememberForm
+            view={view}
+            draft={draft}
+            setDraft={setDraft}
+            onForgetAll={async () => {
+              const ok = await confirmModal(
+                `Forget all ${number.format(view.rememberedVisitors)} remembered visitors? What the agent learned about them is deleted, and they won't be remembered again on their devices. This can't be undone.`,
+                { title: "Forget remembered visitors", confirmLabel: "Forget them", danger: true },
+              );
+              if (!ok) return;
+              try {
+                const { forgotten } = await api<{ forgotten: number }>(workspacePath(owner, repo, "/agent/visitors"), { method: "DELETE", body: {} });
+                toast.success(`Forgot ${number.format(forgotten)} ${forgotten === 1 ? "visitor" : "visitors"}.`);
+                setView(await api<AgentView>(workspacePath(owner, repo, "/agent")));
+                setHistoryTick((t) => t + 1);
+              } catch (err) {
+                setError(err);
+              }
+            }}
+          />
           <SpendingForm view={view} value={draft.dailyCredits} onChange={(dailyCredits) => setDraft({ ...draft, dailyCredits })} />
           <div
             className={`flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3 ${
@@ -428,6 +447,19 @@ const ICON_PATHS: Record<Exclude<AgentIcon, "logo" | "image">, ReactNode> = {
   heart: <path d="M12 20s-7-4.4-9-9a4.8 4.8 0 0 1 9-3 4.8 4.8 0 0 1 9 3c-2 4.6-9 9-9 9Z" />,
 };
 const ICON_NAMES: Record<AgentIcon, string> = { chat: "Chat", sparkle: "Sparkle", question: "Question", wave: "Wave", heart: "Heart", logo: "Your logo", image: "Your picture" };
+const ANIMATION_NAMES: Record<AgentAnimation, string> = { none: "None", pulse: "Pulse", bounce: "Bounce", wiggle: "Wiggle", glow: "Glow" };
+// The same animations as the template's assets/js/agent.js, for the preview.
+const ANIMATION_CSS = `
+@keyframes ts-ring{from{transform:scale(1);opacity:.55}to{transform:scale(1.7);opacity:0}}
+@keyframes ts-bounce{0%,100%{transform:translateY(0)}25%{transform:translateY(-10px)}50%{transform:translateY(0)}70%{transform:translateY(-4px)}}
+@keyframes ts-wiggle{0%,100%{transform:rotate(0)}20%{transform:rotate(-12deg)}40%{transform:rotate(10deg)}60%{transform:rotate(-6deg)}80%{transform:rotate(4deg)}}
+@keyframes ts-glow{50%{box-shadow:0 6px 20px rgba(0,0,0,.22),0 0 0 6px rgba(255,255,255,.6),0 0 26px 8px var(--ts-brand)}}
+@media (prefers-reduced-motion:no-preference){
+.ts-play-pulse::after{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--ts-brand);z-index:-1;animation:ts-ring 1.6s ease-out 3}
+.ts-play-bounce{animation:ts-bounce 1s ease 2}
+.ts-play-wiggle{animation:ts-wiggle .9s ease-in-out 2}
+.ts-play-glow{animation:ts-glow 1.4s ease-in-out 3}
+}`;
 const SWATCHES = ["#18181b", "#2563eb", "#16a34a", "#dc2626", "#9333ea", "#ea580c", "#0d9488", "#db2777"];
 
 function AgentIconSvg({ icon, className, picture }: { icon: AgentIcon; className?: string; picture?: string | null }) {
@@ -461,9 +493,33 @@ function inkFor(hex: string) {
 }
 
 function LookForm({ view, draft, setDraft, owner, repo }: { view: AgentView; draft: AgentSettings; setDraft: (d: AgentSettings) => void; owner: string; repo: string }) {
-  const [picture, setPicture] = useState<string | null>(view.iconPreview);
+  // A preview of the chosen picture: the server's small preview, else the picture itself (raster).
+  const [picture, setPicture] = useState<string | null>(
+    () => view.iconPreview ?? (/\.(png|jpe?g|gif|webp)$/i.test(view.settings.iconImage) ? workspaceImageUrl(owner, repo, view.settings.iconImage.slice(1)) : null),
+  );
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<unknown>(null);
+  // Choosing one of the site's own pictures (assets/img/ in its repository).
+  const [browsing, setBrowsing] = useState(false);
+  const [siteImages, setSiteImages] = useState<string[] | null>(null);
+  const [filter, setFilter] = useState("");
+  async function browse() {
+    setBrowsing((b) => !b);
+    if (siteImages) return;
+    try {
+      const { images } = await api<{ images: string[] }>(workspacePath(owner, repo, "/images"));
+      setSiteImages(images);
+    } catch (err) {
+      setUploadError(err);
+      setSiteImages([]);
+    }
+  }
+  function pick(image: string) {
+    setPicture(workspaceImageUrl(owner, repo, image));
+    setDraft({ ...draft, icon: "image", iconImage: `/${image}` });
+    setBrowsing(false);
+  }
+  const needle = filter.trim().toLowerCase();
   async function upload(file: File) {
     setUploadError(null);
     if (file.size > 2 * 1024 * 1024) {
@@ -486,6 +542,8 @@ function LookForm({ view, draft, setDraft, owner, repo }: { view: AgentView; dra
   }
   const colour = draft.color || "#18181b";
   const ink = inkFor(colour);
+  // Bumped to play the animation again in the preview (a new key restarts it).
+  const [playCount, setPlayCount] = useState(0);
   const left = draft.position === "left";
   return (
     <Section title="How it looks" description="The chat button and its bubbles on your site. Publish your site to show a new look to visitors.">
@@ -539,8 +597,11 @@ function LookForm({ view, draft, setDraft, owner, repo }: { view: AgentView; dra
             {draft.icon === "logo" && <p className="mt-2 text-xs text-zinc-500">Uses the square logo from Look &amp; logo. Without one, visitors see the chat icon.</p>}
             {draft.icon === "image" && (
               <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+                <Button onClick={() => void browse()} aria-expanded={browsing}>
+                  {browsing ? "Close" : "Choose from your site's files"}
+                </Button>
                 <label className="cursor-pointer rounded-md border border-zinc-300 px-3 py-1.5 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900">
-                  {uploading ? "Uploading…" : draft.iconImage ? "Choose another picture" : "Upload a picture"}
+                  {uploading ? "Uploading…" : draft.iconImage ? "Upload another picture" : "Upload a picture"}
                   <input
                     type="file"
                     accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
@@ -555,8 +616,67 @@ function LookForm({ view, draft, setDraft, owner, repo }: { view: AgentView; dra
                 </label>
                 <span className="text-xs text-zinc-500">A square picture works best: your logo, a mascot or a friendly face. It fills the round button. PNG, JPEG, WebP or SVG, up to 2 MB.</span>
                 {uploadError ? <ErrorText error={uploadError} /> : null}
+                {browsing && (
+                  <div className="w-full rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+                    {siteImages === null ? (
+                      <p className="p-2 text-zinc-500">Loading your site&apos;s pictures…</p>
+                    ) : siteImages.length === 0 ? (
+                      <p className="p-2 text-zinc-500">Your site has no pictures yet. Upload one.</p>
+                    ) : (
+                      <>
+                        {siteImages.length > 8 && (
+                          <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter pictures" className={`${inputClass} mb-2`} aria-label="Filter pictures" />
+                        )}
+                        <ul className="grid max-h-72 grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-5">
+                          {siteImages
+                            .filter((image) => !needle || image.toLowerCase().includes(needle))
+                            .map((image) => {
+                              const selected = draft.iconImage === `/${image}`;
+                              return (
+                                <li key={image}>
+                                  <button
+                                    type="button"
+                                    onClick={() => pick(image)}
+                                    aria-pressed={selected}
+                                    title={image}
+                                    className={`block w-full overflow-hidden rounded border text-left ${selected ? "border-zinc-900 ring-2 ring-zinc-900 dark:border-zinc-100 dark:ring-zinc-100" : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800"}`}
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element -- the site's own picture */}
+                                    <img src={workspaceImageUrl(owner, repo, image)} alt="" loading="lazy" className="aspect-square w-full bg-zinc-100 object-cover dark:bg-zinc-900" />
+                                    <span className="block truncate px-1.5 py-1 text-[11px] text-zinc-500">{image.replace(/^assets\/img\//, "")}</span>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                        </ul>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             )}
+          </div>
+          <div>
+            <p className="mb-2 text-sm font-medium">Animation</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Segmented
+                label="Animation"
+                value={draft.animation}
+                onChange={(animation) => {
+                  setDraft({ ...draft, animation });
+                  setPlayCount((n) => n + 1);
+                }}
+                options={view.animations.map((a) => ({ value: a, label: ANIMATION_NAMES[a] }))}
+              />
+              {draft.animation !== "none" && (
+                <Button variant="ghost" onClick={() => setPlayCount((n) => n + 1)}>
+                  Play again
+                </Button>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">
+              Plays briefly when a visitor arrives and whenever the agent says something, then stops. Visitors who ask their device for less motion never see it.
+            </p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Text on the button" hint="Optional, like “Ask us” or “Need help?”. Leave empty for the icon alone.">
@@ -591,9 +711,11 @@ function LookForm({ view, draft, setDraft, owner, repo }: { view: AgentView; dra
                 </span>
               </div>
             )}
+            <style>{ANIMATION_CSS}</style>
             <span
-              className={`flex h-12 items-center justify-center gap-2 shadow-lg ${draft.label.trim() ? "rounded-full px-4 text-sm font-semibold" : "w-12 rounded-full"}`}
-              style={{ background: colour, color: ink }}
+              key={`${draft.animation}-${playCount}`}
+              className={`relative flex h-12 items-center justify-center gap-2 shadow-lg ${draft.label.trim() ? "rounded-full px-4 text-sm font-semibold" : "w-12 rounded-full"} ${draft.animation !== "none" ? `ts-play-${draft.animation}` : ""}`}
+              style={{ background: colour, color: ink, ["--ts-brand" as string]: colour }}
             >
               <AgentIconSvg icon={draft.icon} picture={picture} className={draft.icon === "image" && picture && !draft.label.trim() ? "size-12" : draft.icon === "logo" || draft.icon === "image" ? "size-7" : "size-5"} />
               {draft.label.trim() && <span>{draft.label.trim()}</span>}
@@ -731,12 +853,12 @@ function PaceForm({ view, draft, setDraft }: { view: AgentView; draft: AgentSett
   );
 }
 
-function RememberForm({ view, draft, setDraft }: { view: AgentView; draft: AgentSettings; setDraft: (d: AgentSettings) => void }) {
+function RememberForm({ view, draft, setDraft, onForgetAll }: { view: AgentView; draft: AgentSettings; setDraft: (d: AgentSettings) => void; onForgetAll: () => void }) {
   const days = view.rememberDays;
   return (
     <Section
       title="Returning visitors"
-      description={`Off: every visit starts fresh, and nothing about a visitor stays in their browser after they close the tab. On: the agent remembers each visitor on their own device for ${days} days and picks up where they left off next time: what interested them, what it already offered (it won't offer again what they turned down) and their chat. Visitors aren't asked in the chat. They can choose "Forget me on this device" in the chat at any time, and it's deleted ${days} days after their last visit. Publish your site after changing this.`}
+      description={`Off: every visit starts fresh, and nothing about a visitor stays in their browser after they close the tab. On: the agent remembers each visitor on their own device for ${days} days and picks up where they left off next time: what interested them, what it already offered (it won't offer again what they turned down) and their chat. Visitors see nothing about it in the chat: you control it here. You can forget one visitor from History or all of them below; what it learned about a visitor is deleted ${days} days after their last visit anyway, and turning this off deletes it all at once. Publish your site after changing this.`}
     >
       <label className="flex items-start gap-3 text-sm">
         <input type="checkbox" className="mt-0.5 size-4" checked={draft.remember} onChange={(e) => setDraft({ ...draft, remember: e.target.checked })} />
@@ -745,6 +867,18 @@ function RememberForm({ view, draft, setDraft }: { view: AgentView; draft: Agent
           <span className="block text-zinc-500">Never for visitors whose browser asks sites not to track them.</span>
         </span>
       </label>
+      {view.settings.remember && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-zinc-600 dark:text-zinc-400">
+            Remembering {number.format(view.rememberedVisitors)} {view.rememberedVisitors === 1 ? "visitor" : "visitors"} now.
+          </span>
+          {view.rememberedVisitors > 0 && (
+            <Button variant="secondary" onClick={onForgetAll}>
+              Forget all remembered visitors
+            </Button>
+          )}
+        </div>
+      )}
       {draft.remember && (
         <div className="mt-4 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
           <label className="flex items-start gap-3 text-sm">
@@ -849,7 +983,7 @@ function HistorySection({ owner, repo, view, tick, onDeleted }: { owner: string;
 
   useEffect(() => {
     let cancelled = false;
-    const q = new URLSearchParams(span);
+    const q = new URLSearchParams({ ...span, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
     api<AgentHistory>(workspacePath(owner, repo, `/agent/history?${q}`))
       .then((h) => {
         if (cancelled) return;
@@ -882,6 +1016,22 @@ function HistorySection({ owner, repo, view, tick, onDeleted }: { owner: string;
       setError(err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function forgetVisitor(ref: string) {
+    const ok = await confirmModal("Forget this visitor? What the agent learned about them is deleted, and they won't be remembered again on their device. Their visits stay in History as ordinary visits.", {
+      title: "Forget this visitor",
+      confirmLabel: "Forget them",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api(workspacePath(owner, repo, `/agent/visitors/${ref}`), { method: "DELETE", body: {} });
+      toast.success("Visitor forgotten.");
+      onDeleted();
+    } catch (err) {
+      setError(err);
     }
   }
 
@@ -933,13 +1083,15 @@ function HistorySection({ owner, repo, view, tick, onDeleted }: { owner: string;
         </div>
       )}
 
+      {history?.insights && totals && totals.sessions > 0 && <Insights insights={history.insights} view={view} pageTitle={pageTitle} span={span} returning={totals.returning} />}
+
       {history && sessions.length === 0 && (
         <EmptyState title="Nothing in this period yet">Suggestions and questions show here as visitors use your published site.</EmptyState>
       )}
 
       <ol className="space-y-3">
         {sessions.map((s) => (
-          <SessionCard key={`${s.id}-${s.startedAt}`} session={s} pageTitle={pageTitle} />
+          <SessionCard key={`${s.id}-${s.startedAt}`} session={s} pageTitle={pageTitle} onForget={s.visitorRef ? () => void forgetVisitor(s.visitorRef as string) : undefined} />
         ))}
       </ol>
       {next && (
@@ -968,7 +1120,188 @@ function Stat({ label, value, note }: { label: string; value: string; note?: str
   );
 }
 
-function SessionCard({ session, pageTitle }: { session: AgentSession; pageTitle: (path: string) => string }) {
+const pct = (part: number, whole: number) => (whole ? `${Math.round((part / whole) * 100)}%` : "–");
+
+function Card({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
+  return (
+    <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+      <h4 className="text-sm font-semibold">{title}</h4>
+      {description && <p className="mt-0.5 text-xs text-zinc-500">{description}</p>}
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
+
+/** Rows with a bar for their share of the largest value. */
+function Bars({ rows, empty }: { rows: { key: string; label: ReactNode; value: number; note?: string }[]; empty: string }) {
+  if (!rows.length) return <p className="text-sm text-zinc-500">{empty}</p>;
+  const max = Math.max(...rows.map((r) => r.value), 1);
+  return (
+    <ul className="space-y-1 text-sm">
+      {rows.map((row) => (
+        <li key={row.key} className="relative flex items-center justify-between gap-3 overflow-hidden rounded px-2 py-1">
+          <span aria-hidden="true" className="absolute inset-y-0 left-0 rounded bg-sky-600/10 dark:bg-sky-400/15" style={{ width: `${(row.value / max) * 100}%` }} />
+          <span className="relative min-w-0 truncate">{row.label}</span>
+          <span className="relative shrink-0 tabular-nums text-zinc-600 dark:text-zinc-300">
+            {number.format(row.value)}
+            {row.note && <span className="ml-2 text-xs text-zinc-500">{row.note}</span>}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Visits with the agent per day across the period, with suggestions and acceptances on hover. */
+function DailyChart({ days, span }: { days: AgentInsights["days"]; span: { from: string; to: string } }) {
+  const [hover, setHover] = useState<number | null>(null);
+  // Every local day of the period, the ones without visits as zero.
+  const series = useMemo(() => {
+    const byDay = new Map(days.map((d) => [d.day, d]));
+    const out: AgentInsights["days"] = [];
+    const end = new Date(span.to);
+    const cursor = new Date(span.from);
+    cursor.setHours(12, 0, 0, 0);
+    for (let i = 0; cursor <= end && i < 400; i++) {
+      const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
+      out.push(byDay.get(key) ?? { day: key, visits: 0, suggestions: 0, accepted: 0, questions: 0 });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return out;
+  }, [days, span.from, span.to]);
+  const max = Math.max(...series.map((d) => d.visits), 1);
+  const shown = hover ?? series.length - 1;
+  const point = series[shown];
+  const label = (day: string) => new Date(`${day}T12:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return (
+    <div>
+      <p className="mb-2 text-xs text-zinc-500 tabular-nums" aria-live="polite">
+        {point && (
+          <>
+            <span className="font-medium text-foreground">{label(point.day)}</span>: {number.format(point.visits)} {point.visits === 1 ? "visit" : "visits"} ·{" "}
+            {number.format(point.suggestions)} suggested · {number.format(point.accepted)} accepted · {number.format(point.questions)} {point.questions === 1 ? "question" : "questions"}
+          </>
+        )}
+      </p>
+      <div
+        className="flex h-32 items-end gap-0.5 border-b border-zinc-200 text-sky-600 dark:border-zinc-800 dark:text-sky-400"
+        onPointerLeave={() => setHover(null)}
+        role="img"
+        aria-label={`Visits with the agent per day, ${series.length} days`}
+      >
+        {series.map((d, i) => (
+          <div key={d.day} className="flex h-full min-w-0 flex-1 items-end" onPointerEnter={() => setHover(i)} onPointerDown={() => setHover(i)}>
+            <span
+              className={`block w-full rounded-t-sm bg-current ${hover !== null && hover !== i ? "opacity-40" : ""}`}
+              style={{ height: d.visits ? `${Math.max(4, (d.visits / max) * 100)}%` : "1px", opacity: d.visits ? undefined : 0.25 }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 flex justify-between text-[11px] text-zinc-500">
+        <span>{series[0] && label(series[0].day)}</span>
+        <span>{series.at(-1) && label(series.at(-1)!.day)}</span>
+      </div>
+    </div>
+  );
+}
+
+function Insights({
+  insights,
+  view,
+  pageTitle,
+  span,
+  returning,
+}: {
+  insights: AgentInsights;
+  view: AgentView;
+  pageTitle: (path: string) => string;
+  span: { from: string; to: string };
+  returning: number;
+}) {
+  const goals = view.settings.goals;
+  const goalRows = goals.map((g) => {
+    const t = insights.targets.find((x) => x.target === g.path);
+    return { goal: g, made: t?.made ?? 0, shown: t?.shown ?? 0, accepted: t?.accepted ?? 0, reached: t?.reached ?? 0 };
+  });
+  const otherTargets = insights.targets.filter((t) => !goals.some((g) => g.path === t.target));
+  const visits = insights.devices.reduce((sum, d) => sum + d.visits, 0);
+  const thing = (t: AgentInsights["interests"][number]) =>
+    t.link?.startsWith("/") ? `${t.label ?? pageTitle(t.link)} → ${pageTitle(t.link)}` : t.link?.startsWith("ext:") ? `${t.label ?? "Link"} (another website)` : (t.label ?? "Something");
+  return (
+    <section className="space-y-3" aria-labelledby="agent-insights">
+      <h3 id="agent-insights" className="text-base font-semibold">
+        Insights
+      </h3>
+      <Card title="Visits with the agent" description="Hover over a day for its suggestions and questions.">
+        <DailyChart days={insights.days} span={span} />
+      </Card>
+      <div className="grid gap-3 lg:grid-cols-2">
+        <Card title="Your goals" description="How often the agent offered each goal, and what visitors did.">
+          {goals.length === 0 ? (
+            <p className="text-sm text-zinc-500">No goals yet. Add some above so the agent knows where to steer visitors.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[22rem] text-left text-sm">
+                <thead className="text-xs text-zinc-500">
+                  <tr>
+                    <th className="py-1 pr-2 font-medium">Goal</th>
+                    <th className="py-1 pr-2 font-medium">Offered</th>
+                    <th className="py-1 pr-2 font-medium">Accepted</th>
+                    <th className="py-1 font-medium">Reached the page</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {goalRows.map((r) => (
+                    <tr key={r.goal.path} className="border-t border-zinc-200 dark:border-zinc-800">
+                      <td className="py-1.5 pr-2">{r.goal.label}</td>
+                      <td className="py-1.5 pr-2 tabular-nums">{number.format(r.shown)}</td>
+                      <td className="py-1.5 pr-2 tabular-nums">
+                        {number.format(r.accepted)} <span className="text-xs text-zinc-500">{pct(r.accepted, r.shown)}</span>
+                      </td>
+                      <td className="py-1.5 tabular-nums">{number.format(r.reached)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {otherTargets.length > 0 && (
+                <p className="mt-2 text-xs text-zinc-500">
+                  Also offered: {otherTargets.slice(0, 5).map((t) => `${pageTitle(t.target)} (${number.format(t.shown)})`).join(", ")}.
+                </p>
+              )}
+            </div>
+          )}
+        </Card>
+        <Card title="What makes suggestions work" description="Acceptance by what prompted the suggestion.">
+          <Bars
+            rows={insights.triggers.map((t) => ({ key: t.trigger, label: TRIGGERS[t.trigger] ?? t.trigger, value: t.shown, note: `${pct(t.accepted, t.shown)} accepted` }))}
+            empty="No suggestions in this period yet."
+          />
+        </Card>
+        <Card title="What visitors look at" description="Links and buttons visitors rested on or clicked, by how many visits.">
+          <Bars
+            rows={insights.interests.map((t, i) => ({ key: `${i}-${t.link ?? t.label}`, label: thing(t), value: t.visitors, note: t.clicks ? `${number.format(t.clicks)} ${t.clicks === 1 ? "click" : "clicks"}` : `${number.format(t.seconds)} s` }))}
+            empty="Nothing yet."
+          />
+        </Card>
+        <Card title="Who visits" description={`${number.format(visits)} visits${returning ? `, ${number.format(returning)} by returning visitors` : ""}.`}>
+          <Bars rows={insights.devices.map((d) => ({ key: d.device, label: d.device, value: d.visits, note: pct(d.visits, visits) }))} empty="Nothing yet." />
+        </Card>
+        <Card title="What visitors ask" description={`${number.format(insights.questions.total)} questions${insights.questions.offTopic ? `, ${number.format(insights.questions.offTopic)} outside your website (given the fixed reply)` : ""}.`}>
+          <Bars rows={insights.questions.top.map((q) => ({ key: q.question, label: q.question, value: q.count }))} empty="No questions yet." />
+        </Card>
+        <Card
+          title="Questions your site couldn't answer"
+          description="The agent said it wasn't sure, because your pages don't say. Adding the answers to your site helps visitors and the agent."
+        >
+          <Bars rows={insights.questions.unanswered.map((q) => ({ key: q.question, label: q.question, value: q.count }))} empty="None: your pages answered every question." />
+        </Card>
+      </div>
+    </section>
+  );
+}
+
+function SessionCard({ session, pageTitle, onForget }: { session: AgentSession; pageTitle: (path: string) => string; onForget?: () => void }) {
   const items: { at: string; node: ReactNode }[] = [
     ...session.suggestions.map((s) => ({
       at: s.at,
@@ -1017,6 +1350,11 @@ function SessionCard({ session, pageTitle }: { session: AgentSession; pageTitle:
       <p className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         <span className="font-medium">Visitor {session.id}</span>
         {session.visit && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-800 dark:bg-blue-950 dark:text-blue-300">Returning · visit {session.visit}</span>}
+        {onForget && (
+          <button type="button" onClick={onForget} className="text-xs text-zinc-500 underline hover:text-red-700 dark:hover:text-red-400">
+            Forget this visitor
+          </button>
+        )}
         <span className="text-zinc-500">
           {session.device} · {session.pages.length} {session.pages.length === 1 ? "page" : "pages"} · {time(session.startedAt)}
         </span>

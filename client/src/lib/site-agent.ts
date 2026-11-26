@@ -33,7 +33,11 @@ export type AgentSettings = {
   reads: "full" | "start";
   /** Text beside the icon ("" for the icon alone), at most 24 characters. */
   label: string;
+  /** How the button catches the eye when a visitor arrives and when the agent speaks. */
+  animation: AgentAnimation;
 };
+
+export type AgentAnimation = "none" | "pulse" | "bounce" | "wiggle" | "glow";
 
 /** The chat button's icons (agent.js draws them; "logo" is the site's logo mark). */
 export type AgentIcon = "chat" | "sparkle" | "question" | "wave" | "heart" | "logo" | "image";
@@ -62,10 +66,13 @@ export type AgentView = {
   retentionDays: number;
   /** How long a returning visitor who said yes is remembered after their last visit. */
   rememberDays: number;
+  /** How many visitors the agent remembers on the site now. */
+  rememberedVisitors: number;
   /** Each pace's times (ms) and suggestions per visit. */
   paces: Record<AgentPace, { goalRest: number; linkRest: number; gap: number; perVisit: number }>;
   costs: { suggestion: AgentCost; answer: AgentCost };
   icons: AgentIcon[];
+  animations: AgentAnimation[];
   /** A preview of `iconImage` (data: URL), or null. */
   iconPreview: string | null;
   /** What the agent knows of the site now. "full"/"start": read from the published site; "saved": your copy, when the published site can't be read. */
@@ -105,6 +112,8 @@ export type AgentSession = {
   device: string;
   /** A returning visitor's visit number (2 and up), or null for a first or unremembered visit. */
   visit: number | null;
+  /** For a returning visit: what "Forget this visitor" sends (a hash, never the visitor's id). */
+  visitorRef: string | null;
   pages: string[];
   suggestions: AgentSuggestion[];
   questions: AgentQuestion[];
@@ -130,4 +139,21 @@ export type AgentHistory = {
   sessions: AgentSession[];
   /** Pass as `before` for the next (older) page, or null at the end. */
   next: string | null;
+  /** What the period's visits show (first page only). */
+  insights: AgentInsights | null;
+};
+
+/** How a group of suggestions did (by what prompted them, or by the place suggested). */
+export type AgentSuggestionStats = { made: number; shown: number; accepted: number; dismissed: number; reached: number };
+export type AgentQuestionCount = { question: string; count: number; lastAt: string };
+
+export type AgentInsights = {
+  /** Per local day (YYYY-MM-DD), days with visits only. */
+  days: { day: string; visits: number; suggestions: number; accepted: number; questions: number }[];
+  triggers: (AgentSuggestionStats & { trigger: string })[];
+  targets: (AgentSuggestionStats & { target: string })[];
+  /** What visitors rested on or clicked, by how many visits. */
+  interests: { label: string | null; link: string | null; visitors: number; seconds: number; clicks: number }[];
+  devices: { device: string; visits: number }[];
+  questions: { total: number; offTopic: number; top: AgentQuestionCount[]; unanswered: AgentQuestionCount[] };
 };

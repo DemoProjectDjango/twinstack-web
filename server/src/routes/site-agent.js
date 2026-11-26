@@ -1,7 +1,7 @@
 import express, { Router } from "express";
 import { getAccessToken } from "../github.js";
 import { MAX_BATCH_BYTES, MAX_SMALL_BYTES } from "../site-agent-rules.js";
-import { agentAsk, agentEvents, agentForget, rereadAgentSite, agentHistory, agentOutcome, agentView, deleteAgentData, disableAgent, enableAgent, saveAgentSettings } from "../site-agent.js";
+import { agentAsk, agentEvents, agentForget, forgetAgentVisitorsFor, rereadAgentSite, agentHistory, agentOutcome, agentView, deleteAgentData, disableAgent, enableAgent, saveAgentSettings } from "../site-agent.js";
 import { WorkspaceError, siteIdFor } from "../workspace.js";
 import { handle, keyFor } from "./helpers.js";
 
@@ -67,8 +67,19 @@ agentRouter.get(
   "/history",
   handle(async (req, res) => {
     const ctx = await context(req, res);
-    res.json(await agentHistory(ctx, { from: req.query.from, to: req.query.to, before: req.query.before }));
+    res.json(await agentHistory(ctx, { from: req.query.from, to: req.query.to, before: req.query.before, tz: req.query.tz }));
   }),
+);
+
+// The owner forgets remembered visitors: all of them, or one by its History ref.
+agentRouter.delete(
+  "/visitors",
+  handle(async (req, res) => res.json(await forgetAgentVisitorsFor(await context(req, res)))),
+);
+
+agentRouter.delete(
+  "/visitors/:ref",
+  handle(async (req, res) => res.json(await forgetAgentVisitorsFor(await context(req, res), req.params.ref))),
 );
 
 agentRouter.delete(

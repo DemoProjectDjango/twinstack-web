@@ -79,6 +79,9 @@ export const paceOf = (name) => PACES[name] ?? PACES.balanced;
 export const ICONS = ["chat", "sparkle", "question", "wave", "heart", "logo", "image"];
 const ICON_IMAGE = /^\/assets\/img\/[\w./-]+\.(png|jpe?g|gif|webp|svg)$/i;
 export const POSITIONS = ["right", "left"];
+// How the button catches the eye when a visitor arrives and when the agent speaks (agent.js; never
+// with reduced motion).
+export const ANIMATIONS = ["none", "pulse", "bounce", "wiggle", "glow"];
 
 // The owner's settings.
 export const TONES = ["friendly", "professional", "playful", "calm"];
@@ -107,6 +110,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   icon: "chat",
   iconImage: "",
   label: "",
+  animation: "none",
 });
 
 /* ------------------------------------------------------------------ text */
@@ -412,8 +416,12 @@ export function parseReply(text) {
 
 // What the agent may never say, whatever a visitor asks or the model writes: which AI or company is
 // behind it, its instructions, code, and links, emails or long numbers the site itself doesn't have.
-const OUTSIDE_WORDS = /\b(claude|anthropic|open ?ai|chat ?gpt|gpt-?\d[\w.-]*|deepseek|gemini|llama|mistral|copilot|language model|llm|as an ai|ai model|ai assistant|system prompt|my instructions|my rules)\b/i;
-const CODE = /```|<\/?[a-z][a-z0-9]*[\s>/]|\bfunction\s*\(|console\.|\bdef\s+\w+\(|\bimport\s+\w+|\bSELECT\b.+\bFROM\b/i;
+// Names of AI models and companies, and talk about its instructions. A word the site itself uses
+// (a "Gemini" print, a llama farm) is fine: outOfBounds checks the site's text first.
+const OUTSIDE_WORDS = /\b(claude|anthropic|open ?ai|chat ?gpt|gpt-?\d[\w.-]*|deepseek|gemini|llama|mistral|copilot|language model|llm|as an ai|ai model|ai assistant|system prompt|my instructions)\b/gi;
+// Code: fences, markup tags, and program text (case-sensitive where everyday words could match:
+// "Select a gift card from £10" isn't SQL, "we import books" isn't a program).
+const CODE = [/```/, /<\/?[a-z][a-z0-9]*(\s[^<>]*)?\/?>/i, /\bfunction\s*\w*\s*\([^)]*\)\s*\{/, /\bconsole\.\w+\(/, /\bdef\s+\w+\([^)]*\)\s*:/, /\bimport\s+[\w{}*, ]+\s+from\s+["']/, /\bSELECT\s+[\w*, ]+\s+FROM\b/, /=>\s*\{/];
 const WEB_ADDRESS = /\bhttps?:\/\/\S+|\bwww\.\S+|\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|net|org|io|co|uk|ai|app|dev|info|biz|me|xyz)\b(\/\S*)?/gi;
 
 /**
@@ -425,8 +433,8 @@ export function outOfBounds(text, siteText = "") {
   const own = String(siteText).toLowerCase();
   const ownDigits = own.replace(/\D/g, "");
   const said = String(text ?? "");
-  if (OUTSIDE_WORDS.test(said)) return "identity";
-  if (CODE.test(said)) return "code";
+  for (const word of said.match(OUTSIDE_WORDS) ?? []) if (!own.includes(word.toLowerCase())) return "identity";
+  if (CODE.some((rule) => rule.test(said))) return "code";
   for (const email of said.match(EMAIL) ?? []) if (!own.includes(email.toLowerCase())) return "email";
   for (const number of said.match(LONG_NUMBER) ?? []) {
     const digits = number.replace(/\D/g, "");
@@ -441,15 +449,15 @@ export function outOfBounds(text, siteText = "") {
 
 // A visitor trying to get the agent out of its job: its instructions, what it is, playing a part.
 const TRICKS = [
-  /\bignore\b.{0,40}\b(instructions?|rules?|prompt|above|previous|everything)\b/i,
-  /\b(system|hidden|initial|original|secret)\s+(prompt|instructions?|message|rules)\b/i,
-  /\b(repeat|print|show|reveal|tell me|what are)\b.{0,30}\b(your )?(instructions|prompt|rules)\b/i,
-  /\b(which|what)\s+(ai|model|llm|language model|chatbot|bot|company|engine)\b/i,
-  /\b(are you|you're|you are)\s+(chat ?gpt|gpt|claude|gemini|deepseek|an? (ai|bot|robot|llm|language model|human|real person))\b/i,
+  /\bignore\b.{0,40}\b(instructions?|rules?|prompt|above|previous)\b/i,
+  /\b(system|hidden|initial|original|secret)\s+(prompt|instructions?)\b/i,
+  /\b(repeat|print|show|reveal|tell me|what are)\b.{0,30}\b(your|the) (instructions|prompt|rules)\b/i,
+  /\b(which|what)\s+(ai|llm|language model|chatbot|bot|model|engine)\b.{0,25}\b(are you|is this|is that|powers|behind|do you use|you use|runs you)\b/i,
+  /\b(are you|you're|you are)\s+(chat ?gpt|gpt|claude|gemini|deepseek|an? (ai|bot|robot|llm|language model))\b/i,
   /\b(who|what company)\s+(made|built|created|trained|powers|runs)\s+you\b/i,
-  /\b(pretend|role-?play|you are now|from now on,? you|jailbreak|developer mode|do anything now)\b/i,
-  /\bact as (an?|my)\b/i,
-];
+  /\b(pretend (you|to be|that you)|let'?s role-?play|role-?play (as|with me)|you are now|from now on,? you|jailbreak|developer mode|do anything now)\b/i,
+  /\bact as (an?|my) (?!\w+ for (the|our|your) (shop|store|club|business))/i,
+]
 
 /** Whether a visitor's question tries to take the agent off its job (answered with fixed words, no model). */
 export const isTrick = (question) => TRICKS.some((rule) => rule.test(String(question ?? "")));
@@ -486,7 +494,8 @@ export function checkAnswer(reply, allowed, siteText = "") {
   const ok = target && allowed.has(target);
   const label = ok ? clean(reply.label, 40) || "Open page" : null;
   if (outOfBounds(text, siteText) || (label && outOfBounds(label, siteText))) return { offTopic: true };
-  return { text, target: ok ? target : null, label };
+  // The model's word on whether the site's pages held the answer (for the owner's insights).
+  return { text, target: ok ? target : null, label, ...(reply.found === false && { unanswered: true }) };
 }
 
 /* ------------------------------------------------------------------ returning visitors */
@@ -583,6 +592,7 @@ export function cleanSettings(input, pages) {
     icon: ICONS.includes(input?.icon) ? input.icon : DEFAULT_SETTINGS.icon,
     iconImage: typeof input?.iconImage === "string" && ICON_IMAGE.test(input.iconImage) && !input.iconImage.includes("..") ? input.iconImage : "",
     label: clean(input?.label, 24),
+    animation: ANIMATIONS.includes(input?.animation) ? input.animation : DEFAULT_SETTINGS.animation,
   };
   if (look.icon === "image" && !look.iconImage) throw new SettingsError("Upload a picture for the chat button, or choose another icon.");
   return { name, greeting, tone, goals, dailyCredits: daily, remember: input?.remember === true, rememberAfterBanner: input?.rememberAfterBanner === true, reads: input?.reads === "start" ? "start" : "full", pace, greet: input?.greet !== false, ...look };

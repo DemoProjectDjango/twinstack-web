@@ -310,7 +310,7 @@ describe("cleanSettings", () => {
   const base = { name: "Sam", greeting: "Hello!", tone: "calm", goals: [{ label: "Donate", path: "/donate.html" }], dailyCredits: 2000 };
 
   it("keeps valid settings", () => {
-    assert.deepEqual(cleanSettings(base, pages), { ...base, goals: [{ label: "Donate", path: "/donate.html", note: "" }], remember: false, rememberAfterBanner: false, reads: "full", pace: "balanced", greet: true, color: "", position: "right", icon: "chat", iconImage: "", label: "" });
+    assert.deepEqual(cleanSettings(base, pages), { ...base, goals: [{ label: "Donate", path: "/donate.html", note: "" }], remember: false, rememberAfterBanner: false, reads: "full", pace: "balanced", greet: true, color: "", position: "right", icon: "chat", iconImage: "", label: "", animation: "none" });
     assert.equal(cleanSettings({ ...base, reads: "start" }, pages).reads, "start");
     assert.equal(cleanSettings({ ...base, icon: "image", iconImage: "/assets/img/brand/agent-me.png" }, pages).iconImage, "/assets/img/brand/agent-me.png");
     assert.throws(() => cleanSettings({ ...base, icon: "image", iconImage: "/etc/passwd" }, pages), SettingsError);
@@ -509,5 +509,21 @@ describe("reading the whole site", () => {
     assert.ok(picked.length <= 700);
     assert.ok(picked.includes("last Thursday"));
     assert.equal(passagesFor("Short page.", "anything", 700), "Short page.");
+  });
+});
+
+describe("guards: no false alarms on ordinary shop words", () => {
+  it("lets everyday answers through", () => {
+    const site = "Gemini star sign prints. Llama wool socks. Role-play costumes.";
+    for (const t of ["Select a gift card from £10 to £100.", "We import books from Italy.", "Our Gemini prints are £12.", "Yes, llama wool socks are in stock."]) {
+      assert.equal(outOfBounds(t, site), null, t);
+    }
+    assert.equal(outOfBounds("SELECT * FROM users", ""), "code");
+    assert.equal(outOfBounds("<script>alert(1)</script>", ""), "code");
+  });
+
+  it("doesn't take ordinary questions for tricks", () => {
+    for (const q of ["What company do you use for delivery?", "Do you sell role-play costumes?", "What model of e-reader do you stock?"]) assert.ok(!isTrick(q), q);
+    for (const q of ["What AI powers this chat?", "Let's roleplay as pirates"]) assert.ok(isTrick(q), q);
   });
 });
