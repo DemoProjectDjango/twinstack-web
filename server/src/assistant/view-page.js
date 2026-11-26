@@ -1,11 +1,13 @@
 import { execFile, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import fs from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { jobEnv } from "../commands.js";
+import { config } from "../config.js";
+import { sendEmail } from "../email.js";
 import { WorkspaceError, acquire, previewIsFresh, workingTreeFingerprint, workspaceDir } from "../workspace.js";
 
 // Lets the assistant see a page: pictures from headless Chrome, plus measurements (too wide for
@@ -35,9 +37,56 @@ const TYPES = {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Node 22 has WebSocket built in; on Node 20 the ws package stands in (same API for what's used here).
+const WS = globalThis.WebSocket ?? (await import("ws")).WebSocket;
+
+/** Playwright's own browser downloads (deploy.sh installs one when the server has no Chrome). */
+function playwrightBrowsers() {
+  const roots = [process.env.PLAYWRIGHT_BROWSERS_PATH, path.join(os.homedir(), ".cache", "ms-playwright"), path.join(os.homedir(), "Library", "Caches", "ms-playwright")];
+  const found = [];
+  for (const root of roots) {
+    if (!root || !existsSync(root)) continue;
+    let dirs = [];
+    try {
+      dirs = readdirSync(root).sort().reverse();
+    } catch {
+      continue;
+    }
+    for (const dir of dirs) {
+      if (dir.startsWith("chromium_headless_shell-")) {
+        for (const sub of ["chrome-headless-shell-linux64", "chrome-headless-shell-mac-arm64", "chrome-headless-shell-mac-x64"]) found.push(path.join(root, dir, sub, "chrome-headless-shell"));
+      } else if (dir.startsWith("chromium-")) {
+        found.push(path.join(root, dir, "chrome-linux", "chrome"), path.join(root, dir, "chrome-linux64", "chrome"));
+      }
+    }
+  }
+  return found;
+}
+
+let browserAlertSent = false;
+/**
+ * The owner's words when the server has no browser (copying websites, looking at pages), and one
+ * email to the admins per API start saying how to fix it (DEPLOY.md, step 6).
+ */
+export function noBrowser(what) {
+  if (!browserAlertSent) {
+    browserAlertSent = true;
+    console.error("No Chrome or Chromium on this server: copying websites and looking at pages are off. Run deploy.sh, or see DEPLOY.md step 6.");
+    if (config.adminEmails.length) {
+      void sendEmail({
+        to: config.adminEmails,
+        subject: "Twinstack: copying websites needs a browser on the server",
+        text: `An owner tried to ${what}, but the server has no Chrome or Chromium. The next deploy (deploy.sh) installs a headless Chrome by itself; if it reports missing system libraries, run the command it prints once as an admin. See DEPLOY.md, step 6.`,
+      }).catch(() => {});
+    }
+  }
+  return new WorkspaceError(`${what[0].toUpperCase()}${what.slice(1)} isn't available on this server right now. The team has been told; please try again later.`, 503);
+}
+
 export function findChrome() {
   const candidates = [
     process.env.CHROME_PATH,
+    "/snap/bin/chromium",
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
     "C:/Program Files/Google/Chrome/Application/chrome.exe",
@@ -48,6 +97,7 @@ export function findChrome() {
   for (const dir of (process.env.PATH || "").split(path.delimiter)) {
     for (const name of ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"]) candidates.push(path.join(dir, name));
   }
+  candidates.push(...playwrightBrowsers());
   return candidates.find((c) => c && existsSync(c)) ?? null;
 }
 
@@ -97,10 +147,38 @@ function serve(root) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
 }
 
+// Every browser this process started and hasn't closed: when the API stops (a deploy, a restart)
+// they go with it, instead of running on with no one to close them.
+const running = new Set();
+let exitHooked = false;
+function closeAllOnExit() {
+  if (exitHooked) return;
+  exitHooked = true;
+  const killAll = () => {
+    for (const child of running) {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }
+  };
+  process.once("exit", killAll);
+  for (const signal of ["SIGTERM", "SIGINT"]) {
+    process.once(signal, () => {
+      killAll();
+      process.exit(0);
+    });
+  }
+}
+
 /** Starts the browser and returns a small DevTools client for one page. */
 export async function launch(executable) {
   const profile = await fs.mkdtemp(path.join(os.tmpdir(), "twinstack-view-"));
   const browser = spawn(executable, ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: "ignore", env: jobEnv(null, null) });
+  closeAllOnExit();
+  running.add(browser);
+  browser.once("exit", () => running.delete(browser));
   const close = () => {
     browser.once("exit", () => setTimeout(() => fs.rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }).catch(() => {}), 300).unref());
     try {
@@ -114,7 +192,7 @@ export async function launch(executable) {
     try {
       const port = (await fs.readFile(path.join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0];
       const page = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((t) => t.type === "page");
-      if (page) ws = new WebSocket(page.webSocketDebuggerUrl);
+      if (page) ws = new WS(page.webSocketDebuggerUrl);
     } catch {
       // Not up yet.
     }
@@ -124,7 +202,7 @@ export async function launch(executable) {
     close();
     throw new WorkspaceError("The browser that looks at pages didn't start on this server.", 503);
   }
-  if (ws.readyState !== WebSocket.OPEN) await new Promise((resolve, reject) => { ws.addEventListener("open", resolve); ws.addEventListener("error", reject); });
+  if (ws.readyState !== WS.OPEN) await new Promise((resolve, reject) => { ws.addEventListener("open", resolve); ws.addEventListener("error", reject); });
   let id = 0;
   const pending = new Map();
   const listeners = [];
@@ -188,7 +266,7 @@ async function shoot(client, url, screen, fromY) {
 
 async function look(key, url, screens, fromY) {
   const chrome = findChrome();
-  if (typeof WebSocket === "undefined" || !chrome) throw new WorkspaceError("This server has no browser to look at pages with (it needs Chrome and Node 22 or later).", 503);
+  if (!chrome) throw noBrowser("look at pages");
   const release = acquire(key, "looking at a page");
   let server = null;
   let client = null;

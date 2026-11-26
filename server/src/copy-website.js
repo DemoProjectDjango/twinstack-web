@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { findChrome, launch } from "./assistant/view-page.js";
+import { findChrome, launch, noBrowser } from "./assistant/view-page.js";
 import { FetchRefused, checkUrl, hostIsPublic, safeFetch } from "./safe-fetch.js";
 import { sitePages } from "./navigation.js";
 import { createPageAt, readSiteConfig, saveHtmlSource } from "./site-files.js";
@@ -193,7 +193,7 @@ const SCROLL = `(async () => {
 /** A browser that may only reach public addresses, with a way to wait for a page to settle. */
 async function openBrowser() {
   const chrome = findChrome();
-  if (typeof WebSocket === "undefined" || !chrome) throw new WorkspaceError("This server has no browser to copy websites with (it needs Chrome and Node 22 or later).", 503);
+  if (!chrome) throw noBrowser("copy websites");
   const client = await launch(chrome);
   const publicHosts = new Map();
   const isAllowed = async (raw) => {
@@ -599,18 +599,30 @@ export function lookAtWebsite(rawUrl, fromY = 0) {
 export function copyWebsiteStep(key, { url, maxPages }) {
   return {
     display: `Copying ${url}`,
-    run: ({ log }) => {
+    run: ({ log, signal }) => {
       if (waiting > 0) log("Waiting for another website copy on this server to finish…");
       waiting++;
       return oneAtATime(() => {
         waiting--;
-        return copyNow(key, { url, maxPages }, log);
+        if (signal?.aborted) throw new WorkspaceError("Stopped before it started.", 400);
+        return copyNow(key, { url, maxPages }, log, signal);
       });
     },
   };
 }
 
-async function copyNow(key, { url, maxPages }, log) {
+async function copyNow(key, { url, maxPages }, log, signal) {
+  const stopped = () => {
+    if (signal?.aborted) throw new WorkspaceError("You stopped copying the website.", 400);
+  };
+  // Settles (as a stop) the moment the owner cancels, so nothing waits out a page's timeout.
+  const cancelled = new Promise((_, reject) => {
+    if (!signal) return;
+    const stop = () => reject(new WorkspaceError("You stopped copying the website.", 400));
+    if (signal.aborted) stop();
+    else signal.addEventListener("abort", stop, { once: true });
+  });
+  cancelled.catch(() => {});
   const dir = workspaceDir(key);
   const start = normaliseStartUrl(url);
   const limit = Math.min(MAX_PAGES, Math.max(1, Number(maxPages) || DEFAULT_PAGES));
@@ -623,6 +635,9 @@ async function copyNow(key, { url, maxPages }, log) {
   const notes = [];
   const assets = assetStore(dir, host, notes);
   const browser = await openBrowser();
+  // A cancel closes the browser at once, so a page that's still loading gives up too.
+  const onAbort = () => browser.close();
+  signal?.addEventListener("abort", onAbort, { once: true });
   const frozen = [];
   const skipped = [];
   try {
@@ -630,6 +645,7 @@ async function copyNow(key, { url, maxPages }, log) {
     const queue = [pageKey(start)];
     const seen = new Set(queue);
     while (queue.length && frozen.length < limit && Date.now() < deadline) {
+      stopped();
       const target = queue.shift();
       log(`▸ ${frozen.length + 1}/${limit} Looking at ${target}`);
       try {
@@ -646,17 +662,20 @@ async function copyNow(key, { url, maxPages }, log) {
             return { url: landed, requested: target, snapshot: { ...snapshot, url: landed }, shots };
           })(),
           sleep(PAGE_TIMEOUT_MS * 2).then(() => { throw new Error("it took too long to load"); }),
+          cancelled,
         ]);
         if (frozen.some((p) => p.url === page.url)) continue;
         frozen.push(page);
         nextPages(queue, seen, page.snapshot.links, host);
       } catch (err) {
+        stopped();
         skipped.push({ url: target, reason: err.message });
         log(`  ! Skipped ${target}: ${err.message}`);
         if (!frozen.length) throw new WorkspaceError(`The website couldn't be opened: ${err.message}`, 400);
       }
     }
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     browser.close();
   }
 
@@ -673,10 +692,11 @@ async function copyNow(key, { url, maxPages }, log) {
   const existing = new Set((await sitePages(dir, await readSiteConfig(key))).map((p) => p.url));
   const pages = [];
   for (const [i, page] of frozen.entries()) {
+    stopped();
     log(`▸ ${i + 1}/${frozen.length} Copying the pictures, fonts and styles of ${page.address}`);
     const id = String(i + 1).padStart(2, "0");
     try {
-      const { html, css } = await finishPage(page.snapshot, { address: page.address, addresses, assets, notes });
+      const { html, css } = await Promise.race([finishPage(page.snapshot, { address: page.address, addresses, assets, notes }), cancelled]);
       await fs.writeFile(path.join(dir, COPY_DIR, "pages", `${id}.html`), html);
       await fs.mkdir(path.join(dir, COPY_DIR, "css", id), { recursive: true });
       for (const sheet of css) await fs.writeFile(path.join(dir, COPY_DIR, "css", id, sheet.name), sheet.content);
@@ -691,6 +711,7 @@ async function copyNow(key, { url, maxPages }, log) {
         replaces: existing.has(page.address) && page.address !== "/",
       });
     } catch (err) {
+      stopped();
       skipped.push({ url: page.url, reason: err.message });
       log(`  ! Skipped ${page.url}: ${err.message}`);
     }

@@ -123,6 +123,31 @@ check() {
   return 1
 }
 
+# Copying websites, the AI looking at pages and conversions' render checks need a headless browser
+# (server/src/assistant/view-page.js finds it). Without one, this installs Playwright's for this user:
+# no admin rights, kept in ~/.cache/ms-playwright. It never fails the deploy.
+PLAYWRIGHT_VERSION=1.65.1
+step "Checking the browser for copying websites"
+has_browser() {
+  if [ -n "${CHROME_PATH:-}" ] && [ -x "$CHROME_PATH" ]; then return 0; fi
+  if grep -qE '^CHROME_PATH=.+' server/.env 2>/dev/null; then return 0; fi
+  for b in google-chrome google-chrome-stable chromium chromium-browser chrome; do
+    if command -v "$b" >/dev/null 2>&1; then return 0; fi
+  done
+  compgen -G "$HOME/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell" >/dev/null
+}
+if has_browser; then
+  echo "Found one."
+else
+  echo "None found: installing a headless Chrome for this user."
+  npx --yes "playwright@$PLAYWRIGHT_VERSION" install chromium-headless-shell || echo "Couldn't download it. Copying websites stays off until a browser is installed (DEPLOY.md, step 6)." >&2
+fi
+shell=$(compgen -G "$HOME/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell" | sort | tail -1 || true)
+if [ -n "$shell" ] && ! "$shell" --headless --no-sandbox --disable-gpu --dump-dom about:blank >/dev/null 2>&1; then
+  echo "The headless Chrome can't start: this server is missing system libraries it needs. Run this once as an admin, then deploy again:" >&2
+  echo "  sudo npx --yes playwright@$PLAYWRIGHT_VERSION install-deps chromium-headless-shell" >&2
+fi
+
 step "Checking health"
 check "API" http://127.0.0.1:4000/api/health twinstack-api
 check "Web app" http://127.0.0.1:3100/api/health twinstack-web

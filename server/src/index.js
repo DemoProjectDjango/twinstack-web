@@ -1,3 +1,4 @@
+import { findChrome } from "./assistant/view-page.js";
 import express from "express";
 import cookieParser from "cookie-parser";
 import { config } from "./config.js";
@@ -25,7 +26,7 @@ import { enablePages, getSiteSummary } from "./publishing.js";
 import { ImportError, adoptTemplate, importCandidates, inspectRepo } from "./import-site.js";
 import { DeletePermissionError, deleteSite } from "./site-delete.js";
 import { WorkspaceError, assertRepoRef, sweepWorkspaces } from "./workspace.js";
-import { editorCookie } from "./routes/helpers.js";
+import { SERVER_BUSY, SERVER_FAILED, editorCookie, isDatabaseHiccup } from "./routes/helpers.js";
 
 // One API process only. Running AI spend (credits.js: accounts, gates), proxy tokens, jobs and their
 // queue, assistant turns and the per-browser workspaces live in this process's memory and on this
@@ -58,7 +59,8 @@ app.use((req, res, next) => {
 app.use(cookieParser());
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, msg: "API is running now." });
+  // `browser`: whether copying websites and looking at pages can run here (deploy.sh reports it).
+  res.json({ ok: true, msg: "API is running now.", browser: Boolean(findChrome()) });
 });
 
 app.get("/api/me", requireAuth, (req, res) => {
@@ -283,6 +285,23 @@ app.use("/auth", authRouter);
 
 app.use((req, res) => {
   res.status(404).json({ error: "Not found" });
+});
+
+// Anything a route didn't handle itself: a plain message, never Express's error page (which shows
+// the error and its stack outside production). The details go to the log.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  if (err?.type === "entity.too.large") return res.status(413).json({ error: "That's too large to send. Try a smaller file." });
+  if (err?.type === "entity.parse.failed" || err?.type === "encoding.unsupported") return res.status(400).json({ error: "The request couldn't be read. Reload the page and try again." });
+  console.error(`${req.method} ${req.originalUrl} failed:`, err);
+  if (isDatabaseHiccup(err)) return res.status(503).json({ error: SERVER_BUSY });
+  res.status(err?.status >= 400 && err.status < 500 ? err.status : 500).json({ error: err?.status >= 400 && err.status < 500 && err.expose ? err.message : SERVER_FAILED });
+});
+
+// A background task that failed without anyone waiting for it is logged, not a crash that restarts
+// the API (and fails every request in flight).
+process.on("unhandledRejection", (reason) => {
+  console.error("A background task failed:", reason);
 });
 
 // Fail fast: without the database nothing that needs sign-in works.

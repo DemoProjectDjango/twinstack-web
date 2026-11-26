@@ -506,6 +506,10 @@ ${tail(job.output)}`);
           // fonts (a server job, no credits), and the card shows them. Nothing is in the site until the
           // owner presses "Build it" (keep, below), even when changes are made automatically.
           const job = await runJobAt("/copy-website", { url: input.url, maxPages: input.maxPages, permission: true });
+          if (job.status === "cancelled") {
+            await record(action, "skipped", "The owner stopped copying the website.");
+            return;
+          }
           if (job.status !== "succeeded") throw new Error(`The website couldn't be copied.\n${tail(job.output)}`);
           const { copy } = await api<{ copy: { host: string; pages: { id: string }[] } | null }>(workspacePath(owner, repo, "/copy-website"));
           if (!copy?.pages.length) throw new Error("No pages could be copied from that website.");
@@ -654,7 +658,9 @@ ${tail(job.output)}`);
             result.stopped ? `It stopped early: ${result.stopped}` : "",
             mode === "upgrade" ? `The owner chose an upgraded copy: now make the upgrades listed (${((action.meta.upgrades as string[]) ?? []).join("; ")}).` : "The owner chose the same design.",
           ].filter(Boolean).join(" ");
-          await record(action, result.broughtIn || !result.total ? "applied" : "failed", report.slice(0, 1500));
+          // Stopped by the owner: what was built stays, the rest can be built later with Try again.
+          const ownerStopped = result.stopped === "You stopped the build.";
+          await record(action, result.broughtIn || !result.total ? "applied" : ownerStopped ? "skipped" : "failed", report.slice(0, 1500));
           await refresh();
           return;
         }

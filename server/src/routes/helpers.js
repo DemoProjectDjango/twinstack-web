@@ -15,6 +15,16 @@ export function requireJson(req, res, next) {
   next();
 }
 
+/** The database (MongoDB) couldn't be reached or answered for a moment: worth trying again. */
+export function isDatabaseHiccup(err) {
+  const name = String(err?.name ?? "");
+  return /^Mongo(ServerSelection|Network|NetworkTimeout|TopologyClosed|PoolCleared|NotConnected)Error$/.test(name) || (name.startsWith("Mongo") && err?.hasErrorLabel?.("RetryableWriteError"));
+}
+
+/** What users read when something unexpected failed: never the error itself (that's in the log). */
+export const SERVER_FAILED = "Something went wrong on our side. Try again in a moment.";
+export const SERVER_BUSY = "The app is busy for a moment. Try again in a few seconds; nothing was lost.";
+
 export function handle(fn) {
   return async (req, res) => {
     try {
@@ -28,7 +38,9 @@ export function handle(fn) {
         return res.status(err.status).json(err.code ? { error: err.code, message: err.message } : { error: err.message });
       }
       console.error(`${req.method} ${req.originalUrl} failed:`, err);
-      res.status(500).json({ error: "Something went wrong on the server." });
+      if (res.headersSent) return;
+      if (isDatabaseHiccup(err)) return res.status(503).json({ error: SERVER_BUSY });
+      res.status(500).json({ error: SERVER_FAILED });
     }
   };
 }

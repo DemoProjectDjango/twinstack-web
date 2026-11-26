@@ -10,6 +10,9 @@ export const COPY_DONE_EVENT = "twinstack:copy-website-done";
 
 export type CopyDone = { broughtIn: number; total: number; missing: string[]; stopped: string | null };
 
+/** "Stop building" on the prototype card: the builder stops the page in progress and the run. */
+export const COPY_STOP_EVENT = "twinstack:copy-website-stop";
+
 /** The build's progress while it runs, for the prototype card in the chat. */
 export const COPY_PROGRESS_EVENT = "twinstack:copy-website-progress";
 export type CopyProgress = { done: number; total: number; working: string | null; retryPass: number | null };

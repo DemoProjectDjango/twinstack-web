@@ -75,6 +75,41 @@ function period(range: Range) {
 
 const same = (a: AgentSettings, b: AgentSettings) => JSON.stringify(a) === JSON.stringify(b);
 
+const DEFAULT_LOOK: Pick<AgentSettings, "remember" | "rememberAfterBanner" | "reads" | "pace" | "greet" | "color" | "position" | "icon" | "iconImage" | "label" | "animation"> = {
+  remember: false,
+  rememberAfterBanner: false,
+  reads: "full",
+  pace: "balanced",
+  greet: true,
+  color: "",
+  position: "right",
+  icon: "chat",
+  iconImage: "",
+  label: "",
+  animation: "none",
+};
+
+/**
+ * The view with every field the screen reads, whatever the server sent: while a deploy is under
+ * way the browser can briefly talk to the older server, which doesn't send the newer settings.
+ */
+function complete(view: AgentView): AgentView {
+  const balanced = { goalRest: 1500, linkRest: 2500, gap: 25000, perVisit: 5 };
+  const noCost = { credits: null, tokens: 0, requests: 0, measured: false };
+  return {
+    ...view,
+    settings: { ...DEFAULT_LOOK, ...view.settings },
+    paces: view.paces ?? { gentle: balanced, balanced, eager: balanced },
+    costs: view.costs ?? { suggestion: noCost, answer: noCost },
+    icons: view.icons ?? ["chat", "sparkle", "question", "wave", "heart", "logo", "image"],
+    animations: view.animations ?? ["none", "pulse", "bounce", "wiggle", "glow"],
+    iconPreview: view.iconPreview ?? null,
+    knowledge: view.knowledge ?? { source: null, pages: [] },
+    rememberDays: view.rememberDays ?? 30,
+    rememberedVisitors: view.rememberedVisitors ?? 0,
+  };
+}
+
 export function SiteAgentPanel() {
   const { owner, repo, status, refresh, showSection, busy } = useSite();
   const [view, setView] = useState<AgentView | null>(null);
@@ -88,8 +123,8 @@ export function SiteAgentPanel() {
     api<AgentView>(workspacePath(owner, repo, "/agent"))
       .then((next) => {
         if (cancelled) return;
-        setView(next);
-        setDraft(next.settings);
+        setView(complete(next));
+        setDraft(complete(next).settings);
       })
       .catch((err) => !cancelled && setError(err));
     return () => {
@@ -102,8 +137,8 @@ export function SiteAgentPanel() {
     setError(null);
     try {
       const next = await api<AgentView>(workspacePath(owner, repo, `/agent${path}`), { method, body });
-      setView(next);
-      setDraft(next.settings);
+      setView(complete(next));
+      setDraft(complete(next).settings);
       // Turning it on or off, or a new name or greeting while on, changes site.config.json.
       await refresh();
       toast.success(done);
@@ -121,8 +156,8 @@ export function SiteAgentPanel() {
     try {
       if (dirty && draft) await api<AgentView>(workspacePath(owner, repo, "/agent/settings"), { method: "PUT", body: draft });
       const next = await api<AgentView>(workspacePath(owner, repo, "/agent/enable"), { method: "POST", body: {} });
-      setView(next);
-      setDraft(next.settings);
+      setView(complete(next));
+      setDraft(complete(next).settings);
       await refresh();
       toast.success("The site agent is on. Publish your site to put it live.");
     } catch (err) {
@@ -202,7 +237,7 @@ export function SiteAgentPanel() {
               try {
                 const { forgotten } = await api<{ forgotten: number }>(workspacePath(owner, repo, "/agent/visitors"), { method: "DELETE", body: {} });
                 toast.success(`Forgot ${number.format(forgotten)} ${forgotten === 1 ? "visitor" : "visitors"}.`);
-                setView(await api<AgentView>(workspacePath(owner, repo, "/agent")));
+                setView(complete(await api<AgentView>(workspacePath(owner, repo, "/agent"))));
                 setHistoryTick((t) => t + 1);
               } catch (err) {
                 setError(err);
@@ -1083,7 +1118,7 @@ function HistorySection({ owner, repo, view, tick, onDeleted }: { owner: string;
         </div>
       )}
 
-      {history?.insights && totals && totals.sessions > 0 && <Insights insights={history.insights} view={view} pageTitle={pageTitle} span={span} returning={totals.returning} />}
+      {history?.insights && totals && totals.sessions > 0 && <Insights insights={history.insights} view={view} pageTitle={pageTitle} span={span} returning={totals.returning ?? 0} />}
 
       {history && sessions.length === 0 && (
         <EmptyState title="Nothing in this period yet">Suggestions and questions show here as visitors use your published site.</EmptyState>

@@ -574,7 +574,8 @@ export function setBeforeChange(hook: (() => Promise<void>) | null) {
 }
 
 // Waits before retrying a read when the API didn't answer at all: it's usually restarting for a moment.
-const READ_RETRY_DELAYS_MS = [400, 1200];
+// About 10 seconds in all: long enough for the API to restart after a deploy.
+const READ_RETRY_DELAYS_MS = [400, 800, 1500, 2500, 4000];
 
 export async function api<T>(path: string, { method = "GET", body }: { method?: string; body?: unknown } = {}): Promise<T> {
   if (method !== "GET" && beforeChange && !path.startsWith("/api/jobs/")) await beforeChange();
@@ -610,7 +611,7 @@ export async function api<T>(path: string, { method = "GET", body }: { method?: 
         : (data.error ??
           // No answer from the API itself: the proxy in front of it (Nginx, Next.js) answered instead.
           (res.status >= 500
-            ? `The server didn't answer (error ${res.status}). It may be restarting: wait a moment, then try again. Anything already saved is kept.`
+            ? "The app is restarting for a moment. Wait a few seconds, then try again. Anything already saved is kept."
             : `Request failed (${res.status}).`)));
     throw new ApiError(message, res.status, code);
   }

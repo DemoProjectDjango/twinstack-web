@@ -34,7 +34,7 @@ const LOCKED = {
 };
 const NOT_PUBLISHED = "This folder isn't published with your site, so a file here couldn't be reached. Use assets or static.";
 // What the build writes at the site's root, which a file in static/ would replace.
-const BUILT_FILES = new Set(["index.html", "404.html", "sitemap.xml", "rss.xml", "search-index.json", "CNAME", "_redirects"]);
+const BUILT_FILES = new Set(["index.html", "404.html", "sitemap.xml", "rss.xml", "search-index.json", "agent-index.json", "CNAME", "_redirects"]);
 
 const isPublic = (rel) => rel === "assets" || rel === "static" || rel.startsWith("assets/") || rel.startsWith("static/");
 const lockOf = (rel) => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { COPY_PROGRESS_EVENT, type CopyProgress } from "@/lib/copy-website";
+import { COPY_PROGRESS_EVENT, COPY_STOP_EVENT, type CopyProgress } from "@/lib/copy-website";
 import { api, workspacePath } from "@/lib/site-api";
 import { attachmentUrl, type AssistantAction } from "@/lib/assistant-api";
 import { LiveDiff } from "../LiveDiff";
@@ -373,6 +373,8 @@ function CopyPrototype({ action, building }: { action: AssistantAction; building
   const [copy, setCopy] = useState<{ host: string; url: string; pages: CopiedPage[]; skipped: { url: string; reason: string }[] } | null>(null);
   const [screen, setScreen] = useState<"computer" | "phone">("computer");
   const [progress, setProgress] = useState<CopyProgress | null>(null);
+  const [stopRequested, setStopping] = useState(false);
+  const stopping = building && stopRequested;
 
   useEffect(() => {
     let cancelled = false;
@@ -385,7 +387,12 @@ function CopyPrototype({ action, building }: { action: AssistantAction; building
   }, [owner, repo, version, action.status]);
 
   useEffect(() => {
-    const onProgress = (event: Event) => setProgress((event as CustomEvent<CopyProgress>).detail);
+    const onProgress = (event: Event) => {
+      const detail = (event as CustomEvent<CopyProgress>).detail;
+      setProgress(detail);
+      // A new run starts with nothing done and nothing being built yet.
+      if (detail.done === 0 && !detail.working && !detail.retryPass) setStopping(false);
+    };
     window.addEventListener(COPY_PROGRESS_EVENT, onProgress);
     return () => window.removeEventListener(COPY_PROGRESS_EVENT, onProgress);
   }, []);
@@ -443,12 +450,27 @@ function CopyPrototype({ action, building }: { action: AssistantAction; building
       )}
       {copy.skipped.length > 0 && <p className="text-[11px] text-zinc-500">Left out: {copy.skipped.map((s) => s.url).join(", ")}</p>}
       {building && progress && (
-        <p role="status" className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-          <Spinner />
-          {progress.retryPass
-            ? `Trying the pages that didn't work again in a moment (try ${progress.retryPass} of 3)…`
-            : `Building page ${Math.min(progress.done + 1, progress.total)} of ${progress.total}${progress.working ? `: ${progress.working}` : ""}. You can keep working or reload: it carries on.`}
-        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p role="status" className="flex min-w-0 flex-1 items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+            <Spinner />
+            {stopping
+              ? "Stopping after this step…"
+              : progress.retryPass
+                ? `Trying the pages that didn't work once more in a moment (round ${progress.retryPass} of 3)…`
+                : `Building page ${Math.min(progress.done + 1, progress.total)} of ${progress.total}${progress.working ? `: ${progress.working}` : ""}. You can keep working while it builds.`}
+          </p>
+          <Button
+            variant="ghost"
+            className="text-xs"
+            disabled={stopping}
+            onClick={() => {
+              setStopping(true);
+              window.dispatchEvent(new Event(COPY_STOP_EVENT));
+            }}
+          >
+            Stop building
+          </Button>
+        </div>
       )}
     </div>
   );

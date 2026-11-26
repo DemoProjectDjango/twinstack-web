@@ -157,14 +157,14 @@ pm2 -v
 
 `git` is required at runtime too: the site manager uses it to clone and push users' sites.
 
-Optional: install Chromium as well, so HTML conversions that keep the old page's styling can test themselves. The copy is rendered next to the original at three widths before the preview is shown, and the preview lists the result.
+**A headless browser (needed for copying websites).** Copying a website, the AI looking at pages, and the render check of converted pages all run a headless Chrome on the server. `deploy.sh` checks for one on every deploy and, when none is found, installs Playwright's headless Chrome for the deploy user (in `~/.cache/ms-playwright`, no admin rights needed). It needs some system libraries once; if the deploy says the browser can't start, run what it prints, once, as an admin:
 
 ```bash
-sudo apt install -y chromium-browser   # or: sudo snap install chromium
-which chromium-browser chromium        # found on PATH automatically
+sudo npx --yes playwright@1.65.1 install-deps chromium-headless-shell
+bash deploy.sh --no-pull --full   # then check: curl -s http://127.0.0.1:4000/api/health  →  "browser":true
 ```
 
-If the browser lives somewhere else, set `CHROME_PATH=/path/to/chrome` in `server/.env`. Without a browser, conversions still work, and the preview says the render check was skipped. This needs Node 22 or newer, which step 6 installs.
+A Chrome or Chromium installed another way works too (found on PATH, or set `CHROME_PATH=/path/to/chrome` in `server/.env`). Ubuntu's `chromium-browser` is a snap package, which often can't start under PM2, so prefer the one above. Without a browser, copying websites is unavailable (owners see a plain message and the admins get one email), and HTML conversions still work with the render check skipped. Node 20.12 or newer is enough (Node 22 is recommended).
 
 ## 7. Install MongoDB 8.0
 

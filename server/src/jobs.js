@@ -159,7 +159,7 @@ async function runStep(job, step, { cwd, env }) {
     return { code, output: job.text.slice(Math.max(0, start - job.base)) };
   };
   try {
-    await step.run({ log: (text) => appendSafe(job, text.endsWith("\n") ? text : `${text}\n`), exec, cwd: step.cwd ?? cwd });
+    await step.run({ log: (text) => appendSafe(job, text.endsWith("\n") ? text : `${text}\n`), exec, cwd: step.cwd ?? cwd, signal: job.abort.signal });
     return job.cancelled ? 1 : 0;
   } catch (err) {
     appendSafe(job, `\n${err.message}\n`);
@@ -220,6 +220,8 @@ export function startJob({ key, userId, command, label, steps, cwd, env, release
     base: 0,
     child: null,
     cancelled: false,
+    // Function steps get its signal, so a cancel stops them (a browser closed, a loop ended) at once.
+    abort: new AbortController(),
     queuePosition: 0,
   };
   jobs.set(job.id, job);
@@ -293,6 +295,7 @@ export function cancelJob(job) {
   job.cancelled = true;
   leaveLine(job);
   job.child?.kill();
+  job.abort?.abort();
 }
 
 /** The running job in a workspace, so a reloaded page can reattach to it. */

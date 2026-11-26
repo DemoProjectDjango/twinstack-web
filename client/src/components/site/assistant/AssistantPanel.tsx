@@ -379,9 +379,12 @@ function Entry({
  * `choices`: whether the AI's buttons show, and whether they can be pressed yet.
  */
 function Parts({ parts, offerCredits = false, choices = "hidden" }: { parts: AssistantPart[]; offerCredits?: boolean; choices?: ChoicesState }) {
+  // Each change once, even when an answer's saved parts and its live ones overlap.
+  const seen = new Set<string>();
+  const shown = parts.filter((part) => part.type !== "action" || (!seen.has(part.id) && Boolean(seen.add(part.id))));
   return (
     <>
-      {parts.map((part, i) =>
+      {shown.map((part, i) =>
         part.type === "text" ? (
           <div key={i} className="space-y-2">
             <RichText text={part.text} />

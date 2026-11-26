@@ -254,7 +254,8 @@ export function AiActivity() {
       setStretch((s) => {
         const current = s && s.since === sentAt ? s : null;
         const ids = current?.ids ?? [];
-        const added = [...queued, ...working].filter((id) => !ids.includes(id));
+        // A change can be in both lists for a moment (taken off the queue as it starts): once each.
+        const added = [...new Set([...queued, ...working])].filter((id) => !ids.includes(id));
         return current && !added.length ? current : { started: current?.started ?? at, since: sentAt, ids: [...ids, ...added] };
       });
     }, 0);
@@ -267,7 +268,7 @@ export function AiActivity() {
     return () => clearInterval(timer);
   }, [stretch, busy]);
   const elapsed = stretch ? now - stretch.started : 0;
-  const steps = (stretch?.ids ?? []).map((id) => actions[id]).filter(Boolean);
+  const steps = [...new Set(stretch?.ids ?? [])].map((id) => actions[id]).filter(Boolean);
   const stretchKey = stretch ? String(stretch.started) : (turn?.id ?? null);
   /** Hides the window (the work goes on) and shows the finished change on Edit site. */
   const seeIt = (url: string) => {
