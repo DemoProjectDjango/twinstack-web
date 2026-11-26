@@ -190,6 +190,16 @@ const SCROLL = `(async () => {
   return true;
 })()`;
 
+// Error pages a website sends with a 200 (WordPress, hosts, CDNs): copied, they'd be "the page".
+const ERROR_PAGES = [
+  /Error establishing a database connection/i,
+  /There has been a critical error on this website/i,
+  /Briefly unavailable for scheduled maintenance/i,
+  /\b(?:500|502|503|504|520|521|522|523|524)\b[^.]{0,40}\b(?:Internal Server Error|Bad Gateway|Service (?:Temporarily )?Unavailable|Gateway Time-?out|Web server is (?:down|returning an unknown error)|Connection timed out|Origin is unreachable)/i,
+  /^(?:Internal Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out|Database Error|Site Maintenance|Account Suspended)\b/i,
+  /This (?:site|account) (?:is temporarily unavailable|has been suspended)/i,
+];
+
 /** A browser that may only reach public addresses, with a way to wait for a page to settle. */
 async function openBrowser() {
   const chrome = findChrome();
@@ -210,6 +220,7 @@ async function openBrowser() {
   let inflight = 0;
   let lastActivity = Date.now();
   let loaded = null;
+  let docStatus = null;
   client.on((m) => {
     if (m.method === "Fetch.requestPaused") {
       const { requestId, request, resourceType } = m.params;
@@ -223,6 +234,9 @@ async function openBrowser() {
       inflight = Math.max(0, inflight - 1);
       lastActivity = Date.now();
     } else if (m.method === "Page.loadEventFired") loaded?.();
+    // The page's own answer (the first document after navigating: the main frame's), so an error
+    // page the website sends (a 503, a 500) isn't copied as if it were the page.
+    else if (m.method === "Network.responseReceived" && m.params.type === "Document" && docStatus === null) docStatus = m.params.response?.status ?? null;
   });
   await client.send("Page.enable");
   await client.send("Network.enable");
@@ -239,6 +253,7 @@ async function openBrowser() {
   const open = async (url, screen) => {
     await client.send("Emulation.setDeviceMetricsOverride", { width: screen.width, height: screen.height, deviceScaleFactor: 1, mobile: screen.mobile });
     inflight = 0;
+    docStatus = null;
     const done = new Promise((resolve) => { loaded = resolve; });
     const nav = await client.send("Page.navigate", { url });
     if (nav.result?.errorText) throw new Error(`it didn't open (${nav.result.errorText})`);
@@ -248,6 +263,19 @@ async function openBrowser() {
     await settle(600, 5_000);
     await client.evaluate("document.fonts.ready.then(() => true)");
     return client.evaluate("location.href");
+  };
+  /** Why the open page is the website's error page rather than its content, or null. */
+  const problem = async () => {
+    if (docStatus >= 500) return `the website answered with an error (${docStatus})`;
+    if (docStatus === 404 || docStatus === 410) return "the page isn't there any more";
+    if (docStatus >= 400) return `the website refused it (${docStatus})`;
+    const seen = await client.evaluate(`(() => { const t = (document.body ? document.body.innerText : '').replace(/\\s+/g, ' ').trim(); return { title: document.title || '', text: t.slice(0, 2000), length: t.length }; })()`);
+    // Only a short page is read as an error page: a real article may mention these words.
+    if (seen && seen.length < 1500) {
+      const said = ERROR_PAGES.find((pattern) => pattern.test(`${seen.title} ${seen.text}`));
+      if (said) return `the website showed an error instead of the page ("${(seen.text.match(said) ?? seen.title.match(said) ?? [""])[0].slice(0, 80)}")`;
+    }
+    return null;
   };
   const shoot = async (screen) => {
     const height = Math.min(screen.maxHeight, (await client.evaluate("document.documentElement.scrollHeight")) || screen.height);
@@ -273,7 +301,7 @@ async function openBrowser() {
     await settle(400, 3_000);
     return shootPart(screen, y, height);
   };
-  return { open, shoot, resizeAndShoot, shootPart, resizeAndShootPart, evaluate: client.evaluate, close: client.close };
+  return { open, problem, shoot, resizeAndShoot, shootPart, resizeAndShootPart, evaluate: client.evaluate, close: client.close };
 }
 
 const EXTENSIONS = {
@@ -652,7 +680,19 @@ async function copyNow(key, { url, maxPages }, log, signal) {
         const page = await Promise.race([
           (async () => {
             const shots = {};
-            const landed = pageKey(await browser.open(target, SCREENS.computer));
+            let landed = pageKey(await browser.open(target, SCREENS.computer));
+            // A website having a moment (its database down, a busy server) answers with an error
+            // page: wait and try again, and never copy the error page as the page.
+            for (const wait of [5_000, 15_000]) {
+              const issue = await browser.problem();
+              if (!issue) break;
+              log(`  … ${target}: ${issue}. Trying again in ${wait / 1000} s.`);
+              await sleep(wait);
+              stopped();
+              landed = pageKey(await browser.open(target, SCREENS.computer));
+            }
+            const issue = await browser.problem();
+            if (issue) throw new Error(issue);
             if (!landed || siteHost(new URL(landed).hostname) !== host) throw new Error(`it sends visitors to another website (${landed})`);
             shots.computer = await browser.shoot(SCREENS.computer);
             const snapshot = await browser.evaluate(SNAPSHOT);
@@ -671,7 +711,14 @@ async function copyNow(key, { url, maxPages }, log, signal) {
         stopped();
         skipped.push({ url: target, reason: err.message });
         log(`  ! Skipped ${target}: ${err.message}`);
-        if (!frozen.length) throw new WorkspaceError(`The website couldn't be opened: ${err.message}`, 400);
+        if (!frozen.length) {
+          throw new WorkspaceError(
+            /error|refused|isn't there/.test(err.message)
+              ? `${host} couldn't be copied: ${err.message}. The website may be having a problem right now; try again in a few minutes.`
+              : `The website couldn't be opened: ${err.message}`,
+            400,
+          );
+        }
       }
     }
   } finally {
