@@ -104,6 +104,7 @@ function complete(view: AgentView): AgentView {
     icons: view.icons ?? ["chat", "sparkle", "question", "wave", "heart", "logo", "image"],
     animations: view.animations ?? ["none", "pulse", "bounce", "wiggle", "glow"],
     iconPreview: view.iconPreview ?? null,
+    iconMissing: view.iconMissing ?? false,
     knowledge: view.knowledge ?? { source: null, pages: [] },
     rememberDays: view.rememberDays ?? 30,
     rememberedVisitors: view.rememberedVisitors ?? 0,
@@ -515,7 +516,15 @@ function AgentIconSvg({ icon, className, picture }: { icon: AgentIcon; className
   if (icon === "image")
     return picture ? (
       // eslint-disable-next-line @next/next/no-img-element -- a data: URL preview
-      <img src={picture} alt="" className={`rounded-full object-cover ${className ?? ""}`} />
+      <img
+        src={picture}
+        alt=""
+        className={`rounded-full object-cover ${className ?? ""}`}
+        // A picture that can't load shows as the chat icon, never a broken image.
+        onError={(e) => {
+          e.currentTarget.style.display = "none";
+        }}
+      />
     ) : (
       <span className={`grid place-items-center rounded-full bg-white text-[9px] font-bold text-zinc-900 ${className ?? ""}`} aria-hidden="true">
         +
@@ -543,9 +552,10 @@ function inkFor(hex: string) {
 
 function LookForm({ view, draft, setDraft, owner, repo }: { view: AgentView; draft: AgentSettings; setDraft: (d: AgentSettings) => void; owner: string; repo: string }) {
   // A preview of the chosen picture: the server's small preview, else the picture itself (raster).
-  const [picture, setPicture] = useState<string | null>(
-    () => view.iconPreview ?? (/\.(png|jpe?g|gif|webp)$/i.test(view.settings.iconImage) ? workspaceImageUrl(owner, repo, view.settings.iconImage.slice(1)) : null),
+  const [picture, setPicture] = useState<string | null>(() =>
+    view.iconMissing ? null : (view.iconPreview ?? (/\.(png|jpe?g|gif|webp)$/i.test(view.settings.iconImage) ? workspaceImageUrl(owner, repo, view.settings.iconImage.slice(1)) : null)),
   );
+  const [missing, setMissing] = useState(view.iconMissing);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<unknown>(null);
   // Choosing one of the site's own pictures (assets/img/ in its repository).
@@ -565,6 +575,7 @@ function LookForm({ view, draft, setDraft, owner, repo }: { view: AgentView; dra
   }
   function pick(image: string) {
     setPicture(workspaceImageUrl(owner, repo, image));
+    setMissing(false);
     setDraft({ ...draft, icon: "image", iconImage: `/${image}` });
     setBrowsing(false);
   }
@@ -581,7 +592,8 @@ function LookForm({ view, draft, setDraft, owner, repo }: { view: AgentView; dra
         method: "POST",
         body: { name: `agent-${file.name}`, data: await readAsBase64(file) },
       });
-      setPicture(result.preview);
+      setPicture(result.preview ?? workspaceImageUrl(owner, repo, result.path.slice(1)));
+      setMissing(false);
       setDraft({ ...draft, icon: "image", iconImage: result.path });
     } catch (err) {
       setUploadError(err);
@@ -665,6 +677,12 @@ function LookForm({ view, draft, setDraft, owner, repo }: { view: AgentView; dra
                 </label>
                 <span className="text-xs text-zinc-500">A square picture works best: your logo, a mascot or a friendly face. It fills the round button. PNG, JPEG, WebP or SVG, up to 2 MB.</span>
                 {uploadError ? <ErrorText error={uploadError} /> : null}
+                {missing && draft.iconImage && (
+                  <p className="w-full rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                    The picture chosen for the button isn&apos;t in this copy of your site: it was added in another browser and
+                    hasn&apos;t been published yet. Choose it again from your site&apos;s files, or upload it again.
+                  </p>
+                )}
                 {browsing && (
                   <div className="w-full rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
                     {siteImages === null ? (

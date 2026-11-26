@@ -75,6 +75,8 @@ export type AgentView = {
   animations: AgentAnimation[];
   /** A preview of `iconImage` (data: URL), or null. */
   iconPreview: string | null;
+  /** `iconImage` isn't in this browser's copy of the site (chosen elsewhere and not published yet). */
+  iconMissing: boolean;
   /** What the agent knows of the site now. "full"/"start": read from the published site; "saved": your copy, when the published site can't be read. */
   knowledge: { source: "full" | "start" | "saved" | null; pages: { url: string; title: string; chars: number }[] };
 };

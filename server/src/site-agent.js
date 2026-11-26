@@ -977,6 +977,8 @@ export async function agentView({ key, siteId, userId, accessToken }) {
     icons: ICONS,
     animations: ANIMATIONS,
     iconPreview: agent?.iconImage ? await imagePreview(key, agent.iconImage).catch(() => null) : null,
+    // The picture was added in another browser's copy and not published yet: this copy doesn't have it.
+    iconMissing: Boolean(agent?.iconImage) && !(await fs.stat(path.join(dir, agent.iconImage.slice(1))).then((s) => s.isFile(), () => false)),
     // What the agent knows of the site now: which pages, how much of each, and from where.
     knowledge: {
       source: agent?.enabled ? (knowledgeSource.get(siteId) ?? "saved") : null,

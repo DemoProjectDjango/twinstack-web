@@ -54,7 +54,17 @@ export const OUT_OF_CREDITS = /used all your (?:Claude |AI )?credits|billing_err
 export function reasonOf(output: string) {
   const refused = output.match(/Refused to write[^\n]*\n((?:\s+- .*\n?)+)/);
   if (refused) return `It looked wrong, so nothing was written: ${refused[1].trim().split("\n").map((line) => line.trim().replace(/^- /, "")).join("; ")}`;
-  return output.trim().split("\n").slice(-6).join("\n") || "It stopped without saying why.";
+  // Older site tools give up on big themes' stylesheets; the site update brings the ones that cope.
+  if (/CSS is over 600 KB/.test(output)) return "Its design is larger than your site's current tools can bring in. Install the latest site update (Edit site offers it), then build again.";
+  const cant = output.match(/Can't convert: (.+)/);
+  if (cant) return `It couldn't be brought in: ${cant[1].trim().replace(/\.$/, "")}.`;
+  // The last lines that say something, without file paths or exit codes.
+  const lines = output
+    .trim()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^(HTML|File|Mode|CSS|JS):/.test(line) && !/^Ended: /.test(line) && !/\.git\//.test(line));
+  return lines.slice(-3).join(" ") || "It stopped without saying why.";
 }
 
 export function OriginalPages() {

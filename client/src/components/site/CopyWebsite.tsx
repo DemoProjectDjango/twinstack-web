@@ -185,8 +185,11 @@ export function CopyWebsiteRunner() {
         stopRef.current = false;
         await latest.current.refresh().catch(() => {});
         runningRef.current = false;
-        const reasons = Object.values(failed).slice(0, 3);
-        const detail: CopyDone = { broughtIn: done, total, missing, stopped: stopped ?? (reasons.length ? `Some pages didn't work: ${reasons.join(" | ").slice(0, 500)}` : null) };
+        // The same reason for several pages is said once, with how many it was.
+        const counts = new Map<string, number>();
+        for (const reason of Object.values(failed)) counts.set(reason, (counts.get(reason) ?? 0) + 1);
+        const reasons = [...counts].slice(0, 3).map(([reason, n]) => (n > 1 ? `${n} pages: ${reason}` : reason));
+        const detail: CopyDone = { broughtIn: done, total, missing, stopped: stopped ?? (reasons.length ? `Some pages didn't work. ${reasons.join(" ").slice(0, 500)}` : null) };
         window.dispatchEvent(new CustomEvent(COPY_DONE_EVENT, { detail }));
       }
     }
