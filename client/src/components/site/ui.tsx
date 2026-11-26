@@ -95,7 +95,7 @@ export function Badge({ children }: { children: ReactNode }) {
 export function ScreenHeader({ title, description, children }: { title: string; description?: ReactNode; children?: ReactNode }) {
   return (
     <header className="flex flex-wrap items-start gap-3">
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 basis-56">
         <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
         {description && <p className="mt-1 text-sm text-zinc-500">{description}</p>}
       </div>
@@ -139,7 +139,7 @@ export function StepList({ steps }: { steps: Step[] }) {
             >
               {step.done ? "✓" : index + 1}
             </span>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 basis-40">
               <p className={`font-medium ${step.done ? "text-zinc-500 line-through decoration-zinc-400" : ""}`}>
                 {step.title}
                 {step.optional && <span className="ml-2 text-xs font-normal text-zinc-500">Optional</span>}
@@ -147,7 +147,8 @@ export function StepList({ steps }: { steps: Step[] }) {
               </p>
               {step.text && !step.done && <p className="mt-0.5 text-sm text-zinc-500">{step.text}</p>}
             </div>
-            {step.action && !step.done && <div className="flex shrink-0 flex-wrap gap-2">{step.action}</div>}
+            {/* On a phone the buttons go under the text (lined up with it), so the text keeps its width. */}
+            {step.action && !step.done && <div className="flex basis-full flex-wrap gap-2 pl-10 sm:basis-auto sm:shrink-0 sm:pl-0">{step.action}</div>}
           </li>
         );
       })}

@@ -104,7 +104,7 @@ export function PreviousVersions() {
             <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
               {earlier.map((v) => (
                 <li key={v.sha} className="flex flex-wrap items-center gap-3 p-3">
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 basis-56">
                     <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
                       <span className="truncate">{v.title}</span>
                       {v.kind === "update" && <Badge>Site update</Badge>}

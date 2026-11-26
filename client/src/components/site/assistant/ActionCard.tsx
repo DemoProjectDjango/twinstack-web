@@ -451,7 +451,7 @@ function CopyPrototype({ action, building }: { action: AssistantAction; building
       {copy.skipped.length > 0 && <p className="text-[11px] text-zinc-500">Left out: {copy.skipped.map((s) => s.url).join(", ")}</p>}
       {building && progress && (
         <div className="flex flex-wrap items-center gap-2">
-          <p role="status" className="flex min-w-0 flex-1 items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+          <p role="status" className="flex min-w-0 flex-1 basis-56 items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
             <Spinner />
             {stopping
               ? "Stopping after this step…"

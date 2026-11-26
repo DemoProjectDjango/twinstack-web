@@ -237,9 +237,8 @@ export function BrandPanel() {
       title="Logo"
       description={
         <>
-          The logo, icon and name in the site&apos;s header, footer and browser tab. They&apos;re kept in{" "}
-          <code className="font-mono">site.config.json</code> (brand), and uploads go to{" "}
-          <code className="font-mono">assets/img/brand/</code>. Save, and Edit site shows it by itself.
+          The logo, icon and name shown in your site&apos;s header, footer and browser tab. Save, and Edit site shows them
+          straight away; publish to show them to visitors.
         </>
       }
     >
@@ -289,9 +288,8 @@ export function BrandPanel() {
       {info && !info.supported && !info.headerLogo && (
         <div className="mb-3">
           <Notice tone="warning">
-            This copy&apos;s header and footer only show the icon and name. To use a full logo, a dark-background logo or a
-            favicon, update <code className="font-mono">templates/partials/header.html</code>,{" "}
-            <code className="font-mono">footer.html</code> and <code className="font-mono">base.html</code> from the template.
+            Your site&apos;s header and footer can only show a small icon and the name for now. To use a full logo, a logo
+            for dark backgrounds or a browser-tab icon, install the latest site update (Edit site offers it).
           </Notice>
         </div>
       )}

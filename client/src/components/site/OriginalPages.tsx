@@ -277,7 +277,7 @@ export function OriginalPages() {
   return (
     <section aria-label="Your existing pages" className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
       <div className="flex flex-wrap items-start gap-3">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-56">
           <h3 className="font-medium">Pages from your old site</h3>
           <p className="mt-0.5 text-sm text-zinc-500">
             {left.length
@@ -328,7 +328,7 @@ export function OriginalPages() {
       <ul ref={listRef} className="relative max-h-[22rem] divide-y divide-zinc-200 overflow-y-auto rounded-md border border-zinc-200 text-sm dark:divide-zinc-800 dark:border-zinc-800">
         {pages.map((page) => (
           <li key={page.file} data-file={page.file} className="flex flex-wrap items-center gap-2 px-3 py-2">
-            <span className="min-w-0 flex-1">
+            <span className="min-w-0 flex-1 basis-56">
               <span className="font-medium">{page.title ?? page.file}</span> <span className="text-zinc-500">{page.address}</span>
             </span>
             {working === page.file ? (

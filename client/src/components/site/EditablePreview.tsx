@@ -416,7 +416,8 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
             />
           </div>
         )}
-        <p className="min-w-0 flex-1 text-sm text-zinc-500">
+        {/* On a phone the hint has its own line under the controls, so neither gets squeezed. */}
+        <p className="order-last min-w-0 flex-1 basis-full text-sm text-zinc-500 md:order-none md:basis-56">
           {editing
             ? "Edit text: click any words on your site and type. Enter saves, Esc cancels. Links don't open in this mode."
             : "Click like a visitor: links and buttons open just as they do on your live site. Choose Edit text to change words again."}

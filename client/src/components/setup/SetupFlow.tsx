@@ -1592,7 +1592,7 @@ function ChromeStep({
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-zinc-50 p-3 dark:bg-zinc-900/60">
-        <p className="min-w-0 flex-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="min-w-0 flex-1 basis-56 text-sm text-zinc-600 dark:text-zinc-400">
           {isDefault
             ? "This is the default design: a clean, modern look."
             : "Happy with the default? It's one click away."}

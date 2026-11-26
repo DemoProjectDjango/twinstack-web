@@ -1088,7 +1088,8 @@ function TopBar() {
         <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" />
         </svg>
-        {chatOpen ? "Hide chat" : "Chat with the AI"}
+        <span className="sm:hidden">{chatOpen ? "Hide chat" : "Chat"}</span>
+        <span className="hidden sm:inline">{chatOpen ? "Hide chat" : "Chat with the AI"}</span>
         {aiWorking && !chatOpen && <span className="size-2 animate-pulse rounded-full bg-indigo-500 motion-reduce:animate-none" aria-label="The AI is working" />}
       </button>
       <div className="relative">
@@ -1106,8 +1107,9 @@ function TopBar() {
         {label}
       </button>
       {showNudge && (
-        <div role="status" className="absolute right-0 top-12 z-40 w-72 rounded-2xl bg-zinc-900 p-4 text-sm text-white shadow-xl dark:bg-zinc-100 dark:text-zinc-900">
-          <span aria-hidden="true" className="absolute -top-1.5 right-8 size-3 rotate-45 bg-zinc-900 dark:bg-zinc-100" />
+        // A card across the bottom of the screen on a phone (above the AI box); under Publish from sm up.
+        <div role="status" className="fixed inset-x-4 bottom-24 z-40 rounded-2xl bg-zinc-900 p-4 text-sm text-white shadow-xl sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-12 sm:w-72 dark:bg-zinc-100 dark:text-zinc-900">
+          <span aria-hidden="true" className="absolute -top-1.5 right-8 hidden size-3 rotate-45 bg-zinc-900 sm:block dark:bg-zinc-100" />
           <p className="font-semibold">Your changes aren&apos;t on your website yet</p>
           <p className="mt-1 opacity-80">They&apos;re saved here, but visitors only see them once you press Publish.</p>
           <button type="button" onClick={dismissNudge} className="mt-3 font-semibold underline">

@@ -248,7 +248,7 @@ export function ChangesPanel() {
                 <li key={change.path} className="px-3 py-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge>{label}</Badge>
-                    <span className="min-w-0 flex-1 text-sm font-medium">{what}</span>
+                    <span className="min-w-0 flex-1 basis-56 text-sm font-medium">{what}</span>
                     <Button variant="ghost" className="px-2 py-0.5 text-xs" disabled={disabled} onClick={() => void discard([change.path], `the change to "${what}"`)}>
                       Undo
                     </Button>

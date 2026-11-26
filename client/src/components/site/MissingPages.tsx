@@ -135,7 +135,7 @@ export function MissingPages() {
       <ul className="mt-3 max-h-[17rem] space-y-2 overflow-y-auto pr-1">
         {pages.map((page) => (
           <li key={page.href} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-amber-200 bg-background p-3 text-sm text-foreground dark:border-amber-900">
-            <span className="min-w-0 flex-1">
+            <span className="min-w-0 flex-1 basis-56">
               <span className="font-medium">{page.kind === "page" ? <code className="font-mono">{page.href}</code> : what(page)}</span>
               {page.label && page.kind === "page" ? <span className="text-zinc-500"> “{page.label}”</span> : null}
               <span className="block text-xs text-zinc-500">Linked from {linkedFrom(page)}</span>

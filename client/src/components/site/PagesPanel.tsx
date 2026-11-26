@@ -628,7 +628,7 @@ function PageRow({ page, query = "", unlinked, nav, onNavChanged }: { page: Site
   return (
     <li className="px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-56">
           <span className="mr-2 font-medium">
             <Highlight text={page.title} query={query} />
           </span>

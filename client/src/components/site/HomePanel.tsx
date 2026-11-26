@@ -180,7 +180,7 @@ function LiveCard() {
     <section className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
       {publishing.enabled && publishing.url ? (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 basis-56">
             <p className="text-sm text-zinc-500">Your site&apos;s address</p>
             <a href={publishing.url} target="_blank" rel="noreferrer" className="break-all text-lg font-medium hover:underline">
               {publishing.url.replace(/^https?:\/\//, "").replace(/\/$/, "")} ↗
@@ -204,7 +204,7 @@ function LiveCard() {
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-4">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 basis-56">
             <p className="font-medium">Your site isn&apos;t on the web yet</p>
             <p className="mt-1 text-sm text-zinc-500">
               Turn on publishing to give it a web address. It&apos;s free.

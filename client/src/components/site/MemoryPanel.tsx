@@ -34,9 +34,8 @@ export function MemoryPanel() {
     return (
       <Section title="AI notes about your site">
         <Notice>
-          This site&apos;s scripts were copied before the AI&apos;s memory existed, so the AI doesn&apos;t keep notes or a work log
-          here yet. A copy needs <code className="font-mono">scripts/lib/knowledge.js</code> and the updated scripts from the
-          template.
+          Your site was made before the AI could keep notes, so it doesn&apos;t remember earlier work here yet. Install the
+          latest site update (Edit site offers it) to turn this on.
         </Notice>
       </Section>
     );

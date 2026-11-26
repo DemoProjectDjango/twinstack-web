@@ -1202,7 +1202,7 @@ function Suggestions({
       <ul className="space-y-2">
         {items.map((item) => (
           <li key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-zinc-200 p-3 text-sm dark:border-zinc-800">
-            <span className="min-w-0 flex-1">{item.text}</span>
+            <span className="min-w-0 flex-1 basis-56">{item.text}</span>
             {item.actions && <span className="flex flex-wrap gap-2">{item.actions}</span>}
           </li>
         ))}

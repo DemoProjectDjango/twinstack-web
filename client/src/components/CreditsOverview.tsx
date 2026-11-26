@@ -121,7 +121,7 @@ function Balance({ credits }: { credits: Credits }) {
       </dl>
       {credits.freePending && credits.source === "credits" && (
         <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md bg-sky-500/10 px-4 py-3">
-          <p className="min-w-0 flex-1 text-sm text-sky-900 dark:text-sky-200">
+          <p className="min-w-0 flex-1 basis-56 text-sm text-sky-900 dark:text-sky-200">
             Connect your GitHub account to get {formatCredits(credits.freeCredits)} free credits.
           </p>
           {/* Plain <a>: a full-page navigation to the Express OAuth route. */}

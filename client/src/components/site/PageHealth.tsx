@@ -122,7 +122,7 @@ export function PageHealth({ health, onOpen }: { health: ReturnType<typeof usePa
           <ul className="mt-3 space-y-2">
             {group.map((page) => (
               <li key={page.file} className="flex flex-wrap items-center gap-2 rounded-md border border-red-200 bg-background p-3 text-sm text-foreground dark:border-red-900">
-                <span className="min-w-0 flex-1">
+                <span className="min-w-0 flex-1 basis-56">
                   <span className="font-medium">{page.title}</span>{" "}
                   <span className="font-mono text-xs text-zinc-500">{page.file}</span>
                 </span>
@@ -151,7 +151,7 @@ export function PageHealth({ health, onOpen }: { health: ReturnType<typeof usePa
           <ul className="mt-3 space-y-2">
             {unlinked.map((page) => (
               <li key={page.file} className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-background p-3 text-sm text-foreground dark:border-amber-900">
-                <span className="min-w-0 flex-1">
+                <span className="min-w-0 flex-1 basis-56">
                   <span className="font-medium">{page.title}</span> <span className="font-mono text-xs text-zinc-500">{page.url}</span>
                 </span>
                 <Button className="px-2.5 py-1 text-xs" disabled={locked} onClick={() => onOpen(page.file)}>
