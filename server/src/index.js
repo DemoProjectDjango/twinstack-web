@@ -51,7 +51,7 @@ const json = express.json();
 // inline styles and scripts pass 100kb. 10mb matches Nginx's client_max_body_size.
 const largeJson = express.json({ limit: "10mb" });
 const LARGE_JSON_PATH = /^\/api\/workspaces\/[^/]+\/[^/]+\/proposal\/apply$/;
-const UPLOAD_PATH = /^\/api\/workspaces\/[^/]+\/[^/]+\/(uploads|files|files\/page|html-source|css\/source|scripts|brand\/image|assistant\/attachments)$/;
+const UPLOAD_PATH = /^\/api\/workspaces\/[^/]+\/[^/]+\/(uploads|files|files\/page|html-source|css\/source|scripts|brand\/image|assistant\/attachments|site-zip\/chunk)$/;
 app.use((req, res, next) => {
   if (UPLOAD_PATH.test(req.path)) return next();
   return (LARGE_JSON_PATH.test(req.path) ? largeJson : json)(req, res, next);

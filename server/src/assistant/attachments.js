@@ -286,6 +286,8 @@ export function sitePathFor(meta, wanted) {
 // .git so they're never a change to the site, and named by the attachment so the command can say
 // where they are before they're copied.
 export const REFERENCE_DIR = ".git/twinstack-references";
+/** How many design pictures one page may follow (edit-page.js MAX_REFERENCES; older writers take 2). */
+export const MAX_REFERENCES = 6;
 export const referencePath = (id) => `${REFERENCE_DIR}/${id}.img`;
 
 /** Copies an attached image where the page writer reads design references from. */

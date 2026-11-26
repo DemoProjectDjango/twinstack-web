@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { addAttachmentToSite, attachmentBlock, attachmentText, ensureUploaded, readAttachment, readAttachmentMeta, saveMadeImage, sitePathFor } from "./attachments.js";
+import { MAX_REFERENCES, addAttachmentToSite, attachmentBlock, attachmentText, ensureUploaded, readAttachment, readAttachmentMeta, saveMadeImage, sitePathFor } from "./attachments.js";
 import { SCREENS, describeView, viewPage } from "./view-page.js";
 import { DEFAULT_PAGES, MAX_PAGES, lookAtWebsite, normaliseStartUrl } from "../copy-website.js";
 import { appended, describePlan, outlineOf, planBlocks } from "./copy-blocks.js";
@@ -94,7 +94,7 @@ const designReferenceField = {
     type: "array",
     items: { type: "string" },
     description:
-      "Up to 2 att_… ids of attached screenshots or mockups of the design the owner wants this page to have. The writer sees them and replicates their layout, colours, type and details exactly; they're never put on the page. Use this, not images, whenever the owner wants a page to look like a picture they attached.",
+      "Up to 6 att_… ids of attached screenshots, mockups or video frames of the design the owner wants this page to have, in order down the page. The writer sees them and replicates their layout, colours, type and details exactly; they're never put on the page. Use this, not images, whenever the owner wants a page to look like a picture they attached.",
   },
 };
 const continueField = { continue_after: { type: "boolean" } };
@@ -721,8 +721,12 @@ async function imagesOf(input, key) {
 async function referencesOf(input, key) {
   const list = input?.design_reference;
   if (list === undefined || list === null || (Array.isArray(list) && !list.length)) return {};
-  if (!Array.isArray(list) || list.length > 2) throw new ToolInputError("design_reference must be a list of at most 2 attachment ids.");
+  if (!Array.isArray(list) || list.length > MAX_REFERENCES) throw new ToolInputError(`design_reference must be a list of at most ${MAX_REFERENCES} attachment ids.`);
   const script = await readFile(path.join(workspaceDir(key), "scripts", "edit-page.js"), "utf8").catch(() => "");
+  // Writers from before MAX_REFERENCES look at the first 2 only.
+  if (!script.includes("MAX_REFERENCES") && list.length > 2) {
+    throw new ToolInputError("This site's page writer looks at 2 design pictures at most until the latest site update: pick the 2 that show the most, and describe the rest in the instruction.");
+  }
   if (!script.includes("--reference=")) {
     throw new ToolInputError(
       "This site's page writer can't look at a design picture yet: it needs the latest site update, which the editor offers. Tell the owner that, and offer to describe the design in words meanwhile.",

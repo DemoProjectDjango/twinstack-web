@@ -67,6 +67,9 @@ export function reasonOf(output: string) {
   return lines.slice(-3).join(" ") || "It stopped without saying why.";
 }
 
+/** Asks the list to bring in every page not in yet (after a website was uploaded as a zip). */
+export const BRING_IN_ALL_EVENT = "twinstack:original-pages-bring-in-all";
+
 export function OriginalPages() {
   // Once everything is in and live, the list folds to one line; this opens it again.
   const [showDone, setShowDone] = useState(false);
@@ -228,6 +231,26 @@ export function OriginalPages() {
     stopRef.current = true;
     setStopping(true);
   }
+
+  // "Upload a website (.zip)" (SiteZipUpload) asks for every page not in yet to be brought in, once
+  // the list has its new pages.
+  const bringInRef = useRef(bringIn);
+  useEffect(() => {
+    bringInRef.current = bringIn;
+  });
+  useEffect(() => {
+    const onRequest = () => {
+      void api<{ pages: OriginalPage[] }>(workspacePath(owner, repo, "/original-pages"))
+        .then((data) => {
+          setPages(data.pages);
+          const files = data.pages.filter((p) => !p.broughtIn).map((p) => p.file);
+          if (files.length) void bringInRef.current(files);
+        })
+        .catch((err) => setError(err));
+    };
+    window.addEventListener(BRING_IN_ALL_EVENT, onRequest);
+    return () => window.removeEventListener(BRING_IN_ALL_EVENT, onRequest);
+  }, [owner, repo]);
 
   // A "Bring in" cut short by a reload or a visit to another page carries on by itself.
   useEffect(() => {

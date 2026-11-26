@@ -7,6 +7,7 @@ import { describeTaskSize, taskSize } from "../task-size.js";
 import { usageTarget } from "../usage-history.js";
 import { publicJobView } from "../model-words.js";
 import { listOriginalPages, prepareOriginalPage } from "../original-pages.js";
+import { importZip, newZipUpload, receiveZipChunk } from "../site-zip.js";
 import { DEFAULT_PAGES, MAX_PAGES, clearCopiedWebsite, copiedPageShot, copyWebsiteStep, finishCopiedWebsite, normaliseStartUrl, prepareCopiedPage, readCopiedWebsite } from "../copy-website.js";
 import { config } from "../config.js";
 import { getClaudeModel, getSiteDisplayName, noteSetupPublished, noteSetupSignal } from "../db.js";
@@ -608,6 +609,33 @@ workspacesRouter.post(
 workspacesRouter.get(
   "/:owner/:repo/original-pages",
   handle(async (req, res) => res.json({ pages: await listOriginalPages(keyFor(req)) })),
+);
+
+/* Upload a website (.zip) (site-zip.js): pieces of the zip, then unpacking it into the site. */
+
+workspacesRouter.post(
+  "/:owner/:repo/site-zip/start",
+  handle(async (req, res) => {
+    keyFor(req);
+    res.json(newZipUpload());
+  }),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/site-zip/chunk",
+  // Pieces of up to 8 MB, and base64 adds a third (its own limit: see UPLOAD_PATH in index.js).
+  express.json({ limit: "12mb" }),
+  handle(async (req, res) => res.json(await receiveZipChunk(keyFor(req), req.body ?? {}))),
+);
+
+workspacesRouter.post(
+  "/:owner/:repo/site-zip/finish",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const result = await importZip(key, req.body ?? {});
+    await logOwnerEdit(key, { command: "owner:files", file: "static/", instruction: `The owner uploaded a website as a zip: ${result.pages.length} pages and ${result.files} files` });
+    res.json({ ...result, status: await getStatus(key) });
+  }),
 );
 
 workspacesRouter.post(

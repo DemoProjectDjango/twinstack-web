@@ -8,6 +8,7 @@ import { api, isHomePage, workspacePath, type NavigationInfo, type NavItem, type
 import { PageContentEditor } from "./EditPanel";
 import { markVisited } from "./HomePanel";
 import { OriginalPages } from "./OriginalPages";
+import { SiteZipUpload } from "./SiteZipUpload";
 import { PageHealth, usePageHealth } from "./PageHealth";
 import { PageSeo } from "./SeoPanel";
 import { useSite, type PageEditMode } from "./site-context";
@@ -126,6 +127,7 @@ function PageList() {
         </EmptyState>
       )}
 
+      <SiteZipUpload />
       <OriginalPages />
 
       {pageCount > 0 && <PageHealth health={health} onOpen={(file) => void editFile(file, "generate")} />}

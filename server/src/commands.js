@@ -18,7 +18,7 @@ import {
 } from "./site-files.js";
 import { WorkspaceError, clearPreviewStamp, markInstalled, markPreviewBuilt } from "./workspace.js";
 import { SEO_REPORT } from "./seo.js";
-import { copyReference, referencePath } from "./assistant/attachments.js";
+import { MAX_REFERENCES, copyReference, referencePath } from "./assistant/attachments.js";
 import { saveCheckReport } from "./site-check.js";
 import { buildSteps } from "./setup-build.js";
 import { scanMissingPages } from "./missing-pages.js";
@@ -174,10 +174,10 @@ function jsSources(input) {
 }
 
 /** Images for a Claude edit: https URLs, or image files under assets/img/ in the repo. */
-/** Attached screenshots (att_… ids, at most 2) of a design the page should copy (edit-page.js --reference). */
+/** Attached screenshots (att_… ids, at most MAX_REFERENCES) of a design the page should copy (edit-page.js --reference). */
 function references(input) {
   const list = input?.references ?? [];
-  if (!Array.isArray(list) || list.length > 2) throw new WorkspaceError("Give at most 2 designs to follow.", 400);
+  if (!Array.isArray(list) || list.length > MAX_REFERENCES) throw new WorkspaceError(`Give at most ${MAX_REFERENCES} pictures of the design to follow.`, 400);
   return list.map((id) => {
     if (typeof id !== "string" || !/^att_[0-9a-f]{16}$/.test(id)) throw new WorkspaceError("Attach the design again.", 400);
     return id;

@@ -94,7 +94,12 @@ export async function listOriginalPages(key) {
     const address = addressOfFile(file);
     const page = pages.find((p) => sameAddress(p.url) === address) ?? null;
     const pageText = page ? await fs.readFile(path.join(dir, page.file), "utf8").catch(() => "") : "";
-    list.push({ file, address, title: titleOf(html), page: page?.file ?? null, broughtIn: pageText.includes(CONVERTED), chromeSource: false });
+    // Brought in only when the site's page was converted after this file last changed: a newer
+    // upload of the website (or another website's page at the same address) is brought in again.
+    const [own, built] = page ? await Promise.all([fs.stat(path.join(dir, file)).catch(() => null), fs.stat(path.join(dir, page.file)).catch(() => null)]) : [];
+    // A minute's leeway: a fresh checkout writes every file at about the same time.
+    const current = Boolean(own && built && own.mtimeMs - built.mtimeMs < 60_000);
+    list.push({ file, address, title: titleOf(html), page: page?.file ?? null, broughtIn: pageText.includes(CONVERTED) && current, chromeSource: false });
     prints.set(file, chromeFingerprint(html));
   }
   const groups = new Map();
@@ -115,8 +120,9 @@ async function linkedFiles(dir, file, html, pattern) {
     if (!href || /^[a-z][a-z0-9+.-]*:|^\/\//i.test(href)) continue;
     const rel = path.posix.normalize(href.startsWith("/") ? href.slice(1) : path.posix.join(path.posix.dirname(file), href));
     if (rel.startsWith("..") || out.some((f) => f.rel === rel)) continue;
-    const full = path.join(dir, rel);
-    if (!existsSync(full)) continue;
+    // A website uploaded as a zip keeps its files under static/ (site-zip.js), at the same address.
+    const full = [path.join(dir, rel), path.join(dir, "static", rel)].find((f) => existsSync(f));
+    if (!full) continue;
     out.push({ rel, name: path.posix.basename(rel), content: await fs.readFile(full, "utf8") });
     if (out.length >= MAX_LINKED) break;
   }

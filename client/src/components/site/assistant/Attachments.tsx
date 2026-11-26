@@ -4,6 +4,7 @@ import { noteFeature } from "../FeatureGuide";
 import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, assistantApi, attachmentUrl, type Attachment } from "@/lib/assistant-api";
 import { useSite } from "../site-context";
+import { MAX_VIDEO_FRAMES, VideoError, isVideo, videoFrames } from "@/lib/video-frames";
 
 // Files attached to the next message to Claude: picked with the paperclip, dropped on the box or
 // pasted. Each uploads straight away (so sending is quick); the message carries their ids.
@@ -17,11 +18,13 @@ export type PendingAttachment = {
   error?: string;
   /** A local preview for images while they upload. */
   preview?: string;
+  /** While a video is being turned into frames: how far it has got (0–1). */
+  reading?: number;
 };
 
 const sizeLabel = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
-const BADGE: Record<Attachment["kind"], string> = { image: "IMG", pdf: "PDF", text: "TXT", document: "DOC", file: "FILE" };
+const BADGE: Record<Attachment["kind"] | "video", string> = { image: "IMG", pdf: "PDF", text: "TXT", document: "DOC", file: "FILE", video: "VID" };
 
 function readBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -90,8 +93,15 @@ export function useAttachmentUploads() {
       if (list.length) noteFeature("ai-attach");
       const taken = list.slice(0, Math.max(0, MAX_ATTACHMENTS - count.current));
       const uploads: [PendingAttachment, File][] = [];
+      const videos: [PendingAttachment, File][] = [];
       const added: PendingAttachment[] = taken.map((file) => {
         const key = `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}`;
+        // A video becomes still frames here in the browser (videoFrames), never uploaded itself.
+        if (isVideo(file)) {
+          const entry: PendingAttachment = { key, name: file.name, size: file.size, status: "uploading", reading: 0 };
+          videos.push([entry, file]);
+          return entry;
+        }
         const preview = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
         if (preview) previews.current.add(preview);
         // A big photo may fit once it's scaled down (fitImage), so it's measured after that.
@@ -107,20 +117,44 @@ export function useAttachmentUploads() {
       }
       count.current += added.length;
       setPending((current) => [...current, ...added]);
-      // One at a time, after any still going: up to 20 files of 10 MB at once would weigh on the server.
-      for (const [entry, file] of uploads) {
-        queue.current = queue.current.then(async () => {
-          try {
-            const fitted = await fitImage(file);
-            if (fitted.size > MAX_ATTACHMENT_BYTES) {
-              update(entry.key, { status: "error", error: "Over 10 MB" });
-              return;
-            }
-            const { attachment } = await assistantApi.attach(owner, repo, { name: file.name, data: await readBase64(fitted) });
-            update(entry.key, { status: "ready", attachment, size: fitted.size });
-          } catch (err) {
-            update(entry.key, { status: "error", error: err instanceof Error ? err.message : "Upload failed" });
+      const upload = async (entry: PendingAttachment, file: File) => {
+        try {
+          const fitted = await fitImage(file);
+          if (fitted.size > MAX_ATTACHMENT_BYTES) {
+            update(entry.key, { status: "error", error: "Over 10 MB" });
+            return;
           }
+          const { attachment } = await assistantApi.attach(owner, repo, { name: file.name, data: await readBase64(fitted) });
+          update(entry.key, { status: "ready", attachment, size: fitted.size });
+        } catch (err) {
+          update(entry.key, { status: "error", error: err instanceof Error ? err.message : "Upload failed" });
+        }
+      };
+      // One at a time, after any still going: up to 20 files of 10 MB at once would weigh on the server.
+      for (const [entry, file] of uploads) queue.current = queue.current.then(() => upload(entry, file));
+      for (const [entry, file] of videos) {
+        queue.current = queue.current.then(async () => {
+          // Its frames take its place, as many as the message still has room for.
+          const room = Math.min(MAX_VIDEO_FRAMES, MAX_ATTACHMENTS - count.current + 1);
+          let frames;
+          try {
+            if (room < 1) throw new VideoError(`Attach up to ${MAX_ATTACHMENTS} files at a time`);
+            let shown = 0;
+            frames = await videoFrames(file, room, (share) => {
+              if (share - shown >= 0.05 || share === 1) update(entry.key, { reading: (shown = share) });
+            });
+          } catch (err) {
+            update(entry.key, { status: "error", reading: undefined, error: err instanceof VideoError ? err.message : "Couldn't read the video" });
+            return;
+          }
+          const entries = frames.map(({ file: frame }): [PendingAttachment, File] => {
+            const preview = URL.createObjectURL(frame);
+            previews.current.add(preview);
+            return [{ key: `${entry.key}-${frame.name}`, name: frame.name, size: frame.size, status: "uploading", preview }, frame];
+          });
+          count.current += entries.length - 1;
+          setPending((list) => list.flatMap((p) => (p.key === entry.key ? entries.map(([e]) => e) : [p])));
+          for (const [e, frame] of entries) await upload(e, frame);
         });
       }
     },
@@ -151,7 +185,7 @@ export function AttachButton({ onFiles, disabled, label, className }: { onFiles:
         onClick={() => input.current?.click()}
         disabled={disabled}
         aria-label={typeof label === "string" ? undefined : "Attach files"}
-        title="Attach files: photos, PDFs, Word documents, web pages or anything else"
+        title="Attach files: photos, a video of a website, PDFs, Word documents, web pages or anything else"
         className={
           className ??
           `shrink-0 rounded-md border border-zinc-300 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900 ${
@@ -176,7 +210,7 @@ export function AttachButton({ onFiles, disabled, label, className }: { onFiles:
   );
 }
 
-function KindBadge({ kind }: { kind: Attachment["kind"] }) {
+function KindBadge({ kind }: { kind: Attachment["kind"] | "video" }) {
   return (
     <span aria-hidden="true" className="grid h-8 w-9 shrink-0 place-items-center rounded bg-zinc-200 text-[10px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
       {BADGE[kind]}
@@ -200,14 +234,14 @@ export function PendingChips({ pending, onRemove }: { pending: PendingAttachment
             // eslint-disable-next-line @next/next/no-img-element
             <img src={p.preview} alt="" className="size-8 shrink-0 rounded object-cover" />
           ) : (
-            <KindBadge kind={p.attachment?.kind ?? "file"} />
+            <KindBadge kind={p.reading !== undefined ? "video" : (p.attachment?.kind ?? "file")} />
           )}
           <span className="min-w-0">
             <span className="block max-w-40 truncate font-medium" title={p.name}>
               {p.name}
             </span>
             <span className={`block ${p.status === "error" ? "text-red-600 dark:text-red-400" : "text-zinc-500"}`}>
-              {p.status === "uploading" ? "Uploading…" : p.status === "error" ? p.error : p.attachment?.note ? `The AI can't read it (${p.attachment.note})` : p.attachment?.kind === "file" ? "Can be added to your site" : sizeLabel(p.size)}
+              {p.reading !== undefined && p.status === "uploading" ? `Looking through the video… ${Math.round(p.reading * 100)}%` : p.status === "uploading" ? "Uploading…" : p.status === "error" ? p.error : p.attachment?.note ? `The AI can't read it (${p.attachment.note})` : p.attachment?.kind === "file" ? "Can be added to your site" : sizeLabel(p.size)}
             </span>
           </span>
           <button type="button" onClick={() => onRemove(p.key)} aria-label={`Remove ${p.name}`} className="ml-1 text-zinc-500 hover:text-foreground">
