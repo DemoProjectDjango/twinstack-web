@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { settleLocalPage } from "./copy-website.js";
 import { sitePages } from "./navigation.js";
 import { createPageAt, readSiteConfig, saveHtmlSource } from "./site-files.js";
 import { WorkspaceError, acquire, workspaceDir } from "./workspace.js";
@@ -191,8 +192,27 @@ export function rebaseCss(css, cssFile) {
  * `exists(rel)` says whether the repo has that file: GitHub Pages serves pricing.html at
  * "/pricing", which the site's check.js doesn't know, so such a link gets its ".html".
  */
-export function rebaseHtml(html, file, exists) {
-  const root = (raw) => {
+/** The website a page says it was published at (its canonical link or og:url), as an origin, or null. */
+export function publishedSiteOf(html) {
+  const tag =
+    /<link\b(?=[^>]*\brel\s*=\s*["']?canonical)[^>]*\bhref\s*=\s*["']([^"']+)["']/i.exec(html) ??
+    /<meta\b(?=[^>]*\bproperty\s*=\s*["']og:url["'])[^>]*\bcontent\s*=\s*["']([^"']+)["']/i.exec(html);
+  try {
+    const url = new URL(tag?.[1] ?? "");
+    return /^https?:$/.test(url.protocol) ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+export function rebaseHtml(html, file, exists, oldSite = publishedSiteOf(html)) {
+  // A link to a page that isn't in the repository (a downloaded website rarely has every page) goes
+  // to that page on the website it came from, when the page says where that was: a link to a missing
+  // page would fail the site check and stop the site from publishing.
+  const pageThere = (rel) =>
+    rel === "." ? exists("index.html") : (/\.html?$/i.test(rel) && exists(rel)) || exists(`${rel}/index.html`) || exists(`${rel}.html`);
+  const pageLike = (rel) => rel === "." || !path.posix.extname(rel) || /\.html?$/i.test(rel);
+  const root = (raw, attr = "") => {
     // Browsers decode entity codes in addresses (an embed's src='https:&#47;&#47;…'); the
     // conversion doesn't, and would read that one as relative. &amp; stays as it is.
     const href = raw.replace(/&#(\d+);|&#x([0-9a-f]+);|&(sol|colon|period|lowbar|hyphen);/gi, (whole, dec, hex, name) =>
@@ -204,10 +224,16 @@ export function rebaseHtml(html, file, exists) {
     let rel = fromFile(file, target.trim());
     if (rel.startsWith("..")) return href;
     if (rel !== "." && !target.trim().endsWith("/") && !path.posix.extname(rel) && !exists(`${rel}/index.html`) && exists(`${rel}.html`)) rel += ".html";
+    if (/^href/i.test(attr) && oldSite && pageLike(rel) && !pageThere(rel)) {
+      return `${new URL(`/${rel === "." ? "" : rel}`, oldSite).href.replace(/index\.html?$/i, "")}${rest}`;
+    }
+    // A file that isn't in the site (one left out of an uploaded zip for its size, a video say) still
+    // loads from the website it came from.
+    if (oldSite && !pageLike(rel) && !exists(rel)) return `${new URL(`/${rel}`, oldSite).href}${rest}`;
     return `/${rel === "." ? "" : rel}${rest}`;
   };
   return html
-    .replace(/(\b(?:src|href|poster|data-src|action)\s*=\s*)(["'])(.*?)\2/gi, (_, attr, q, href) => `${attr}${q}${root(href)}${q}`)
+    .replace(/(\b(src|href|poster|data-src|action)\s*=\s*)(["'])(.*?)\3/gi, (_, attr, name, q, href) => `${attr}${q}${root(href, name)}${q}`)
     .replace(/(\bsrcset\s*=\s*)(["'])(.*?)\2/gi, (_, attr, q, set) => `${attr}${q}${set.split(",").map((part) => part.replace(/^\s*(\S+)/, (m, url) => m.replace(url, root(url)))).join(",")}${q}`)
     // style="…" attributes stay in the page, which keeps its address, so their relative url()s
     // are already right (and a root one wouldn't get the base path: the build only adds it to
@@ -229,7 +255,13 @@ export async function prepareOriginalPage(key, file) {
   const original = (await listOriginalPages(key)).find((p) => p.file === file);
   if (!original) throw new WorkspaceError("That page isn't one of the repository's own pages.", 404);
   const dir = workspaceDir(key);
-  const html = await fs.readFile(path.join(dir, file), "utf8");
+  const asSaved = await fs.readFile(path.join(dir, file), "utf8");
+  // The page as a browser shows it once its scripts have run (settleLocalPage), when this server has
+  // one; otherwise the file as it is. Where it was published is read from the file itself, since
+  // the settled copy leaves out the canonical link.
+  const settled = await settleLocalPage(dir, file);
+  const html = settled ?? asSaved;
+  const oldSite = publishedSiteOf(asSaved);
   const [css, js] = await Promise.all([linkedFiles(dir, file, html, STYLESHEET), linkedFiles(dir, file, html, SCRIPT)]);
   await publishReferenced(key, file, html, css);
   if (/\.htm$/i.test(file) && !existsSync(path.join(dir, "static", file))) {
@@ -238,7 +270,8 @@ export async function prepareOriginalPage(key, file) {
   }
   const saved = await saveHtmlSource(key, {
     name: path.posix.basename(file).replace(/\.html?$/i, ""),
-    content: rebaseHtml(html, file, (rel) => existsSync(path.join(dir, rel))),
+    // A website uploaded as a zip keeps its other files under static/, published at the same address.
+    content: rebaseHtml(html, file, (rel) => existsSync(path.join(dir, rel)) || existsSync(path.join(dir, "static", rel)), oldSite),
     css: css.map(({ name, rel, content }) => ({ name, content: rebaseCss(content, rel) })),
     js: js.map(({ name, content }) => ({ name, content })),
   });

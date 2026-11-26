@@ -51,7 +51,19 @@ class StopAll extends Error {}
 export const OUT_OF_CREDITS = /used all your (?:Claude |AI )?credits|billing_error/i;
 
 /** What the conversion said went wrong: its "Refused to write" list when there is one, else its last lines. */
+/** A system error in plain words: never a server path or an error code. */
+function plainError(text: string) {
+  return text
+    .replace(/ENOENT: no such file or directory, (?:open|stat|scandir) '([^']*)'/g, (_, file: string) => `a file it needs is missing (${file.split("/").pop()})`)
+    .replace(/EACCES: permission denied, \w+ '([^']*)'/g, (_, file: string) => `a file it needs couldn't be opened (${file.split("/").pop()})`)
+    .replace(/(?:\/[\w .@+-]+){2,}\/([\w .@+-]+)/g, "$1");
+}
+
 export function reasonOf(output: string) {
+  return plainError(rawReason(output));
+}
+
+function rawReason(output: string) {
   const refused = output.match(/Refused to write[^\n]*\n((?:\s+- .*\n?)+)/);
   if (refused) return `It looked wrong, so nothing was written: ${refused[1].trim().split("\n").map((line) => line.trim().replace(/^- /, "")).join("; ")}`;
   // Older site tools give up on big themes' stylesheets; the site update brings the ones that cope.

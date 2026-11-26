@@ -201,13 +201,15 @@ const ERROR_PAGES = [
 ];
 
 /** A browser that may only reach public addresses, with a way to wait for a page to settle. */
-async function openBrowser() {
+async function openBrowser({ allowOrigin = null } = {}) {
   const chrome = findChrome();
   if (!chrome) throw noBrowser("copy websites");
   const client = await launch(chrome);
   const publicHosts = new Map();
   const isAllowed = async (raw) => {
     if (raw.startsWith("data:") || raw.startsWith("blob:")) return true;
+    // The one private address allowed: the loopback server showing the site's own files (settlePage).
+    if (allowOrigin && (raw === allowOrigin || raw.startsWith(`${allowOrigin}/`))) return true;
     try {
       checkUrl(raw);
     } catch {
@@ -597,6 +599,66 @@ const DESIGN_FACTS = `(() => {
  * The AI's look at a website before copying or improving it (look_at_website): pictures of the
  * page on a computer and a phone, a screen or two from `fromY`, and its design facts.
  */
+const LOCAL_TYPES = {
+  ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif", ".ico": "image/x-icon", ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf",
+  ".otf": "font/otf", ".eot": "application/vnd.ms-fontobject", ".txt": "text/plain; charset=utf-8", ".xml": "application/xml",
+};
+
+/**
+ * One of the site's own HTML pages (a page of an uploaded zip, or of an imported repository) as a
+ * browser shows it once its scripts have run, frozen like a copied website's page (SNAPSHOT): many
+ * themes build or rearrange their header, menus and phone layout in the browser, so the file as
+ * saved isn't what visitors see. The site's files are served on a loopback port only this browser
+ * may reach (its static/ folder at the same addresses, never dot-files). Addresses come back
+ * root-relative. Null when there's no browser or the page can't be opened: the file is used as it is.
+ */
+export async function settleLocalPage(dir, file) {
+  if (!findChrome()) return null;
+  const http = await import("node:http");
+  const root = path.resolve(dir);
+  const server = http.createServer(async (req, res) => {
+    try {
+      const pathname = decodeURIComponent(new URL(req.url, "http://x").pathname);
+      const parts = pathname.split("/").filter(Boolean);
+      if (parts.some((p) => p.startsWith(".") || p === "node_modules")) throw new Error("hidden");
+      const candidates = [];
+      for (const base of [root, path.join(root, "static")]) {
+        const full = path.resolve(base, ...parts);
+        if (!full.startsWith(base)) continue;
+        candidates.push(full, path.join(full, "index.html"));
+      }
+      for (const full of candidates) {
+        const stat = await fs.stat(full).catch(() => null);
+        if (!stat?.isFile()) continue;
+        res.writeHead(200, { "Content-Type": LOCAL_TYPES[path.extname(full).toLowerCase()] ?? "application/octet-stream" });
+        res.end(await fs.readFile(full));
+        return;
+      }
+      throw new Error("missing");
+    } catch {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
+    }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  let browser = null;
+  try {
+    browser = await openBrowser({ allowOrigin: origin });
+    await Promise.race([browser.open(`${origin}/${file.split("/").map(encodeURIComponent).join("/")}`, SCREENS.computer), sleep(PAGE_TIMEOUT_MS * 2).then(() => { throw new Error("too slow"); })]);
+    const snapshot = await browser.evaluate(SNAPSHOT);
+    if (!snapshot?.html) return null;
+    return snapshot.html.split(origin).join("");
+  } catch {
+    return null;
+  } finally {
+    try { await browser?.close(); } catch {}
+    server.close();
+  }
+}
+
 export function lookAtWebsite(rawUrl, fromY = 0) {
   const url = normaliseStartUrl(rawUrl);
   return oneAtATime(async () => {
