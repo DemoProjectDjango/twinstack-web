@@ -222,8 +222,20 @@ export function SiteAgentPanel() {
           <SettingsForm draft={draft} setDraft={setDraft} />
           <GoalsForm view={view} goals={draft.goals} onChange={(goals) => setDraft({ ...draft, goals })} />
           <LookForm view={view} draft={draft} setDraft={setDraft} owner={owner} repo={repo} />
-          <KnowledgeForm view={view} draft={draft} setDraft={setDraft} working={working === "reread"} onReread={() => void act("reread", "/reread", "POST", {}, "Read your site again.")} />
+          {/* The rest most owners never need to touch: folded, so the screen reads in seconds. */}
+          <details className="group rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+              <span>
+                <span className="block font-semibold">More settings</span>
+                <span className="block text-sm text-zinc-500">How quickly it speaks up, what it reads, returning visitors and its daily spending limit. The defaults suit most sites.</span>
+              </span>
+              <span aria-hidden="true" className="shrink-0 text-zinc-500 transition-transform group-open:rotate-180">
+                ▾
+              </span>
+            </summary>
+            <div className="space-y-6 border-t border-zinc-200 p-4 dark:border-zinc-800">
           <PaceForm view={view} draft={draft} setDraft={setDraft} />
+          <KnowledgeForm view={view} draft={draft} setDraft={setDraft} working={working === "reread"} onReread={() => void act("reread", "/reread", "POST", {}, "Read your site again.")} />
           <RememberForm
             view={view}
             draft={draft}
@@ -245,6 +257,8 @@ export function SiteAgentPanel() {
             }}
           />
           <SpendingForm view={view} value={draft.dailyCredits} onChange={(dailyCredits) => setDraft({ ...draft, dailyCredits })} />
+            </div>
+          </details>
           <div
             className={`flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3 ${
               dirty ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40" : "border-zinc-200 dark:border-zinc-800"
