@@ -148,6 +148,11 @@ export async function getBrand(key) {
   };
 }
 
+/** A preview (data: URL, or null) of a site image in the key's workspace, for other screens (the site agent's icon). */
+export async function imagePreview(key, src) {
+  return preview(workspaceDir(key), src);
+}
+
 /** Saves an uploaded logo file to assets/img/brand/ and returns its site path and a preview. */
 export async function saveBrandImage(key, { name, data }) {
   if (typeof data !== "string" || !data) throw new WorkspaceError("No image received.", 400);

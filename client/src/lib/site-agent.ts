@@ -16,8 +16,10 @@ export type AgentSettings = {
   goals: AgentGoal[];
   /** Credits the agent may spend in any 24 hours. */
   dailyCredits: number;
-  /** Offer visitors to be remembered on their device (they choose; `rememberDays` in the view). */
+  /** Remember visitors on their device for `rememberDays` (the view). */
   remember: boolean;
+  /** Only once the site's cookie banner says yes (window.TwinstackAgent.remember(true)). */
+  rememberAfterBanner: boolean;
   pace: AgentPace;
   /** The free hello bubble a few seconds into a visit. */
   greet: boolean;
@@ -25,12 +27,16 @@ export type AgentSettings = {
   color: string;
   position: "right" | "left";
   icon: AgentIcon;
+  /** The picture for icon "image": a site path under /assets/img/ (uploaded through …/brand/image). */
+  iconImage: string;
+  /** How much of the site it reads: every page in full, or the start of each page (cheaper). */
+  reads: "full" | "start";
   /** Text beside the icon ("" for the icon alone), at most 24 characters. */
   label: string;
 };
 
 /** The chat button's icons (agent.js draws them; "logo" is the site's logo mark). */
-export type AgentIcon = "chat" | "sparkle" | "question" | "wave" | "heart" | "logo";
+export type AgentIcon = "chat" | "sparkle" | "question" | "wave" | "heart" | "logo" | "image";
 
 /** One kind of request's cost: the last 30 days' average when `measured`, else an estimate. */
 export type AgentCost = { credits: number | null; tokens: number; requests: number; measured: boolean };
@@ -60,6 +66,10 @@ export type AgentView = {
   paces: Record<AgentPace, { goalRest: number; linkRest: number; gap: number; perVisit: number }>;
   costs: { suggestion: AgentCost; answer: AgentCost };
   icons: AgentIcon[];
+  /** A preview of `iconImage` (data: URL), or null. */
+  iconPreview: string | null;
+  /** What the agent knows of the site now. "full"/"start": read from the published site; "saved": your copy, when the published site can't be read. */
+  knowledge: { source: "full" | "start" | "saved" | null; pages: { url: string; title: string; chars: number }[] };
 };
 
 export type AgentOutcome = "accepted" | "dismissed" | "ignored" | "pending";

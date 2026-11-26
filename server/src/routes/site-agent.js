@@ -1,7 +1,7 @@
 import express, { Router } from "express";
 import { getAccessToken } from "../github.js";
 import { MAX_BATCH_BYTES, MAX_SMALL_BYTES } from "../site-agent-rules.js";
-import { agentAsk, agentEvents, agentForget, agentHistory, agentOutcome, agentView, deleteAgentData, disableAgent, enableAgent, saveAgentSettings } from "../site-agent.js";
+import { agentAsk, agentEvents, agentForget, rereadAgentSite, agentHistory, agentOutcome, agentView, deleteAgentData, disableAgent, enableAgent, saveAgentSettings } from "../site-agent.js";
 import { WorkspaceError, siteIdFor } from "../workspace.js";
 import { handle, keyFor } from "./helpers.js";
 
@@ -50,6 +50,11 @@ agentRouter.put(
 agentRouter.post(
   "/enable",
   handle(async (req, res) => res.json(await enableAgent(await context(req, res)))),
+);
+
+agentRouter.post(
+  "/reread",
+  handle(async (req, res) => res.json(await rereadAgentSite(await context(req, res)))),
 );
 
 agentRouter.post(

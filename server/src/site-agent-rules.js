@@ -74,8 +74,10 @@ export const PACES = Object.freeze({
 });
 export const paceOf = (name) => PACES[name] ?? PACES.balanced;
 
-// How the chat button looks (agent.js draws each icon; "logo" is the site's own logo mark).
-export const ICONS = ["chat", "sparkle", "question", "wave", "heart", "logo"];
+// How the chat button looks (agent.js draws each icon; "logo" is the site's own logo mark, "image"
+// a picture the owner uploaded for the agent, `iconImage`).
+export const ICONS = ["chat", "sparkle", "question", "wave", "heart", "logo", "image"];
+const ICON_IMAGE = /^\/assets\/img\/[\w./-]+\.(png|jpe?g|gif|webp|svg)$/i;
 export const POSITIONS = ["right", "left"];
 
 // The owner's settings.
@@ -89,15 +91,21 @@ export const DEFAULT_SETTINGS = Object.freeze({
   tone: "friendly",
   goals: [],
   dailyCredits: DAILY_CREDITS.default,
-  // Offer visitors to be remembered on their device for REMEMBER_DAYS (they choose; off by default).
+  // Remember visitors on their device for REMEMBER_DAYS (off by default); with rememberAfterBanner,
+  // only once the site's cookie banner says yes (UK/EU sites).
   remember: false,
+  rememberAfterBanner: false,
   pace: "balanced",
+  // How much of the site the agent reads: every page in full ("full", agent-index.json) or the
+  // start of each page ("start", search-index.json; fewer tokens per answer).
+  reads: "full",
   // The free hello bubble a few seconds into a visit.
   greet: true,
   // The chat button: its colour ("" = the site's brand colour), corner, icon and an optional label.
   color: "",
   position: "right",
   icon: "chat",
+  iconImage: "",
   label: "",
 });
 
@@ -573,9 +581,11 @@ export function cleanSettings(input, pages) {
     color,
     position: POSITIONS.includes(input?.position) ? input.position : DEFAULT_SETTINGS.position,
     icon: ICONS.includes(input?.icon) ? input.icon : DEFAULT_SETTINGS.icon,
+    iconImage: typeof input?.iconImage === "string" && ICON_IMAGE.test(input.iconImage) && !input.iconImage.includes("..") ? input.iconImage : "",
     label: clean(input?.label, 24),
   };
-  return { name, greeting, tone, goals, dailyCredits: daily, remember: input?.remember === true, pace, greet: input?.greet !== false, ...look };
+  if (look.icon === "image" && !look.iconImage) throw new SettingsError("Upload a picture for the chat button, or choose another icon.");
+  return { name, greeting, tone, goals, dailyCredits: daily, remember: input?.remember === true, rememberAfterBanner: input?.rememberAfterBanner === true, reads: input?.reads === "start" ? "start" : "full", pace, greet: input?.greet !== false, ...look };
 }
 
 /* ------------------------------------------------------------------ limits */
@@ -609,15 +619,57 @@ export function windowLimiter(limit, windowMs, { now = () => Date.now() } = {}) 
 }
 
 /** Pages from the published site's search index (search-index.json), checked: `{ url, title, description, text }`. */
-export function indexPages(json) {
+export function indexPages(json, { textMax = 400 } = {}) {
   if (!Array.isArray(json)) return [];
   const pages = [];
   for (const entry of json.slice(0, 500)) {
     const url = sitePath(entry?.url);
     if (!url) continue;
-    pages.push({ url, title: clean(entry.title, 120) || url, description: clean(entry.description, 300), text: clean(entry.text, 400) });
+    pages.push({ url, title: clean(entry.title, 120) || url, description: clean(entry.description, 300), text: clean(entry.text, textMax) });
   }
   return pages;
+}
+
+// Each page's whole text, from the site's agent-index.json (the template's lib/agent-index.js).
+export const FULL_TEXT_MAX = 12_000;
+
+/**
+ * The parts of a page's `text` that matter for `query`, in page order, at most `max` characters:
+ * the text split into passages of a few sentences, the ones sharing the most words with the query
+ * kept (the page's opening always, for context). The whole text when it's short enough.
+ */
+export function passagesFor(text, query, max = 1_500) {
+  const all = String(text ?? "");
+  if (all.length <= max) return all;
+  const sentences = all.match(/[^.!?\n]+[.!?]*\s*/g) ?? [all];
+  const passages = [];
+  let current = "";
+  for (const sentence of sentences) {
+    if (current && current.length + sentence.length > 320) {
+      passages.push(current.trim());
+      current = "";
+    }
+    current += sentence;
+  }
+  if (current.trim()) passages.push(current.trim());
+  const words = new Set(String(query ?? "").toLowerCase().match(WORD) ?? []);
+  const scored = passages.map((passage, i) => {
+    const lower = passage.toLowerCase();
+    let score = i === 0 ? 0.5 : 0;
+    for (const word of words) if (lower.includes(word)) score += 1;
+    return { passage, i, score };
+  });
+  const chosen = [];
+  let used = 0;
+  for (const p of [...scored].sort((a, b) => b.score - a.score || a.i - b.i)) {
+    if (used + p.passage.length + 3 > max) continue;
+    chosen.push(p);
+    used += p.passage.length + 3;
+  }
+  return chosen
+    .sort((a, b) => a.i - b.i)
+    .map((p, n, list) => (n > 0 && list[n - 1].i !== p.i - 1 ? `… ${p.passage}` : p.passage))
+    .join(" ");
 }
 
 const WORD = /[a-z0-9]{3,}/g;

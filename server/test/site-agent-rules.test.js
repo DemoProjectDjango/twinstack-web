@@ -25,6 +25,7 @@ import {
   windowLimiter,
   OFF_TOPIC_ANSWER,
   PACES,
+  passagesFor,
   paceOf,
   declinedBefore,
   foldVisit,
@@ -309,7 +310,11 @@ describe("cleanSettings", () => {
   const base = { name: "Sam", greeting: "Hello!", tone: "calm", goals: [{ label: "Donate", path: "/donate.html" }], dailyCredits: 2000 };
 
   it("keeps valid settings", () => {
-    assert.deepEqual(cleanSettings(base, pages), { ...base, goals: [{ label: "Donate", path: "/donate.html", note: "" }], remember: false, pace: "balanced", greet: true, color: "", position: "right", icon: "chat", label: "" });
+    assert.deepEqual(cleanSettings(base, pages), { ...base, goals: [{ label: "Donate", path: "/donate.html", note: "" }], remember: false, rememberAfterBanner: false, reads: "full", pace: "balanced", greet: true, color: "", position: "right", icon: "chat", iconImage: "", label: "" });
+    assert.equal(cleanSettings({ ...base, reads: "start" }, pages).reads, "start");
+    assert.equal(cleanSettings({ ...base, icon: "image", iconImage: "/assets/img/brand/agent-me.png" }, pages).iconImage, "/assets/img/brand/agent-me.png");
+    assert.throws(() => cleanSettings({ ...base, icon: "image", iconImage: "/etc/passwd" }, pages), SettingsError);
+    assert.throws(() => cleanSettings({ ...base, color: "red; background:url(x)" }, pages), SettingsError);
     assert.equal(cleanSettings({ ...base, remember: true }, pages).remember, true);
   });
 
@@ -488,5 +493,21 @@ describe("paces", () => {
         assert.ok(p.checkpoints.some((c) => c < rest && c + 1_200 >= rest), `one ahead of ${rest}`);
       }
     }
+  });
+});
+
+describe("reading the whole site", () => {
+  it("keeps a page's whole text from the agent's file, and the start from the search index", () => {
+    const long = "Opening line. " + "More words here. ".repeat(500);
+    assert.ok(indexPages([{ url: "/a.html", title: "A", text: long }], { textMax: 12_000 })[0].text.length > 5_000);
+    assert.ok(indexPages([{ url: "/a.html", title: "A", text: long }])[0].text.length <= 400);
+  });
+
+  it("picks the passages a question needs from a long page", () => {
+    const text = "We are a bookshop in London. " + "Our shelves hold many genres. ".repeat(120) + "The reading night is on the last Thursday of each month. " + "Staff picks change weekly. ".repeat(60);
+    const picked = passagesFor(text, "When is the reading night?", 700);
+    assert.ok(picked.length <= 700);
+    assert.ok(picked.includes("last Thursday"));
+    assert.equal(passagesFor("Short page.", "anything", 700), "Short page.");
   });
 });

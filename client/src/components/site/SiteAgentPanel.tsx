@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BUY_CREDITS_HREF } from "@/lib/claude";
 import { confirmModal } from "@/lib/confirm";
+import { readAsBase64 } from "@/lib/setup";
 import { api, workspacePath } from "@/lib/site-api";
 import type { AgentCost, AgentGoal, AgentHistory, AgentIcon, AgentOutcome, AgentPace, AgentSession, AgentSettings, AgentTone, AgentView } from "@/lib/site-agent";
 import { toast } from "@/lib/toast";
@@ -185,9 +186,10 @@ export function SiteAgentPanel() {
         <>
           <SettingsForm draft={draft} setDraft={setDraft} />
           <GoalsForm view={view} goals={draft.goals} onChange={(goals) => setDraft({ ...draft, goals })} />
-          <LookForm view={view} draft={draft} setDraft={setDraft} />
+          <LookForm view={view} draft={draft} setDraft={setDraft} owner={owner} repo={repo} />
+          <KnowledgeForm view={view} draft={draft} setDraft={setDraft} working={working === "reread"} onReread={() => void act("reread", "/reread", "POST", {}, "Read your site again.")} />
           <PaceForm view={view} draft={draft} setDraft={setDraft} />
-          <RememberForm view={view} value={draft.remember} onChange={(remember) => setDraft({ ...draft, remember })} />
+          <RememberForm view={view} draft={draft} setDraft={setDraft} />
           <SpendingForm view={view} value={draft.dailyCredits} onChange={(dailyCredits) => setDraft({ ...draft, dailyCredits })} />
           <div
             className={`flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3 ${
@@ -400,7 +402,7 @@ function GoalsForm({ view, goals, onChange }: { view: AgentView; goals: AgentGoa
 }
 
 // The same drawings as the template's assets/js/agent.js.
-const ICON_PATHS: Record<Exclude<AgentIcon, "logo">, ReactNode> = {
+const ICON_PATHS: Record<Exclude<AgentIcon, "logo" | "image">, ReactNode> = {
   chat: <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z" />,
   sparkle: (
     <>
@@ -425,10 +427,19 @@ const ICON_PATHS: Record<Exclude<AgentIcon, "logo">, ReactNode> = {
   ),
   heart: <path d="M12 20s-7-4.4-9-9a4.8 4.8 0 0 1 9-3 4.8 4.8 0 0 1 9 3c-2 4.6-9 9-9 9Z" />,
 };
-const ICON_NAMES: Record<AgentIcon, string> = { chat: "Chat", sparkle: "Sparkle", question: "Question", wave: "Wave", heart: "Heart", logo: "Your logo" };
+const ICON_NAMES: Record<AgentIcon, string> = { chat: "Chat", sparkle: "Sparkle", question: "Question", wave: "Wave", heart: "Heart", logo: "Your logo", image: "Your picture" };
 const SWATCHES = ["#18181b", "#2563eb", "#16a34a", "#dc2626", "#9333ea", "#ea580c", "#0d9488", "#db2777"];
 
-function AgentIconSvg({ icon, className }: { icon: AgentIcon; className?: string }) {
+function AgentIconSvg({ icon, className, picture }: { icon: AgentIcon; className?: string; picture?: string | null }) {
+  if (icon === "image")
+    return picture ? (
+      // eslint-disable-next-line @next/next/no-img-element -- a data: URL preview
+      <img src={picture} alt="" className={`rounded-full object-cover ${className ?? ""}`} />
+    ) : (
+      <span className={`grid place-items-center rounded-full bg-white text-[9px] font-bold text-zinc-900 ${className ?? ""}`} aria-hidden="true">
+        +
+      </span>
+    );
   if (icon === "logo")
     return (
       <span className={`grid place-items-center rounded-full bg-white text-[9px] font-bold text-zinc-900 ${className ?? ""}`} aria-hidden="true">
@@ -449,7 +460,30 @@ function inkFor(hex: string) {
   return lum > 0.6 ? "#111111" : "#ffffff";
 }
 
-function LookForm({ view, draft, setDraft }: { view: AgentView; draft: AgentSettings; setDraft: (d: AgentSettings) => void }) {
+function LookForm({ view, draft, setDraft, owner, repo }: { view: AgentView; draft: AgentSettings; setDraft: (d: AgentSettings) => void; owner: string; repo: string }) {
+  const [picture, setPicture] = useState<string | null>(view.iconPreview);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<unknown>(null);
+  async function upload(file: File) {
+    setUploadError(null);
+    if (file.size > 2 * 1024 * 1024) {
+      setUploadError(new Error(`${file.name} is over 2 MB. A button picture rarely needs more than 200 KB.`));
+      return;
+    }
+    setUploading(true);
+    try {
+      const result = await api<{ path: string; preview: string | null }>(workspacePath(owner, repo, "/brand/image"), {
+        method: "POST",
+        body: { name: `agent-${file.name}`, data: await readAsBase64(file) },
+      });
+      setPicture(result.preview);
+      setDraft({ ...draft, icon: "image", iconImage: result.path });
+    } catch (err) {
+      setUploadError(err);
+    } finally {
+      setUploading(false);
+    }
+  }
   const colour = draft.color || "#18181b";
   const ink = inkFor(colour);
   const left = draft.position === "left";
@@ -495,14 +529,34 @@ function LookForm({ view, draft, setDraft }: { view: AgentView; draft: AgentSett
                   onClick={() => setDraft({ ...draft, icon })}
                   className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${draft.icon === icon ? "border-zinc-900 ring-1 ring-zinc-900 dark:border-zinc-100 dark:ring-zinc-100" : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800"}`}
                 >
-                  <span className="grid size-7 place-items-center rounded-full" style={{ background: colour, color: ink }}>
-                    <AgentIconSvg icon={icon} className="size-4" />
+                  <span className="grid size-7 place-items-center overflow-hidden rounded-full" style={{ background: colour, color: ink }}>
+                    <AgentIconSvg icon={icon} picture={picture} className={icon === "image" && picture ? "size-7" : "size-4"} />
                   </span>
                   {ICON_NAMES[icon]}
                 </button>
               ))}
             </div>
             {draft.icon === "logo" && <p className="mt-2 text-xs text-zinc-500">Uses the square logo from Look &amp; logo. Without one, visitors see the chat icon.</p>}
+            {draft.icon === "image" && (
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+                <label className="cursor-pointer rounded-md border border-zinc-300 px-3 py-1.5 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900">
+                  {uploading ? "Uploading…" : draft.iconImage ? "Choose another picture" : "Upload a picture"}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                    className="sr-only"
+                    disabled={uploading}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (file) void upload(file);
+                    }}
+                  />
+                </label>
+                <span className="text-xs text-zinc-500">A square picture works best: your logo, a mascot or a friendly face. It fills the round button. PNG, JPEG, WebP or SVG, up to 2 MB.</span>
+                {uploadError ? <ErrorText error={uploadError} /> : null}
+              </div>
+            )}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Text on the button" hint="Optional, like “Ask us” or “Need help?”. Leave empty for the icon alone.">
@@ -541,12 +595,90 @@ function LookForm({ view, draft, setDraft }: { view: AgentView; draft: AgentSett
               className={`flex h-12 items-center justify-center gap-2 shadow-lg ${draft.label.trim() ? "rounded-full px-4 text-sm font-semibold" : "w-12 rounded-full"}`}
               style={{ background: colour, color: ink }}
             >
-              <AgentIconSvg icon={draft.icon} className={draft.icon === "logo" ? "size-7" : "size-5"} />
+              <AgentIconSvg icon={draft.icon} picture={picture} className={draft.icon === "image" && picture && !draft.label.trim() ? "size-12" : draft.icon === "logo" || draft.icon === "image" ? "size-7" : "size-5"} />
               {draft.label.trim() && <span>{draft.label.trim()}</span>}
             </span>
           </div>
         </div>
       </div>
+    </Section>
+  );
+}
+
+function KnowledgeForm({
+  view,
+  draft,
+  setDraft,
+  working,
+  onReread,
+}: {
+  view: AgentView;
+  draft: AgentSettings;
+  setDraft: (d: AgentSettings) => void;
+  working: boolean;
+  onReread: () => void;
+}) {
+  const known = view.knowledge;
+  const chars = known.pages.reduce((sum, p) => sum + p.chars, 0);
+  const source =
+    known.source === "full"
+      ? "Read from your published site: every page in full."
+      : known.source === "start"
+        ? draft.reads === "full"
+          ? "Read from your published site: the start of each page. To read every page in full, the site needs the latest site update and a publish."
+          : "Read from your published site: the start of each page."
+        : known.source === "saved"
+          ? "Your published site couldn't be read yet, so it uses your pages as they were when you last saved here. Publish your site, then read it again."
+          : "It reads your site once it's turned on.";
+  return (
+    <Section
+      title="What it knows about your site"
+      description="The agent answers and suggests only from your own pages. It reads every page of your published site (no other websites), and reads it again by itself every 15 minutes, so what you publish is what it knows."
+    >
+      <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="How much of each page it reads">
+        {(
+          [
+            { id: "full", label: "Every page in full", about: "Best answers: it finds a price or detail anywhere on a page. Each answer reads a little more (see the costs below)." },
+            { id: "start", label: "The start of each page", about: "Cheaper answers, but it may miss details further down a page." },
+          ] as const
+        ).map((o) => (
+          <label
+            key={o.id}
+            className={`cursor-pointer rounded-lg border p-3 text-sm ${draft.reads === o.id ? "border-zinc-900 ring-1 ring-zinc-900 dark:border-zinc-100 dark:ring-zinc-100" : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800"}`}
+          >
+            <span className="flex items-center gap-2 font-medium">
+              <input type="radio" name="agent-reads" checked={draft.reads === o.id} onChange={() => setDraft({ ...draft, reads: o.id })} />
+              {o.label}
+            </span>
+            <span className="mt-1 block text-zinc-500">{o.about}</span>
+          </label>
+        ))}
+      </div>
+      {view.enabled && (
+        <div className="mt-4 space-y-2 text-sm">
+          <p className="text-zinc-600 dark:text-zinc-400">
+            {source} It knows {number.format(known.pages.length)} {known.pages.length === 1 ? "page" : "pages"} ({number.format(chars)} characters).
+          </p>
+          {known.pages.length > 0 && (
+            <details className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+              <summary className="cursor-pointer font-medium">See the pages it knows</summary>
+              <ul className="mt-2 space-y-1">
+                {known.pages.map((p) => (
+                  <li key={p.url} className="flex flex-wrap justify-between gap-2">
+                    <span>
+                      {p.title} <span className="text-zinc-500">{p.url}</span>
+                    </span>
+                    <span className="tabular-nums text-zinc-500">{number.format(p.chars)} characters</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <Button variant="secondary" disabled={working} onClick={onReread}>
+            {working ? "Reading…" : "Read my site again now"}
+          </Button>
+        </div>
+      )}
     </Section>
   );
 }
@@ -599,21 +731,35 @@ function PaceForm({ view, draft, setDraft }: { view: AgentView; draft: AgentSett
   );
 }
 
-function RememberForm({ view, value, onChange }: { view: AgentView; value: boolean; onChange: (value: boolean) => void }) {
+function RememberForm({ view, draft, setDraft }: { view: AgentView; draft: AgentSettings; setDraft: (d: AgentSettings) => void }) {
+  const days = view.rememberDays;
   return (
     <Section
       title="Returning visitors"
-      description={`Off: every visit starts fresh, and nothing about a visitor stays in their browser after they close the tab. On: the chat asks each visitor whether to remember them on their device for ${view.rememberDays} days. Only if they say yes does the agent pick up where they left off next time: what interested them, what it already offered, and their chat. They can choose "Forget me" at any time, and it's deleted ${view.rememberDays} days after their last visit.`}
+      description={`Off: every visit starts fresh, and nothing about a visitor stays in their browser after they close the tab. On: the agent remembers each visitor on their own device for ${days} days and picks up where they left off next time: what interested them, what it already offered (it won't offer again what they turned down) and their chat. Visitors aren't asked in the chat. They can choose "Forget me on this device" in the chat at any time, and it's deleted ${days} days after their last visit. Publish your site after changing this.`}
     >
       <label className="flex items-start gap-3 text-sm">
-        <input type="checkbox" className="mt-0.5 size-4" checked={value} onChange={(e) => onChange(e.target.checked)} />
+        <input type="checkbox" className="mt-0.5 size-4" checked={draft.remember} onChange={(e) => setDraft({ ...draft, remember: e.target.checked })} />
         <span>
-          <span className="font-medium">Offer to remember returning visitors for {view.rememberDays} days</span>
-          <span className="block text-zinc-500">
-            Visitors are asked first, and never asked when their browser asks sites not to track them. Publish your site after changing this.
-          </span>
+          <span className="font-medium">Remember returning visitors for {days} days</span>
+          <span className="block text-zinc-500">Never for visitors whose browser asks sites not to track them.</span>
         </span>
       </label>
+      {draft.remember && (
+        <div className="mt-4 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+          <label className="flex items-start gap-3 text-sm">
+            <input type="checkbox" className="mt-0.5 size-4" checked={draft.rememberAfterBanner} onChange={(e) => setDraft({ ...draft, rememberAfterBanner: e.target.checked })} />
+            <span>
+              <span className="font-medium">Only after my site&apos;s cookie banner says yes</span>
+              <span className="block text-zinc-500">
+                In the UK and the EU, remembering a visitor this way needs their consent, usually through a cookie banner. Turn this on if your visitors are there: the agent then waits for your banner. Your banner&apos;s settings (or the Custom code screen) should run{" "}
+                <code className="rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-800">window.TwinstackAgent.remember(true)</code> when a visitor accepts, and{" "}
+                <code className="rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-800">remember(false)</code> when they decline.
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
     </Section>
   );
 }

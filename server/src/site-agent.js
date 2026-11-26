@@ -28,6 +28,7 @@ import {
   setAgentShown,
   updateSiteAgent,
 } from "./db.js";
+import { imagePreview } from "./brand.js";
 import { fastModelForSite, fastModelKey } from "./fast-model.js";
 import { sitePages } from "./navigation.js";
 import { createMessage } from "./openai-bridge.js";
@@ -52,8 +53,10 @@ import {
   decide,
   declinedBefore,
   foldVisit,
+  FULL_TEXT_MAX,
   indexPages,
   isTrick,
+  passagesFor,
   newSession,
   newVisitor,
   outcomeOf,
@@ -139,6 +142,9 @@ const spentCache = new Map(); // siteId → { credits, until }
 const CAP_CACHE_MS = 30_000;
 const running = new Map(); // siteId → model requests running
 const knowledgeCache = new Map(); // siteId → { pages: Promise, until }
+// siteId → where its knowledge came from: "full" (the published agent-index.json), "start" (the
+// published search-index.json) or "saved" (the owner's copy, when the published site can't be read).
+const knowledgeSource = new Map();
 const drafts = new Map(); // `${siteId}:${sid}` → { made, current: { thingId, path, type, promise, at } | null, until }
 const KNOWLEDGE_MS = 15 * 60_000;
 const KNOWLEDGE_RETRY_MS = 2 * 60_000;
@@ -275,6 +281,17 @@ async function rememberVisitor(site, session, vid, now) {
   visitor.lastSeenAt = now;
   await saveAgentVisitor(visitor, REMEMBER_DAYS);
   session.memory = visitorMemory(visitor, previousVisitAt);
+}
+
+/** "Read my site again now": forgets what the agent read, re-reads the owner's copy and the published site. */
+export async function rereadAgentSite(ctx) {
+  const site = await ownedSite(ctx.siteId, ctx.userId);
+  const knowledge = await workspaceKnowledge(workspaceDir(ctx.key));
+  if (knowledge) await updateSiteAgent(ctx.siteId, { knowledge });
+  forgetKey(site.agent?.key);
+  knowledgeCache.delete(ctx.siteId);
+  knowledgeSource.delete(ctx.siteId);
+  return agentView(ctx);
 }
 
 /** POST /api/agent/:key/forget `{ s, v }`: "Forget me". Always 204. */
@@ -478,26 +495,41 @@ async function askModel({ site, ip, sid, command, system, content }) {
  * and the start of the text of every page, as built), else the pages saved with the settings.
  */
 async function siteKnowledge(site) {
+  const reads = site.agent.reads === "start" ? "start" : "full";
   const cached = knowledgeCache.get(site.siteId);
-  if (cached && cached.until > Date.now()) return cached.pages;
+  if (cached && cached.until > Date.now() && cached.reads === reads) return cached.pages;
   // Until the published site answers (or when it can't be read), what the owner's copy said when
   // the agent was last turned on or saved, else just the page titles.
   const saved = Array.isArray(site.agent.knowledge) && site.agent.knowledge.length ? site.agent.knowledge : null;
-  const fallback = saved ?? (site.agent.pages ?? []).map((p) => ({ url: p.url, title: p.title, description: "", text: "" }));
+  const fallback = (saved ?? (site.agent.pages ?? []).map((p) => ({ url: p.url, title: p.title, description: "", text: "" }))).map((p) =>
+    reads === "start" ? { ...p, text: (p.text ?? "").slice(0, 400) } : p,
+  );
   const pages = (async () => {
-    if (!site.agent.url) return fallback;
-    try {
-      const base = site.agent.url.endsWith("/") ? site.agent.url : `${site.agent.url}/`;
-      const res = await safeFetch(new URL("search-index.json", base).href, { timeoutMs: 8_000, maxBytes: 2 * 1024 * 1024, accept: "application/json" });
-      const found = res.status === 200 ? indexPages(JSON.parse(res.body.toString("utf8"))) : [];
-      if (found.length) return found;
-    } catch (err) {
-      if (!(err instanceof FetchRefused || err instanceof SyntaxError)) console.warn(`The site agent couldn't read ${site.agent.url}'s pages: ${err.message}`);
+    if (!site.agent.url) {
+      knowledgeSource.set(site.siteId, "saved");
+      return fallback;
     }
-    knowledgeCache.set(site.siteId, { pages, until: Date.now() + KNOWLEDGE_RETRY_MS });
+    const base = site.agent.url.endsWith("/") ? site.agent.url : `${site.agent.url}/`;
+    // Every page in full (agent-index.json, from sites whose build writes it), else the start of
+    // each page (search-index.json, every site).
+    const sources = reads === "full" ? [["agent-index.json", FULL_TEXT_MAX], ["search-index.json", 400]] : [["search-index.json", 400]];
+    for (const [file, textMax] of sources) {
+      try {
+        const res = await safeFetch(new URL(file, base).href, { timeoutMs: 8_000, maxBytes: 8 * 1024 * 1024, accept: "application/json" });
+        const found = res.status === 200 ? indexPages(JSON.parse(res.body.toString("utf8")), { textMax }) : [];
+        if (found.length) {
+          knowledgeSource.set(site.siteId, textMax === FULL_TEXT_MAX ? "full" : "start");
+          return found;
+        }
+      } catch (err) {
+        if (!(err instanceof FetchRefused || err instanceof SyntaxError)) console.warn(`The site agent couldn't read ${site.agent.url}'s ${file}: ${err.message}`);
+      }
+    }
+    knowledgeCache.set(site.siteId, { pages, reads, until: Date.now() + KNOWLEDGE_RETRY_MS });
+    knowledgeSource.set(site.siteId, "saved");
     return fallback;
   })();
-  knowledgeCache.set(site.siteId, { pages, until: Date.now() + KNOWLEDGE_MS });
+  knowledgeCache.set(site.siteId, { pages, reads, until: Date.now() + KNOWLEDGE_MS });
   return pages;
 }
 
@@ -557,10 +589,11 @@ function goalLines(goals) {
   return goals.length ? goals.map((g) => `- ${g.label} → ${g.path}${g.note ? ` (${g.note})` : ""}`).join("\n") : "(none set)";
 }
 
-function pageLines(pages, { long = false } = {}) {
+function pageLines(pages, { long = false, query = "" } = {}) {
   return pages
     .map((p) => {
-      const about = long ? [p.description, p.text].filter(Boolean).join(" ").slice(0, 600) : p.description.slice(0, 120);
+      // For an answer, the parts of the page that match the question (all of a short page).
+      const about = long ? [p.description, passagesFor(p.text, query, 1_500)].filter(Boolean).join(" ") : p.description.slice(0, 120);
       return `- ${p.title} → ${p.url}${about ? `: ${about}` : ""}`;
     })
     .join("\n");
@@ -707,7 +740,7 @@ ${RULES}`;
 ${goalLines(goals)}
 
 PAGES:
-${pageLines(relevant, { long: true })}
+${pageLines(relevant, { long: true, query: `${question} ${topInterests(session, 4).map((t) => t.label ?? "").join(" ")}` })}
 
 CONTACT:
 ${contactLines(site)}
@@ -762,12 +795,16 @@ async function writeConfigAgent(key, value) {
 
 /** The owner's copy's pages as the built site indexes them (dist/search-index.json), or null. */
 async function workspaceKnowledge(dir) {
-  try {
-    const pages = indexPages(JSON.parse(await fs.readFile(path.join(dir, "dist/search-index.json"), "utf8")));
-    return pages.length ? pages.slice(0, 80) : null;
-  } catch {
-    return null;
+  // Kept on the site's record, so a shorter cut of each page than the published site's own file.
+  for (const [file, textMax] of [["dist/agent-index.json", 3_000], ["dist/search-index.json", 400]]) {
+    try {
+      const pages = indexPages(JSON.parse(await fs.readFile(path.join(dir, file), "utf8")), { textMax });
+      if (pages.length) return pages.slice(0, 80);
+    } catch {
+      // Not built yet, or a site without it: the next one.
+    }
   }
+  return null;
 }
 
 async function supportsAgent(dir) {
@@ -787,28 +824,35 @@ const configBlock = (agent) => ({
   name: agent.name,
   greeting: agent.greeting,
   ...(agent.remember && { remember: REMEMBER_DAYS }),
+  ...(agent.remember && agent.rememberAfterBanner && { consent: "banner" }),
   ...(agent.color && { color: agent.color }),
   ...(agent.position && agent.position !== DEFAULT_SETTINGS.position && { position: agent.position }),
   ...(agent.icon && agent.icon !== DEFAULT_SETTINGS.icon && { icon: agent.icon }),
+  ...(agent.icon === "image" && agent.iconImage && { iconImage: agent.iconImage }),
   ...(agent.label && { label: agent.label }),
 });
 
 const CONTACT_FIELDS = ["email", "phone", "address", "hours", "whatsapp"];
 // What a suggestion and an answer usually take, for the estimate before there's any history.
-const TYPICAL_USAGE = { suggest: { input_tokens: 900, output_tokens: 60 }, answer: { input_tokens: 1_800, output_tokens: 120 } };
+// An answer reads more when the agent reads every page in full (the passages that match).
+const TYPICAL_USAGE = {
+  suggest: { input_tokens: 900, output_tokens: 60 },
+  answer: { input_tokens: 1_800, output_tokens: 120 },
+  answerFull: { input_tokens: 3_200, output_tokens: 120 },
+};
 
 /**
  * What the agent's requests cost on this site, for the owner: per suggestion and per answer, the
  * last 30 days' average when there are any (`measured`), else the price of a typical request on
  * the model it uses now. Greetings, rules and the fixed off-the-website reply cost nothing.
  */
-function agentCosts(measured, model) {
+function agentCosts(measured, model, reads) {
   const one = (command) => {
     const m = measured?.[command];
     if (m?.requests) {
       return { credits: Math.round((m.credits / m.requests) * 10) / 10, tokens: Math.round((m.input + m.output) / m.requests), requests: m.requests, measured: true };
     }
-    const usage = TYPICAL_USAGE[command];
+    const usage = TYPICAL_USAGE[command === "answer" && reads !== "start" ? "answerFull" : command];
     const credits = model ? creditsFor(usage, model) : null;
     return { credits: credits === null ? null : Math.round(credits * 10) / 10, tokens: usage.input_tokens + usage.output_tokens, requests: 0, measured: false };
   };
@@ -859,11 +903,14 @@ const settingsOf = (agent) => ({
   goals: agent?.goals ?? [],
   dailyCredits: agent?.dailyCredits ?? DEFAULT_SETTINGS.dailyCredits,
   remember: agent?.remember === true,
+  rememberAfterBanner: agent?.rememberAfterBanner === true,
   pace: Object.hasOwn(PACES, agent?.pace) ? agent.pace : DEFAULT_SETTINGS.pace,
+  reads: agent?.reads === "start" ? "start" : "full",
   greet: agent?.greet !== false,
   color: agent?.color ?? DEFAULT_SETTINGS.color,
   position: agent?.position ?? DEFAULT_SETTINGS.position,
   icon: agent?.icon ?? DEFAULT_SETTINGS.icon,
+  iconImage: agent?.iconImage ?? "",
   label: agent?.label ?? DEFAULT_SETTINGS.label,
 });
 
@@ -875,7 +922,7 @@ export async function agentView({ key, siteId, userId, accessToken }) {
   const { data } = await readConfig(dir).catch(() => ({ data: {} }));
   const settings = settingsOf(agent);
   const enabled = agent?.enabled === true;
-  const [supported, pages, spent, credits, model, lastActivityAt, measured] = await Promise.all([
+  const [supported, pages, spent, credits, model, lastActivityAt, measured, known] = await Promise.all([
     supportsAgent(dir),
     ownPages(dir, data),
     agentCreditsSince(userId, siteId, new Date(Date.now() - DAY_MS)),
@@ -883,9 +930,10 @@ export async function agentView({ key, siteId, userId, accessToken }) {
     modelFor(siteId, userId),
     agent?.key ? lastAgentActivity(siteId) : null,
     agentCostsSince(userId, siteId, new Date(Date.now() - 30 * DAY_MS)),
+    agent?.enabled ? siteKnowledge({ siteId, agent }).catch(() => []) : [],
   ]);
   const written = data.agent;
-  const costs = agentCosts(measured, model?.model ?? null);
+  const costs = agentCosts(measured, model?.model ?? null, settings.reads);
   return {
     supported,
     enabled,
@@ -900,6 +948,12 @@ export async function agentView({ key, siteId, userId, accessToken }) {
     canAnswer: Boolean(model) && (credits.balance ?? 0) > 0,
     limits: { dailyCredits: DAILY_CREDITS, suggestionsPerSession: paceOf(settings.pace).suggestionsPerSession, questionsPerSession: LIMITS.questionsPerSession },
     icons: ICONS,
+    iconPreview: agent?.iconImage ? await imagePreview(key, agent.iconImage).catch(() => null) : null,
+    // What the agent knows of the site now: which pages, how much of each, and from where.
+    knowledge: {
+      source: agent?.enabled ? (knowledgeSource.get(siteId) ?? "saved") : null,
+      pages: known.map((p) => ({ url: p.url, title: p.title, chars: (p.text ?? "").length })),
+    },
     paces: Object.fromEntries(Object.entries(PACES).map(([id, p]) => [id, { goalRest: p.goalHoverMs, linkRest: p.linkHoverMs, gap: p.cooldownMs, perVisit: p.suggestionsPerSession }])),
     costs,
     lastActivityAt,
@@ -920,6 +974,9 @@ export async function saveAgentSettings(ctx, input) {
   } catch (err) {
     if (err instanceof SettingsError) throw new WorkspaceError(err.message, 400);
     throw err;
+  }
+  if (settings.iconImage && !(await fs.stat(path.join(dir, settings.iconImage.slice(1))).then((s) => s.isFile(), () => false))) {
+    throw new WorkspaceError("The chat button's picture isn't in your site any more. Upload it again.", 400);
   }
   const knowledge = await workspaceKnowledge(dir);
   await updateSiteAgent(ctx.siteId, { ...settings, pages, ...(knowledge && { knowledge }), contact: contactOf(data), siteName: siteNameOf(data, site.fullName) });
