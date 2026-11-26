@@ -161,6 +161,10 @@ const POLL_MS = 700;
 // these waits before it's given up on: a Claude job runs for minutes, and one missed poll isn't its end.
 const POLL_RETRY_MS = [1000, 2000, 3000, 5000];
 const POLL_GIVE_UP_MS = 2 * 60_000;
+// A command refused because the site is busy is asked again this often (the editor's own preview
+// rebuild is stopped first; anything else running gets this long to finish).
+const BUSY_RETRIES = 30;
+const BUSY_RETRY_MS = 1000;
 const MAX_LOG_CHARS = 500_000;
 // The preview rebuilds this long after the last change, so a burst of saves builds once.
 const AUTO_PREVIEW_DELAY_MS = 1500;
@@ -252,10 +256,20 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
     async function start(command: string, input: Record<string, unknown>, quiet: boolean, retried = false): Promise<{ job: Job } | { error: unknown }> {
       if (!quiet) setRunError(null);
       try {
-        const { job: started } = await api<{ job: Job }>(workspacePath(owner, repo, `/commands/${command}`), {
-          method: "POST",
-          body: { input },
-        });
+        let started: Job | null = null;
+        // The editor's own preview rebuild or check can take the site just before this (it starts
+        // by itself after every change): it's stopped and this asks again, rather than failing.
+        for (let attempt = 0; ; attempt++) {
+          try {
+            started = (await api<{ job: Job }>(workspacePath(owner, repo, `/commands/${command}`), { method: "POST", body: { input } })).job;
+            break;
+          } catch (err) {
+            if (quiet || !(err instanceof ApiError && err.status === 409 && /workspace is busy/i.test(err.message)) || attempt >= BUSY_RETRIES) throw err;
+            await stopAutoPreviewRef.current();
+            await new Promise((r) => setTimeout(r, BUSY_RETRY_MS));
+          }
+        }
+        if (!started) throw new Error("The command didn't start.");
         dryRunJob.current = input.dryRun ? started.id : null;
         autoJob.current = quiet ? started.id : null;
         setAutoJobId(autoJob.current);
@@ -282,9 +296,12 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
 
   /** Stops the editor's own preview rebuild (or check) so a command the user asked for can start; it runs again afterwards. */
   const stopAutoPreview = useCallback(async () => {
+    // By its id alone: the job it started may not have reached `currentJob` yet.
     const id = autoJob.current;
-    if (!id || currentJob.current?.id !== id || currentJob.current.status !== "running") return;
-    const wasCheck = currentJob.current.command === "check";
+    if (!id) return;
+    const now = await api<{ job: Job }>(`/api/jobs/${id}`).catch(() => null);
+    if (!now || now.job.status !== "running") return;
+    const wasCheck = now.job.command === "check";
     await api(`/api/jobs/${id}/cancel`, { method: "POST", body: {} }).catch(() => {});
     for (let i = 0; i < 40; i++) {
       const latest = await api<{ job: Job }>(`/api/jobs/${id}`).catch(() => null);
@@ -294,6 +311,11 @@ export function SiteManager({ owner, repo, account, links }: { owner: string; re
     setPreviewStale(true);
     if (wasCheck) setCheckedTick(-1);
   }, []);
+
+  const stopAutoPreviewRef = useRef(stopAutoPreview);
+  useEffect(() => {
+    stopAutoPreviewRef.current = stopAutoPreview;
+  }, [stopAutoPreview]);
 
   // Every change the user makes (a command, a save, a publish) goes first.
   useEffect(() => {
