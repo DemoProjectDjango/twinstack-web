@@ -1138,20 +1138,16 @@ async function prepareChange(name, input, key, context) {
       const edits = input.edits ?? [];
       const append = str(input, "append", { max: 20_000, optional: true });
       if (!Array.isArray(edits) || edits.length > 30 || (!edits.length && !append)) throw new ToolInputError("Give append, or edits as a list of 1 to 30 replacements.");
-      let content = before;
-      const eol = before.includes("\r\n") ? (text) => text.replace(/\r?\n/g, "\r\n") : (text) => text;
       for (const edit of edits) {
         if (typeof edit?.find !== "string" || !edit.find || typeof edit.replace !== "string") throw new ToolInputError("Each edit needs find and replace text.");
-        const find = eol(edit.find);
-        const count = content.split(find).length - 1;
-        if (!count) throw new ToolInputError(`"${edit.find.slice(0, 120)}" isn't in ${file}. Read it again and use its exact text.`);
-        if (count > 1 && edit.all !== true) throw new ToolInputError(`"${edit.find.slice(0, 120)}" is in ${file} ${count} times. Use more of the text around it, or all.`);
-        content = content.split(find).join(eol(edit.replace));
       }
-      if (append) content = appended(content, append);
+      const content = applyTextEdits(before, edits, append, file);
       if (content === before) throw new ToolInputError("Those edits change nothing.");
       const current = await checkRepoTextWrite(key, file, content);
-      return { ...base, input: { file, content }, meta: { before, version: current.version, exists: true, address: current.address } };
+      // The edits are kept too: when another change to the same file is applied first (several edits
+      // of one file in one answer), they're made again on the file as it is then (applyEditFile).
+      const kept = edits.map((e) => ({ find: e.find, replace: e.replace, ...(e.all === true && { all: true }) }));
+      return { ...base, input: { file, content, edits: kept, ...(append && { append }) }, meta: { before, version: current.version, exists: true, address: current.address } };
     }
     case "append_blocks_from_attachment": {
       const options = blockOptions(input);
@@ -1473,6 +1469,23 @@ function titleOf(markdown) {
  * `imageModel` (the site's, image-model.js), and `signal` stops it. `userId` is who's asking:
  * read_analytics answers only the site's creator.
  */
+/**
+ * A text file with the AI's exact replacements made (each `find` must be there once, or `all`),
+ * then `append` added. Throws ToolInputError naming a replacement whose text isn't there.
+ */
+export function applyTextEdits(text, edits, append, file) {
+  let content = text;
+  const eol = text.includes("\r\n") ? (t) => t.replace(/\r?\n/g, "\r\n") : (t) => t;
+  for (const edit of edits ?? []) {
+    const find = eol(edit.find);
+    const count = content.split(find).length - 1;
+    if (!count) throw new ToolInputError(`"${edit.find.slice(0, 120)}" isn't in ${file}. Read it again and use its exact text.`);
+    if (count > 1 && edit.all !== true) throw new ToolInputError(`"${edit.find.slice(0, 120)}" is in ${file} ${count} times. Use more of the text around it, or all.`);
+    content = content.split(find).join(eol(edit.replace));
+  }
+  return append ? appended(content, append) : content;
+}
+
 export async function runTool(name, input, key, context = {}) {
   const info = toolInfo(name);
   if (!info) return { error: `There's no tool called ${name}.` };
@@ -1533,9 +1546,23 @@ async function applyAction(key, action, { accessToken, user } = {}) {
     case "write_file":
       await writeRepoText(key, input.file, input.content, meta.version);
       return `Saved ${input.file} (published at ${meta.address}).`;
-    case "edit_file":
+    case "edit_file": {
+      // Changed since it was proposed (an earlier edit of the same file applied first): the same
+      // replacements on the file as it is now. Refused only when a replaced text is really gone.
+      const { exists, content: now, version } = await readRepoText(key, input.file);
+      if (exists && version !== meta.version && Array.isArray(input.edits)) {
+        let content;
+        try {
+          content = applyTextEdits(now, input.edits, input.append ?? null, input.file);
+        } catch (err) {
+          throw new WorkspaceError(`${input.file} changed after this was written, and ${err.message.replace(/ Read it again.*$/, "")}`, 409);
+        }
+        await writeRepoText(key, input.file, content, version);
+        return `Saved ${input.file}.`;
+      }
       await writeRepoText(key, input.file, input.content, meta.version);
       return `Saved ${input.file}.`;
+    }
     case "append_blocks_from_attachment": {
       const { attachment, ...options } = input;
       const attached = await readAttachmentMeta(key, attachment);
