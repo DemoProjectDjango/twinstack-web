@@ -402,8 +402,11 @@ export function AssistantProvider({ context, children }: { context: AssistantCon
       // Only one page preview can wait at a time: it's the same slot the page editor uses.
       const writes =
         action.tool === "edit_page" || action.tool === "convert_page_from_html" || action.tool === "design_header_and_footer" || (action.tool === "create_page" && input.brief);
-      if (writes && Object.values(actions).some((a) => a.status === "ready" && a.id !== action.id)) {
-        throw new Error("Keep or throw away the page that's waiting first.");
+      // A copied website's prototype ("ready" until Build it) isn't a page preview, and a card can
+      // say "ready" for a preview that's already gone: only a preview the server still holds blocks.
+      if (writes && Object.values(actions).some((a) => a.status === "ready" && a.id !== action.id && a.tool !== "copy_website")) {
+        const { proposal } = await api<{ proposal: Proposal | null }>(workspacePath(owner, repo, "/proposal")).catch(() => ({ proposal: null }));
+        if (proposal) throw new Error("Keep or throw away the page that's waiting first.");
       }
       // Before anything runs, so a missing photo stops it cleanly.
       const images = sitePaths(input.images);

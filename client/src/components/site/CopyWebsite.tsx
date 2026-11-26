@@ -90,6 +90,8 @@ export function CopyWebsiteRunner() {
         prepared = await api<Prepared>(workspacePath(owner, repo, "/copy-website/prepare"), { method: "POST", body: { id } });
       } catch (err) {
         if (err instanceof ApiError && (err.status === 401 || err.status === 403)) throw new StopAll(err.message);
+        // The copied page itself can't be built (gone, or an error page the website showed): final.
+        if (err instanceof ApiError && err.status === 409) throw new Hopeless(err.message);
         throw err;
       }
       set(prepared.status);

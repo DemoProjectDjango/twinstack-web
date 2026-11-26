@@ -814,6 +814,13 @@ export async function prepareCopiedPage(key, id) {
   const dir = path.join(workspaceDir(key), COPY_DIR);
   const html = await fs.readFile(path.join(dir, "pages", `${id}.html`), "utf8").catch(() => null);
   if (html === null) throw new WorkspaceError("The copied page is gone. Copy the website again.", 409);
+  // Copied while the website showed an error page (before the copier checked for them): never
+  // built in as the page.
+  const text = html.replace(/<(script|style|noscript)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const title = (html.match(/<title[^>]*>([^<]*)/i) ?? [])[1] ?? "";
+  if (text.length < 1500 && ERROR_PAGES.some((pattern) => pattern.test(`${title} ${text}`))) {
+    throw new WorkspaceError("This page was copied while the website was showing an error instead of the page. Copy the website again.", 409);
+  }
   const css = [];
   for (const name of item.css) css.push({ name, content: await fs.readFile(path.join(dir, "css", id, name), "utf8") });
   const saved = await saveHtmlSource(key, { name: item.address === "/" ? "home" : path.posix.basename(item.address, ".html"), content: html, css });
