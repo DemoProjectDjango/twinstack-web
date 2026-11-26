@@ -138,6 +138,19 @@ const SNAPSHOT = `(() => {
     for (const a of ['srcset', 'sizes', 'loading', 'decoding', ...LAZY, 'data-srcset']) img.removeAttribute(a);
   }
   for (const source of document.querySelectorAll('picture > source')) source.remove();
+  // A background video (autoplaying, muted or looping) was sized by the theme's script for the
+  // window it opened in; frozen, that pixel size would leave a strip on wider screens. It fills its
+  // section instead, as the script made it, and boxes holding it lose their frozen pixel sizes too.
+  for (const video of document.querySelectorAll('video')) {
+    if (!(video.autoplay || video.muted || video.loop || video.hasAttribute('autoplay') || video.hasAttribute('muted') || video.hasAttribute('loop'))) continue;
+    Object.assign(video.style, { width: '100%', height: '100%', objectFit: 'cover', maxWidth: 'none' });
+    for (const k of ['top', 'left', 'marginLeft', 'marginTop', 'transform']) if (/px|translate/.test(video.style[k])) video.style[k] = '';
+    let box = video.parentElement;
+    for (let i = 0; box && i < 3; i++, box = box.parentElement) {
+      if (/px$/.test(box.style.width)) box.style.width = '100%';
+      if (/px$/.test(box.style.height)) box.style.height = '100%';
+    }
+  }
   for (const el of document.querySelectorAll('[data-bg], [data-background], [data-background-image]')) {
     const bg = el.getAttribute('data-bg') || el.getAttribute('data-background') || el.getAttribute('data-background-image');
     if (bg && !el.style.backgroundImage) el.style.backgroundImage = 'url("' + abs(bg.replace(/^url\\((['"]?)(.*)\\1\\)$/, '$2')) + '")';
