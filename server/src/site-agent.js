@@ -701,7 +701,8 @@ Reply with one JSON object and nothing else:
 
 Rules:
 - "target" must be exactly one of ADDRESSES and never the CURRENT PAGE. Prefer the owner's GOALS when one fits what the visitor seems to want.
-- Use THIS VISITOR'S INTERESTS to judge what this particular visitor wants; never repeat anything in ALREADY SUGGESTED.${trigger.goal ? `\n- The visitor seems interested in "${trigger.goal.label}": suggest ${trigger.goal.path}.` : ""}
+- Use THIS VISITOR'S INTERESTS to judge what this particular visitor wants; never repeat anything in ALREADY SUGGESTED.
+- Resting on a link or button means interest, not trouble: never say they seem stuck, lost or having problems unless WHAT THE VISITOR DID JUST NOW says they clicked again and again.${trigger.goal ? `\n- The visitor seems interested in "${trigger.goal.label}": suggest ${trigger.goal.path}.` : ""}
 ${RULES}`;
   const content = `GOALS (where the owner would like visitors to go, most important first):
 ${goalLines(goals)}

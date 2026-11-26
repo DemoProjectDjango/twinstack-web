@@ -251,6 +251,32 @@ describe("decide", () => {
     assert.equal(decide(reading, GOALS, at(50)).type, "reading");
   });
 
+  it("button hover: resting on a button that isn't a link", () => {
+    const s = session();
+    applyBatch(s, batch([{ k: "h", l: "Add to basket", x: "button", d: 1500 }]), at(10));
+    assert.equal(decide(s, GOALS, at(10)), null, "not yet");
+    assert.equal(decide(s, GOALS, at(10), { lead: 1200 }).type, "button-hover", "written ahead");
+    applyBatch(s, batch([{ k: "h", l: "Add to basket", x: "button", d: 1100 }]), at(11));
+    const t = decide(s, GOALS, at(11));
+    assert.equal(t.type, "button-hover");
+    assert.match(t.about, /Add to basket/);
+    s.suggestions.push({ id: "b1", path: "/books.html", at: at(-100), trigger: "button-hover", thing: "Add to basket" });
+    assert.equal(decide(s, GOALS, at(11)), null, "the same button isn't offered twice in a visit");
+    const clicked = session();
+    applyBatch(clicked, batch([{ k: "h", l: "Add to basket", x: "button", d: 3000 }, { k: "c", l: "Add to basket", x: "button" }]), at(10));
+    assert.equal(decide(clicked, GOALS, at(10)), null, "pressed, so not weighing it up");
+  });
+
+  it("a rest may bring a second suggestion on the same page view, after the cooldown", () => {
+    const s = session();
+    applyBatch(s, batch([{ k: "x" }]), at(20));
+    s.suggestions.push({ id: "a", path: "/", at: at(20) });
+    assert.equal(maySuggest(s, at(20 + LIMITS.cooldownMs / 1000), { resting: true }), true);
+    assert.equal(maySuggest(s, at(20 + LIMITS.cooldownMs / 1000)), false, "other triggers: one per page");
+    s.suggestions.push({ id: "b", path: "/", at: at(60) });
+    assert.equal(maySuggest(s, at(200), { resting: true }), false, "at most two");
+  });
+
   it("per-session limits: one per page view, a cooldown, a few at most", () => {
     const s = session();
     applyBatch(s, batch([{ k: "x" }]), at(20));

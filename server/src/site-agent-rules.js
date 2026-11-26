@@ -334,14 +334,19 @@ export function matchesGoal(target, goal) {
 export function maySuggest(session, now, { resting = false, pace = PACES.balanced } = {}) {
   if (!session.page) return false;
   if (session.suggestions.length >= pace.suggestionsPerSession) return false;
-  // One per page view: opening the page again later may bring another.
+  // One per page view (opening the page again later may bring another); a rest, which the visitor
+  // chose, may bring a second one, still after the cooldown.
   const since = new Date(session.page.since ?? 0).getTime();
-  if (session.suggestions.some((s) => pageKey(s.path) === pageKey(session.page.path) && new Date(s.at).getTime() >= since)) return false;
+  const here = session.suggestions.filter((s) => pageKey(s.path) === pageKey(session.page.path) && new Date(s.at).getTime() >= since).length;
+  if (here >= (resting ? RESTING_PER_PAGE : 1)) return false;
   const last = session.suggestions.at(-1);
   if (last && now - new Date(last.at).getTime() < pace.cooldownMs) return false;
   // Resting on something is a deliberate act, so the quiet start doesn't hold it back.
   return resting || now - new Date(session.startedAt).getTime() >= LIMITS.quietStartMs;
 }
+
+/** Suggestions one page view may bring when the visitor rests on things (other triggers: 1). */
+export const RESTING_PER_PAGE = 2;
 
 /** A link on the page to another of the site's own pages (not a phone, email or outside link). */
 const sitePageLink = (thing, current) => typeof thing.link === "string" && thing.link.startsWith("/") && pageKey(thing.link) !== pageKey(current);
@@ -378,6 +383,14 @@ export function decide(session, goals, now, { lead = 0, pace = PACES.balanced } 
       if (thing.hover < pace.linkHoverMs) break;
       if (sitePageLink(thing, page.path) && !offered.has(pageKey(thing.link)) && !goals.some((g) => matchesGoal(thing, g))) {
         return { type: "link-hover", thing: thing.label, thingId: thing.id, about: `paused over "${thing.label || thing.link}" (a link to ${thing.link}) without clicking it` };
+      }
+    }
+    // A button that isn't a link to a page ("Add to basket", a menu toggle, a tab): the visitor is
+    // weighing it up, so the place on the site that helps with it is offered.
+    for (const thing of resting) {
+      if (thing.hover < pace.linkHoverMs) break;
+      if (thing.type === "button" && thing.label && !thing.link && !session.suggestions.some((s) => s.trigger === "button-hover" && s.thing === thing.label)) {
+        return { type: "button-hover", thing: thing.label, thingId: thing.id, about: `paused over the "${thing.label}" button without pressing it` };
       }
     }
   }
