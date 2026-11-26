@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BUY_CREDITS_HREF } from "@/lib/claude";
 import { confirmModal } from "@/lib/confirm";
 import { api, workspacePath } from "@/lib/site-api";
-import type { AgentGoal, AgentHistory, AgentOutcome, AgentSession, AgentSettings, AgentTone, AgentView } from "@/lib/site-agent";
+import type { AgentCost, AgentGoal, AgentHistory, AgentIcon, AgentOutcome, AgentPace, AgentSession, AgentSettings, AgentTone, AgentView } from "@/lib/site-agent";
 import { toast } from "@/lib/toast";
 import { useSite } from "./site-context";
 import { Button, EmptyState, ErrorText, Field, Notice, ScreenHeader, Section, Segmented, Spinner, inputClass } from "./ui";
@@ -185,13 +185,16 @@ export function SiteAgentPanel() {
         <>
           <SettingsForm draft={draft} setDraft={setDraft} />
           <GoalsForm view={view} goals={draft.goals} onChange={(goals) => setDraft({ ...draft, goals })} />
+          <LookForm view={view} draft={draft} setDraft={setDraft} />
+          <PaceForm view={view} draft={draft} setDraft={setDraft} />
+          <RememberForm view={view} value={draft.remember} onChange={(remember) => setDraft({ ...draft, remember })} />
           <SpendingForm view={view} value={draft.dailyCredits} onChange={(dailyCredits) => setDraft({ ...draft, dailyCredits })} />
           <div
             className={`flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3 ${
               dirty ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40" : "border-zinc-200 dark:border-zinc-800"
             }`}
           >
-            <Button variant="primary" disabled={!dirty || locked} onClick={() => void act("save", "/settings", "PUT", draft, view.enabled ? "Saved. Goals and tone work straight away; publish to update the name and greeting." : "Saved.")}>
+            <Button variant="primary" disabled={!dirty || locked} onClick={() => void act("save", "/settings", "PUT", draft, view.enabled ? "Saved. Goals, tone and how quickly it speaks up work straight away; publish your site to show the new name, greeting and look." : "Saved.")}>
               {working === "save" ? "Saving…" : "Save changes"}
             </Button>
             {dirty && (
@@ -396,6 +399,225 @@ function GoalsForm({ view, goals, onChange }: { view: AgentView; goals: AgentGoa
   );
 }
 
+// The same drawings as the template's assets/js/agent.js.
+const ICON_PATHS: Record<Exclude<AgentIcon, "logo">, ReactNode> = {
+  chat: <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z" />,
+  sparkle: (
+    <>
+      <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z" />
+      <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z" />
+    </>
+  ),
+  question: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6" />
+      <path d="M12 17h.01" />
+    </>
+  ),
+  wave: (
+    <>
+      <path d="M7 11V6.5a1.5 1.5 0 0 1 3 0V11" />
+      <path d="M10 10.5v-6a1.5 1.5 0 0 1 3 0v6" />
+      <path d="M13 10.5v-5a1.5 1.5 0 0 1 3 0V13" />
+      <path d="M16 9.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-.5a7 7 0 0 1-5.6-2.8L3.6 15a1.6 1.6 0 0 1 2.4-2.1L7 14" />
+    </>
+  ),
+  heart: <path d="M12 20s-7-4.4-9-9a4.8 4.8 0 0 1 9-3 4.8 4.8 0 0 1 9 3c-2 4.6-9 9-9 9Z" />,
+};
+const ICON_NAMES: Record<AgentIcon, string> = { chat: "Chat", sparkle: "Sparkle", question: "Question", wave: "Wave", heart: "Heart", logo: "Your logo" };
+const SWATCHES = ["#18181b", "#2563eb", "#16a34a", "#dc2626", "#9333ea", "#ea580c", "#0d9488", "#db2777"];
+
+function AgentIconSvg({ icon, className }: { icon: AgentIcon; className?: string }) {
+  if (icon === "logo")
+    return (
+      <span className={`grid place-items-center rounded-full bg-white text-[9px] font-bold text-zinc-900 ${className ?? ""}`} aria-hidden="true">
+        logo
+      </span>
+    );
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>
+      {ICON_PATHS[icon]}
+    </svg>
+  );
+}
+
+/** Black or white text on the button colour, as agent.js picks it. */
+function inkFor(hex: string) {
+  const n = parseInt(hex.slice(1), 16);
+  const lum = (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+  return lum > 0.6 ? "#111111" : "#ffffff";
+}
+
+function LookForm({ view, draft, setDraft }: { view: AgentView; draft: AgentSettings; setDraft: (d: AgentSettings) => void }) {
+  const colour = draft.color || "#18181b";
+  const ink = inkFor(colour);
+  const left = draft.position === "left";
+  return (
+    <Section title="How it looks" description="The chat button and its bubbles on your site. Publish your site to show a new look to visitors.">
+      <div className="grid gap-6 lg:grid-cols-[1fr_minmax(0,18rem)]">
+        <div className="space-y-5">
+          <div>
+            <p className="mb-2 text-sm font-medium">Colour</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setDraft({ ...draft, color: "" })}
+                className={`rounded-full border px-3 py-1 text-sm ${draft.color === "" ? "border-zinc-900 ring-1 ring-zinc-900 dark:border-zinc-100 dark:ring-zinc-100" : "border-zinc-300 dark:border-zinc-700"}`}
+              >
+                Your site&apos;s colour
+              </button>
+              {SWATCHES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-label={`Colour ${c}`}
+                  onClick={() => setDraft({ ...draft, color: c })}
+                  className={`size-7 rounded-full border border-black/10 ${draft.color === c ? "ring-2 ring-offset-2 ring-zinc-900 dark:ring-zinc-100 dark:ring-offset-zinc-950" : ""}`}
+                  style={{ background: c }}
+                />
+              ))}
+              <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+                <input type="color" className="h-7 w-9 cursor-pointer rounded border border-zinc-300 bg-transparent dark:border-zinc-700" value={colour} onChange={(e) => setDraft({ ...draft, color: e.target.value.toLowerCase() })} />
+                Any colour
+              </label>
+            </div>
+          </div>
+          <div>
+            <p className="mb-2 text-sm font-medium">Icon</p>
+            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Icon">
+              {view.icons.map((icon) => (
+                <button
+                  key={icon}
+                  type="button"
+                  role="radio"
+                  aria-checked={draft.icon === icon}
+                  onClick={() => setDraft({ ...draft, icon })}
+                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${draft.icon === icon ? "border-zinc-900 ring-1 ring-zinc-900 dark:border-zinc-100 dark:ring-zinc-100" : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800"}`}
+                >
+                  <span className="grid size-7 place-items-center rounded-full" style={{ background: colour, color: ink }}>
+                    <AgentIconSvg icon={icon} className="size-4" />
+                  </span>
+                  {ICON_NAMES[icon]}
+                </button>
+              ))}
+            </div>
+            {draft.icon === "logo" && <p className="mt-2 text-xs text-zinc-500">Uses the square logo from Look &amp; logo. Without one, visitors see the chat icon.</p>}
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Text on the button" hint="Optional, like “Ask us” or “Need help?”. Leave empty for the icon alone.">
+              <input className={inputClass} maxLength={24} value={draft.label} placeholder="Icon only" onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
+            </Field>
+            <div>
+              <p className="mb-2 text-sm font-medium">Corner</p>
+              <Segmented
+                label="Corner"
+                value={draft.position}
+                onChange={(position) => setDraft({ ...draft, position })}
+                options={[
+                  { value: "left", label: "Bottom left" },
+                  { value: "right", label: "Bottom right" },
+                ]}
+              />
+            </div>
+          </div>
+        </div>
+        <div aria-label="Preview" className="relative h-72 overflow-hidden rounded-xl border border-zinc-200 bg-gradient-to-b from-zinc-50 to-zinc-100 dark:border-zinc-800 dark:from-zinc-900 dark:to-zinc-950">
+          <div className="space-y-2 p-4" aria-hidden="true">
+            <div className="h-3 w-2/3 rounded bg-zinc-200 dark:bg-zinc-800" />
+            <div className="h-3 w-1/2 rounded bg-zinc-200 dark:bg-zinc-800" />
+            <div className="h-3 w-3/5 rounded bg-zinc-200 dark:bg-zinc-800" />
+          </div>
+          <div className={`absolute bottom-3 flex flex-col gap-2 ${left ? "left-3 items-start" : "right-3 items-end"}`}>
+            {draft.greet && (
+              <div className="w-56 rounded-2xl border border-black/5 bg-white p-3 text-sm text-zinc-900 shadow-lg dark:bg-zinc-900 dark:text-zinc-100">
+                <p className="mb-2">{draft.greeting || "Hi! Can I help you find something?"}</p>
+                <span className="inline-block rounded-full px-3 py-1 text-xs font-semibold" style={{ background: colour, color: ink }}>
+                  Ask a question
+                </span>
+              </div>
+            )}
+            <span
+              className={`flex h-12 items-center justify-center gap-2 shadow-lg ${draft.label.trim() ? "rounded-full px-4 text-sm font-semibold" : "w-12 rounded-full"}`}
+              style={{ background: colour, color: ink }}
+            >
+              <AgentIconSvg icon={draft.icon} className={draft.icon === "logo" ? "size-7" : "size-5"} />
+              {draft.label.trim() && <span>{draft.label.trim()}</span>}
+            </span>
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+const PACE_NAMES: Record<AgentPace, { label: string; about: string }> = {
+  gentle: { label: "Gentle", about: "Speaks up only when a visitor clearly lingers." },
+  balanced: { label: "Balanced", about: "Recommended for most sites." },
+  eager: { label: "Eager", about: "Quick to help. Best for shops and sign-ups." },
+};
+const secs = (ms: number) => `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} s`;
+
+function PaceForm({ view, draft, setDraft }: { view: AgentView; draft: AgentSettings; setDraft: (d: AgentSettings) => void }) {
+  return (
+    <Section
+      title="How quickly it speaks up"
+      description="When a visitor rests the pointer on something, the agent suggests where to go. Its words are written while the visitor is still resting, so a suggestion appears about half a second after the rest counts. Phones have no pointer: there it speaks up when a visitor browses several pages, reads a page for a while or is about to leave. Changes work straight away, without publishing."
+    >
+      <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="How quickly it speaks up">
+        {(Object.keys(PACE_NAMES) as AgentPace[]).map((id) => {
+          const p = view.paces[id];
+          const on = draft.pace === id;
+          return (
+            <label
+              key={id}
+              className={`cursor-pointer rounded-lg border p-3 text-sm ${on ? "border-zinc-900 ring-1 ring-zinc-900 dark:border-zinc-100 dark:ring-zinc-100" : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800"}`}
+            >
+              <span className="flex items-center gap-2 font-medium">
+                <input type="radio" name="agent-pace" value={id} checked={on} onChange={() => setDraft({ ...draft, pace: id })} />
+                {PACE_NAMES[id].label}
+              </span>
+              <span className="mt-1 block text-zinc-500">{PACE_NAMES[id].about}</span>
+              <ul className="mt-2 space-y-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                <li>Resting on a goal: {secs(p.goalRest)}</li>
+                <li>Resting on another page&apos;s link: {secs(p.linkRest)}</li>
+                <li>At least {secs(p.gap)} between suggestions</li>
+                <li>Up to {p.perVisit} suggestions a visit</li>
+              </ul>
+            </label>
+          );
+        })}
+      </div>
+      <label className="mt-4 flex items-start gap-3 text-sm">
+        <input type="checkbox" className="mt-0.5 size-4" checked={draft.greet} onChange={(e) => setDraft({ ...draft, greet: e.target.checked })} />
+        <span>
+          <span className="font-medium">Say hello a few seconds into each visit</span>
+          <span className="block text-zinc-500">Shows your greeting in a small bubble with &quot;Ask a question&quot;, once a visit. Free: it doesn&apos;t use the AI.</span>
+        </span>
+      </label>
+    </Section>
+  );
+}
+
+function RememberForm({ view, value, onChange }: { view: AgentView; value: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <Section
+      title="Returning visitors"
+      description={`Off: every visit starts fresh, and nothing about a visitor stays in their browser after they close the tab. On: the chat asks each visitor whether to remember them on their device for ${view.rememberDays} days. Only if they say yes does the agent pick up where they left off next time: what interested them, what it already offered, and their chat. They can choose "Forget me" at any time, and it's deleted ${view.rememberDays} days after their last visit.`}
+    >
+      <label className="flex items-start gap-3 text-sm">
+        <input type="checkbox" className="mt-0.5 size-4" checked={value} onChange={(e) => onChange(e.target.checked)} />
+        <span>
+          <span className="font-medium">Offer to remember returning visitors for {view.rememberDays} days</span>
+          <span className="block text-zinc-500">
+            Visitors are asked first, and never asked when their browser asks sites not to track them. Publish your site after changing this.
+          </span>
+        </span>
+      </label>
+    </Section>
+  );
+}
+
 function SpendingForm({ view, value, onChange }: { view: AgentView; value: number; onChange: (value: number) => void }) {
   const { min, max } = view.limits.dailyCredits;
   return (
@@ -417,7 +639,54 @@ function SpendingForm({ view, value, onChange }: { view: AgentView; value: numbe
           />
         </Field>
       </div>
+      <CostTable view={view} limit={value} />
     </Section>
+  );
+}
+
+function CostTable({ view, limit }: { view: AgentView; limit: number }) {
+  const rows: { label: string; cost: AgentCost }[] = [
+    { label: "One suggestion", cost: view.costs.suggestion },
+    { label: "One answer to a question", cost: view.costs.answer },
+  ];
+  const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return (
+    <div className="mt-4 overflow-x-auto">
+      <table className="w-full min-w-[28rem] text-left text-sm">
+        <thead className="text-xs text-zinc-500">
+          <tr>
+            <th className="py-1 pr-3 font-medium">What it does</th>
+            <th className="py-1 pr-3 font-medium">Credits each</th>
+            <th className="py-1 pr-3 font-medium">Text the AI reads and writes</th>
+            <th className="py-1 font-medium">Your daily limit covers</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ label, cost }) => (
+            <tr key={label} className="border-t border-zinc-200 dark:border-zinc-800">
+              <td className="py-2 pr-3">{label}</td>
+              <td className="py-2 pr-3 tabular-nums">
+                {cost.credits === null ? "–" : `about ${fmt(cost.credits)}`}
+                <span className="block text-xs text-zinc-500">{cost.measured ? `average of ${number.format(cost.requests)} in 30 days` : "estimate"}</span>
+              </td>
+              <td className="py-2 pr-3 tabular-nums">about {number.format(cost.tokens)} tokens</td>
+              <td className="py-2 tabular-nums">
+                {cost.credits && Number.isFinite(limit) ? `about ${number.format(Math.floor(limit / Math.max(cost.credits, 0.1)))} a day` : "–"}
+              </td>
+            </tr>
+          ))}
+          <tr className="border-t border-zinc-200 dark:border-zinc-800">
+            <td className="py-2 pr-3">Greeting, timing rules, the fixed &quot;only this website&quot; reply</td>
+            <td className="py-2 pr-3">Free</td>
+            <td className="py-2 pr-3">None</td>
+            <td className="py-2">Unlimited</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="mt-2 text-xs text-zinc-500">
+        A suggestion may be written a moment before a visitor&apos;s rest counts so it appears without a wait. If they move away first it isn&apos;t shown, but it&apos;s still charged (at most a few a visit).
+      </p>
+    </div>
   );
 }
 
@@ -513,6 +782,7 @@ function HistorySection({ owner, repo, view, tick, onDeleted }: { owner: string;
           <Stat label="Accepted" value={totals.acceptance === null ? "–" : `${Math.round(totals.acceptance * 100)}%`} note={`${number.format(totals.accepted)} clicked`} />
           <Stat label="Dismissed / ignored" value={`${number.format(totals.dismissed)} / ${number.format(totals.ignored)}`} />
           <Stat label="Questions asked" value={number.format(totals.questions)} />
+          {view.settings.remember && <Stat label="Returning visits" value={number.format(totals.returning)} />}
           <Stat label="Credits used" value={number.format(totals.credits)} note={dollars(totals.credits)} />
         </div>
       )}
@@ -588,6 +858,7 @@ function SessionCard({ session, pageTitle }: { session: AgentSession; pageTitle:
           <p className="text-sm font-medium">{q.question}</p>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
             {q.answer ?? <span className="italic">Not answered (limit reached or the AI was unavailable).</span>}
+            {q.offTopic && <span className="ml-2 rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">Kept to your website</span>}
             {q.target && <span className="text-zinc-500"> → {pageTitle(q.target)}</span>}
           </p>
         </div>
@@ -599,6 +870,7 @@ function SessionCard({ session, pageTitle }: { session: AgentSession; pageTitle:
     <li className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
       <p className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         <span className="font-medium">Visitor {session.id}</span>
+        {session.visit && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-800 dark:bg-blue-950 dark:text-blue-300">Returning · visit {session.visit}</span>}
         <span className="text-zinc-500">
           {session.device} · {session.pages.length} {session.pages.length === 1 ? "page" : "pages"} · {time(session.startedAt)}
         </span>

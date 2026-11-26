@@ -3,6 +3,9 @@
 
 export type AgentTone = "friendly" | "professional" | "playful" | "calm";
 
+/** How quickly the agent speaks up (PACES in server/src/site-agent-rules.js). */
+export type AgentPace = "gentle" | "balanced" | "eager";
+
 /** Where the agent steers visitors: a name ("Donate") and one of the site's pages. */
 export type AgentGoal = { label: string; path: string; note: string };
 
@@ -13,7 +16,24 @@ export type AgentSettings = {
   goals: AgentGoal[];
   /** Credits the agent may spend in any 24 hours. */
   dailyCredits: number;
+  /** Offer visitors to be remembered on their device (they choose; `rememberDays` in the view). */
+  remember: boolean;
+  pace: AgentPace;
+  /** The free hello bubble a few seconds into a visit. */
+  greet: boolean;
+  /** The chat button: "#rrggbb", or "" for the site's brand colour. */
+  color: string;
+  position: "right" | "left";
+  icon: AgentIcon;
+  /** Text beside the icon ("" for the icon alone), at most 24 characters. */
+  label: string;
 };
+
+/** The chat button's icons (agent.js draws them; "logo" is the site's logo mark). */
+export type AgentIcon = "chat" | "sparkle" | "question" | "wave" | "heart" | "logo";
+
+/** One kind of request's cost: the last 30 days' average when `measured`, else an estimate. */
+export type AgentCost = { credits: number | null; tokens: number; requests: number; measured: boolean };
 
 export type AgentView = {
   /** The copy's base.html loads the widget (else it needs the site update). */
@@ -34,6 +54,12 @@ export type AgentView = {
   limits: { dailyCredits: { min: number; default: number; max: number }; suggestionsPerSession: number; questionsPerSession: number };
   lastActivityAt: string | null;
   retentionDays: number;
+  /** How long a returning visitor who said yes is remembered after their last visit. */
+  rememberDays: number;
+  /** Each pace's times (ms) and suggestions per visit. */
+  paces: Record<AgentPace, { goalRest: number; linkRest: number; gap: number; perVisit: number }>;
+  costs: { suggestion: AgentCost; answer: AgentCost };
+  icons: AgentIcon[];
 };
 
 export type AgentOutcome = "accepted" | "dismissed" | "ignored" | "pending";
@@ -51,7 +77,15 @@ export type AgentSuggestion = {
   reached: boolean;
 };
 
-export type AgentQuestion = { at: string; path: string; question: string; answer: string | null; target: string | null };
+export type AgentQuestion = {
+  at: string;
+  path: string;
+  question: string;
+  answer: string | null;
+  target: string | null;
+  /** Outside the website (or a try to take the agent off its job): the fixed reply was given. */
+  offTopic: boolean;
+};
 
 export type AgentSession = {
   /** A short label for the anonymous visitor, not their session id. */
@@ -59,6 +93,8 @@ export type AgentSession = {
   startedAt: string;
   lastSeenAt: string;
   device: string;
+  /** A returning visitor's visit number (2 and up), or null for a first or unremembered visit. */
+  visit: number | null;
   pages: string[];
   suggestions: AgentSuggestion[];
   questions: AgentQuestion[];
@@ -75,6 +111,8 @@ export type AgentHistory = {
     ignored: number;
     reached: number;
     questions: number;
+    /** Visits by returning visitors who said yes to being remembered. */
+    returning: number;
     /** accepted / shown, or null with nothing shown. */
     acceptance: number | null;
     credits: number;

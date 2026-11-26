@@ -1,7 +1,7 @@
 import express, { Router } from "express";
 import { getAccessToken } from "../github.js";
 import { MAX_BATCH_BYTES, MAX_SMALL_BYTES } from "../site-agent-rules.js";
-import { agentAsk, agentEvents, agentHistory, agentOutcome, agentView, deleteAgentData, disableAgent, enableAgent, saveAgentSettings } from "../site-agent.js";
+import { agentAsk, agentEvents, agentForget, agentHistory, agentOutcome, agentView, deleteAgentData, disableAgent, enableAgent, saveAgentSettings } from "../site-agent.js";
 import { WorkspaceError, siteIdFor } from "../workspace.js";
 import { handle, keyFor } from "./helpers.js";
 
@@ -21,6 +21,7 @@ const quietErrors = (err, req, res, next) => (res.headersSent ? next(err) : res.
 agentPublicRouter.post("/:key/events", batchBody, agentEvents, quietErrors);
 agentPublicRouter.post("/:key/ask", smallBody, agentAsk, quietErrors);
 agentPublicRouter.post("/:key/outcome", smallBody, agentOutcome, quietErrors);
+agentPublicRouter.post("/:key/forget", smallBody, agentForget, quietErrors);
 
 export const agentRouter = Router({ mergeParams: true });
 

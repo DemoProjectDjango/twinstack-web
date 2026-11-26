@@ -34,6 +34,10 @@ import { config } from "./config.js";
 //               site with the site agent on (_id = <siteId>:<session id>): the
 //               pages seen, the suggestions made and their outcomes, questions
 //               asked; deleted AGENT_RETENTION_DAYS after the last activity
+//   agentVisitors    one document per returning visitor who said yes to being
+//               remembered (_id = <siteId>:<visitor id from their device>):
+//               what earlier visits showed; deleted REMEMBER_DAYS after their
+//               last visit, or at once when they say "Forget me"
 //   providerErrors   one document per refusal from Anthropic, OpenAI or
 //               DeepSeek on the app's keys (out of balance, rate limited, key
 //               refused…), kept 30 days (provider-health.js)
@@ -122,6 +126,8 @@ export async function connectDb() {
     siteCopies().createIndex({ "agent.key": 1 }, { unique: true, partialFilterExpression: { "agent.key": { $type: "string" } } }),
     agentSessions().createIndex({ siteId: 1, startedAt: -1 }),
     agentSessions().createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
+    agentVisitors().createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
+    agentVisitors().createIndex({ siteId: 1 }),
     claudeUsage().createIndex({ siteId: 1, kind: 1, createdAt: -1 }, { partialFilterExpression: { kind: "site-agent" } }),
     providerErrors().createIndex({ at: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 }),
     claudeUsage().createIndex({ charged: 1, createdAt: -1 }),
@@ -177,6 +183,7 @@ const appSettings = () => db.collection("appSettings");
 const analyticsEvents = () => db.collection("analyticsEvents");
 const analyticsSalts = () => db.collection("analyticsSalts");
 const agentSessions = () => db.collection("agentSessions");
+const agentVisitors = () => db.collection("agentVisitors");
 const pendingSignups = () => db.collection("pendingSignups");
 const passwordResets = () => db.collection("passwordResets");
 const freeCreditGrants = () => db.collection("freeCreditGrants");
@@ -671,6 +678,7 @@ export async function deleteSiteRecords(siteId) {
     conversations().deleteMany({ siteId }),
     analyticsEvents().deleteMany({ siteId }),
     agentSessions().deleteMany({ siteId }),
+    agentVisitors().deleteMany({ siteId }),
     forgetSiteSetup(siteId),
   ]);
   await siteCopies().deleteOne({ _id: siteId });
@@ -1784,7 +1792,7 @@ export async function listAgentSessions(siteId, { from, to, before = null, limit
   return agentSessions()
     .find(
       { siteId, startedAt, $or: [{ "suggestions.0": { $exists: true } }, { "questions.0": { $exists: true } }] },
-      { projection: { sid: 1, startedAt: 1, lastSeenAt: 1, device: 1, pages: 1, suggestions: 1, questions: 1 } },
+      { projection: { sid: 1, startedAt: 1, lastSeenAt: 1, device: 1, pages: 1, suggestions: 1, questions: 1, "memory.visit": 1 } },
     )
     .sort({ startedAt: -1 })
     .limit(limit)
@@ -1804,11 +1812,13 @@ export async function agentTotals(siteId, { from, to, quietBefore }) {
           quiet: { $lt: ["$lastSeenAt", quietBefore] },
           questions: { $size: { $ifNull: ["$questions", []] } },
           suggestions: { $ifNull: ["$suggestions", []] },
+          returning: { $cond: [{ $gt: [{ $ifNull: ["$memory.visit", 0] }, 1] }, 1, 0] },
         },
       },
       {
         $project: {
           questions: 1,
+          returning: 1,
           // Reached the screen: the widget said so, or the visitor answered it.
           shown: {
             $size: {
@@ -1841,11 +1851,12 @@ export async function agentTotals(siteId, { from, to, quietBefore }) {
           ignored: { $sum: "$ignored" },
           reached: { $sum: "$reached" },
           questions: { $sum: "$questions" },
+          returning: { $sum: "$returning" },
         },
       },
     ])
     .toArray();
-  return { sessions: 0, shown: 0, accepted: 0, dismissed: 0, ignored: 0, reached: 0, questions: 0, ...(row ? { ...row, _id: undefined } : {}) };
+  return { sessions: 0, shown: 0, accepted: 0, dismissed: 0, ignored: 0, reached: 0, questions: 0, returning: 0, ...(row ? { ...row, _id: undefined } : {}) };
 }
 
 /** The latest activity of any visitor session on the site, or null. */
@@ -1855,8 +1866,48 @@ export async function lastAgentActivity(siteId) {
 }
 
 export async function deleteAgentSessions(siteId) {
-  const result = await agentSessions().deleteMany({ siteId });
+  const [result] = await Promise.all([agentSessions().deleteMany({ siteId }), agentVisitors().deleteMany({ siteId })]);
   return result.deletedCount;
+}
+
+const agentVisitorId = (siteId, vid) => `${siteId}:${vid}`;
+
+export async function findAgentVisitor(siteId, vid) {
+  return agentVisitors().findOne({ _id: agentVisitorId(siteId, vid) });
+}
+
+/** Saves a returning visitor whole; kept `days` after `lastSeenAt`. */
+export async function saveAgentVisitor(visitor, days) {
+  const { _id: _ignored, ...doc } = visitor;
+  const expireAt = new Date(new Date(visitor.lastSeenAt).getTime() + days * 24 * 60 * 60_000);
+  await agentVisitors().replaceOne({ _id: agentVisitorId(visitor.siteId, visitor.vid) }, { ...doc, expireAt }, { upsert: true });
+}
+
+/** "Forget me": the visitor's record, and the memory a current visit holds of it. */
+export async function forgetAgentVisitor(siteId, vid, sid) {
+  await Promise.all([
+    agentVisitors().deleteOne({ _id: agentVisitorId(siteId, vid) }),
+    sid ? agentSessions().updateOne({ _id: agentSessionId(siteId, sid) }, { $unset: { memory: "" } }) : null,
+  ]);
+}
+
+/** The site agent's requests for this site since `since`, by command (suggest, answer): how many and their credits and tokens. */
+export async function agentCostsSince(userId, siteId, since) {
+  const rows = await claudeUsage()
+    .aggregate([
+      { $match: { siteId, kind: "site-agent", userId, createdAt: { $gte: since } } },
+      {
+        $group: {
+          _id: "$command",
+          requests: { $sum: 1 },
+          credits: { $sum: "$credits" },
+          input: { $sum: { $add: [{ $ifNull: ["$inputTokens", 0] }, { $ifNull: ["$cacheReadTokens", 0] }, { $ifNull: ["$cacheWriteTokens", 0] }] } },
+          output: { $sum: { $ifNull: ["$outputTokens", 0] } },
+        },
+      },
+    ])
+    .toArray();
+  return Object.fromEntries(rows.map((r) => [r._id, { requests: r.requests, credits: r.credits, input: r.input, output: r.output }]));
 }
 
 /** Credits the site agent charged its owner for this site since `since` (a Date). */
