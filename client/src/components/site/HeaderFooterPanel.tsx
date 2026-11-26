@@ -47,7 +47,10 @@ export function HeaderFooterPanel() {
   const [info, setInfo] = useState<NavigationInfo | null>(null);
   const [draft, setDraft] = useState<Navigation | null>(null);
   const [brand, setBrand] = useState<BrandInfo | null>(null);
-  const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
+  // On a phone the preview starts as a phone: a computer-wide header can't fit the screen.
+  const [device, setDevice] = useState<"desktop" | "mobile">(() =>
+    typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches ? "mobile" : "desktop",
+  );
   const [open, setOpen] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);

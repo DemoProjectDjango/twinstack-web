@@ -214,7 +214,7 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
         style={floating ? undefined : { background: HEADER_BG[look.header.theme], borderColor: look.header.theme === "light" ? C.line : C.rule }}
       >
         <div
-          className={`flex h-14 items-center gap-4 px-4 ${floating ? "rounded-xl border shadow-md" : ""}`}
+          className={`flex min-h-14 flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 ${floating ? "rounded-xl border shadow-md" : ""}`}
           style={floating ? { background: HEADER_BG[look.header.theme], borderColor: look.header.theme === "light" ? C.line : C.rule } : undefined}
         >
           <Hit target="header-look" selected={selected} onSelect={onSelect} title="Logo and name: change them on Site info. Click to edit the header's look.">
@@ -236,7 +236,7 @@ export function HeaderFooterPreview({ navigation, info, brand, pageIndex, device
           ) : (
             <>
               {look.header.layout !== "left" && <span className="flex-1" />}
-              <ul className="flex items-center gap-0.5">{menu}</ul>
+              <ul className="flex min-w-0 flex-wrap items-center gap-0.5">{menu}</ul>
               {look.header.layout !== "right" && <span className="flex-1" />}
               {ctaButton}
             </>

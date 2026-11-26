@@ -1191,7 +1191,8 @@ const pct = (part: number, whole: number) => (whole ? `${Math.round((part / whol
 
 function Card({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+    // min-w-0: in the two-column grid a card never grows past the screen to fit a long line.
+    <div className="min-w-0 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
       <h4 className="text-sm font-semibold">{title}</h4>
       {description && <p className="mt-0.5 text-xs text-zinc-500">{description}</p>}
       <div className="mt-3">{children}</div>
@@ -1300,7 +1301,7 @@ function Insights({
       <h3 id="agent-insights" className="text-base font-semibold">
         Insights
       </h3>
-      <Card title="Visits with the agent" description="Hover over a day for its suggestions and questions.">
+      <Card title="Visits with the agent" description="Tap or point at a day for its suggestions and questions.">
         <DailyChart days={insights.days} span={span} />
       </Card>
       <div className="grid gap-3 lg:grid-cols-2">
@@ -1309,19 +1310,19 @@ function Insights({
             <p className="text-sm text-zinc-500">No goals yet. Add some above so the agent knows where to steer visitors.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[22rem] text-left text-sm">
+              <table className="w-full text-left text-sm">
                 <thead className="text-xs text-zinc-500">
                   <tr>
                     <th className="py-1 pr-2 font-medium">Goal</th>
                     <th className="py-1 pr-2 font-medium">Offered</th>
                     <th className="py-1 pr-2 font-medium">Accepted</th>
-                    <th className="py-1 font-medium">Reached the page</th>
+                    <th className="py-1 font-medium" title="Visitors who reached the goal's page">Reached</th>
                   </tr>
                 </thead>
                 <tbody>
                   {goalRows.map((r) => (
                     <tr key={r.goal.path} className="border-t border-zinc-200 dark:border-zinc-800">
-                      <td className="py-1.5 pr-2">{r.goal.label}</td>
+                      <td className="max-w-[8rem] truncate py-1.5 pr-2 sm:max-w-none">{r.goal.label}</td>
                       <td className="py-1.5 pr-2 tabular-nums">{number.format(r.shown)}</td>
                       <td className="py-1.5 pr-2 tabular-nums">
                         {number.format(r.accepted)} <span className="text-xs text-zinc-500">{pct(r.accepted, r.shown)}</span>
