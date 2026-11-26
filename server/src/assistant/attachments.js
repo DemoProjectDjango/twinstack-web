@@ -197,13 +197,29 @@ export { publicMeta as attachmentView };
 /* ------------------------------------------------------ giving it to Claude */
 
 /** Uploads the attachment to the Files API once (what Claude reads: the image, the PDF, the text). */
+/**
+ * The name a file is uploaded to the AI under: plain letters, digits, spaces, dots, dashes and
+ * underscores, since its Files API refuses others (a colon, "·", accents). The owner still sees
+ * the file's own name; only the upload's changes.
+ */
+export function uploadName(name) {
+  const plain = String(name ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9 ._-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^[\s._]+|[\s_]+$/g, "")
+    .slice(-120);
+  return plain || "file";
+}
+
 export async function ensureUploaded(client, key, meta) {
   if (meta.fileId || meta.kind === "file") return meta;
   const dir = dirOf(key);
   const bytes = meta.kind === "document" ? await fs.readFile(path.join(dir, `${meta.id}.txt`)) : await fs.readFile(path.join(dir, meta.id));
   // Claude reads text documents as plain text, whatever their kind (HTML, CSV, a Word file's text).
   const type = meta.kind === "image" || meta.kind === "pdf" ? meta.mime : "text/plain";
-  const name = meta.kind === "document" || meta.kind === "text" ? `${meta.name}.txt` : meta.name;
+  const name = uploadName(meta.kind === "document" || meta.kind === "text" ? `${meta.name}.txt` : meta.name);
   const uploaded = await client.files.upload({ file: await toFile(bytes, name, { type }) });
   const next = { ...meta, fileId: uploaded.id };
   await fs.writeFile(path.join(dir, `${meta.id}.json`), JSON.stringify(next));

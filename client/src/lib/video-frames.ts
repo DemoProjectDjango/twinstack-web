@@ -23,7 +23,8 @@ export class VideoError extends Error {}
 
 export type VideoFrame = { file: File; at: number };
 
-const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+// "1m05s": file names keep to plain characters (the AI's file service refuses ":" and the like).
+const clock = (seconds: number) => `${Math.floor(seconds / 60)}m${String(Math.floor(seconds % 60)).padStart(2, "0")}s`;
 
 function once(target: HTMLVideoElement, event: string, ms: number) {
   return new Promise<void>((resolve, reject) => {
@@ -92,7 +93,7 @@ export function spread<T>(items: T[], count: number): T[] {
 }
 
 /**
- * The frames worth showing from a video file, as JPEG files named "<video> · frame N of M (m:ss).jpg",
+ * The frames worth showing from a video file, as JPEG files named "<video> - frame N of M at 0m05s.jpg",
  * at most `limit`. `onProgress` gets 0–1 while it looks.
  */
 export async function videoFrames(file: File, limit = MAX_VIDEO_FRAMES, onProgress?: (share: number) => void): Promise<VideoFrame[]> {
@@ -139,7 +140,7 @@ export async function videoFrames(file: File, limit = MAX_VIDEO_FRAMES, onProgre
     const base = file.name.replace(/\.[^.]+$/, "").slice(0, 60) || "video";
     return chosen.map(({ blob, at }, i) => ({
       at,
-      file: new File([blob], `${base} · frame ${i + 1} of ${chosen.length} (${clock(at)}).jpg`, { type: "image/jpeg" }),
+      file: new File([blob], `${base} - frame ${i + 1} of ${chosen.length} at ${clock(at)}.jpg`, { type: "image/jpeg" }),
     }));
   } finally {
     video.removeAttribute("src");

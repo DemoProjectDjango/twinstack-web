@@ -110,8 +110,13 @@ function readAsBase64(file: File) {
 }
 
 /** The site's logo, dark-background logo, icon, favicon and name (site.config.json → brand). */
+// A picture too big to come inline (a logo saved at 6000 px, say) loads from the site's files instead.
+const LOADABLE = /^\/?assets\/img\/[\w./-]+\.(png|jpe?g|gif|webp)$/i;
+
 export function BrandPanel() {
   const { owner, repo, busy, version, setStatus } = useSite();
+  const shown = (preview: string | null | undefined, src: string | null | undefined) =>
+    preview || (src && LOADABLE.test(src) ? workspaceImageUrl(owner, repo, src.replace(/^\//, "")) : null);
   const [info, setInfo] = useState<BrandInfo | null>(null);
   const [draft, setDraft] = useState<Brand | null>(null);
   const [previews, setPreviews] = useState<BrandInfo["previews"]>({});
@@ -251,9 +256,9 @@ export function BrandPanel() {
             the Logo setting below doesn&apos;t change it. Replacing it here changes it in the header and footer.
           </p>
           <div className="mt-2 flex h-20 items-center justify-center rounded border border-zinc-200 bg-white p-2 dark:border-zinc-800">
-            {info.headerLogo.preview ? (
-              // eslint-disable-next-line @next/next/no-img-element -- a data: URL or the logo's own web address
-              <img src={info.headerLogo.preview} alt={info.headerLogo.alt || "Logo in your header"} className="max-h-full max-w-full object-contain" />
+            {shown(info.headerLogo.preview, info.headerLogo.src) ? (
+              // eslint-disable-next-line @next/next/no-img-element -- a data: URL, the site's own file or the logo's web address
+              <img src={shown(info.headerLogo.preview, info.headerLogo.src) ?? undefined} alt={info.headerLogo.alt || "Logo in your header"} className="max-h-full max-w-full object-contain" />
             ) : (
               <span className="text-xs text-zinc-500">No preview</span>
             )}
@@ -313,7 +318,7 @@ export function BrandPanel() {
           <div className="grid gap-4 sm:grid-cols-2">
             {SLOTS.map((slot) => {
               const value = draft[slot.field];
-              const src = previews[slot.field];
+              const src = shown(previews[slot.field], value);
               return (
                 <div key={slot.field} className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
                   <span className="block text-sm font-medium">{slot.label}</span>
