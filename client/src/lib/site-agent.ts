@@ -41,7 +41,7 @@ export type AgentOutcome = "accepted" | "dismissed" | "ignored" | "pending";
 export type AgentSuggestion = {
   at: string;
   path: string;
-  /** What made the agent speak up: "goal-hover", "repeat-clicks", "leaving", "browsing", "reading". */
+  /** What made the agent speak up: "goal-hover", "link-hover", "repeat-clicks", "leaving", "browsing", "reading". */
   trigger: string;
   text: string;
   target: string;

@@ -93,12 +93,18 @@ const NEW_SESSIONS_PER_IP_HOUR = 30;
 const AI_PER_IP_HOUR = 20;
 const SITE_AI_PER_MINUTE = 30;
 const SITE_AI_RUNNING = 3;
-const BATCHES_PER_SESSION_MINUTE = 30;
+const BATCHES_PER_SESSION_MINUTE = 40;
 // Without a cheaper model, Claude's smallest writes the agent's words.
 const FALLBACK_MODEL = "claude-haiku-4-5";
 // Room for a thinking model's reasoning as well as the short JSON reply.
 const MAX_TOKENS = 1500;
 const AI_TIMEOUT_MS = 25_000;
+// Writing a resting suggestion ahead: started once the pointer is this close to the rest that
+// counts (site-agent-rules.js TRIGGERS), so it's ready when it does. At most DRAFTS_PER_SESSION a
+// visit (each is a charged request whether or not it's shown), used within DRAFT_MS.
+const DRAFT_LEAD_MS = 1_200;
+const DRAFTS_PER_SESSION = 4;
+const DRAFT_MS = 60_000;
 // A suggestion nobody answered in a session quiet this long counts as ignored.
 const QUIET_MS = 30 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
@@ -117,13 +123,14 @@ const spentCache = new Map(); // siteId → { credits, until }
 const CAP_CACHE_MS = 30_000;
 const running = new Map(); // siteId → model requests running
 const knowledgeCache = new Map(); // siteId → { pages: Promise, until }
+const drafts = new Map(); // `${siteId}:${sid}` → { made, current: { thingId, path, type, promise, at } | null, until }
 const KNOWLEDGE_MS = 15 * 60_000;
 const KNOWLEDGE_RETRY_MS = 2 * 60_000;
 
 setInterval(() => {
   const now = Date.now();
   for (const limit of Object.values(limits)) limit.sweep();
-  for (const cache of [keyCache, spentCache, knowledgeCache]) for (const [k, entry] of cache) if (entry.until <= now) cache.delete(k);
+  for (const cache of [keyCache, spentCache, knowledgeCache, drafts]) for (const [k, entry] of cache) if (entry.until <= now) cache.delete(k);
 }, 60_000).unref();
 
 /** A network address as the limits know it: a keyed hash, never the address itself. */
@@ -211,11 +218,16 @@ async function takeBatch(ctx, batch) {
   applyBatch(session, batch, now);
   // A quiet batch (the page closing or hidden) is sent as a beacon: nothing can show a reply to
   // it, so it never makes a suggestion (one would be charged, counted and never seen).
-  const trigger = batch.quiet ? null : decide(session, site.agent.goals ?? [], now);
+  const goals = site.agent.goals ?? [];
+  const trigger = batch.quiet ? null : decide(session, goals, now);
   let suggestion = null;
   if (trigger) {
     suggestion = await writeSuggestion(ctx, session, trigger);
     if (suggestion) session.suggestions.push(suggestion);
+  } else if (!batch.quiet) {
+    // The pointer is resting on something that will count in a moment: write it now.
+    const ahead = decide(session, goals, now, { lead: DRAFT_LEAD_MS });
+    if (ahead) startDraft(ctx, session, ahead);
   }
   // A suggestion written after the visitor had already moved on never reached the screen: it's
   // offered on the next page instead, at no new cost.
@@ -307,11 +319,16 @@ async function modelFor(siteId, userId) {
   };
 }
 
-/** One request to `model`'s provider on the app's key. */
+/**
+ * One request to `model`'s provider on the app's key. A visitor is waiting for a short JSON reply,
+ * so the fast models skip long reasoning (measured: about 1 s instead of 2, and no 7 s outliers).
+ */
 function sendTo(model, params, signal, userId) {
   const provider = providerOf(model);
-  if (provider === "openai") return createMessage(params, { apiKey: appKeyFor("openai"), signal });
-  if (provider === "deepseek") return new Anthropic({ apiKey: appKeyFor("deepseek"), baseURL: DEEPSEEK_UPSTREAM, maxRetries: 1 }).messages.create(params, { signal });
+  if (provider === "openai") return createMessage({ ...params, output_config: { effort: "low" } }, { apiKey: appKeyFor("openai"), signal });
+  if (provider === "deepseek") {
+    return new Anthropic({ apiKey: appKeyFor("deepseek"), baseURL: DEEPSEEK_UPSTREAM, maxRetries: 1 }).messages.create({ ...params, thinking: { type: "disabled" } }, { signal });
+  }
   return new Anthropic({ apiKey: config.platformAnthropicKey, maxRetries: 1 }).messages.create({ ...params, metadata: { user_id: anthropicUserId(userId) } }, { signal });
 }
 
@@ -332,27 +349,39 @@ async function spentToday(site) {
 async function askModel({ site, ip, sid, command, system, content }) {
   const cap = Number.isInteger(site.agent.dailyCredits) ? site.agent.dailyCredits : DAILY_CREDITS.default;
   if ((running.get(site.siteId) ?? 0) >= SITE_AI_RUNNING) return { unavailable: "busy" };
-  if ((await spentToday(site)) >= cap) return { unavailable: "daily limit" };
+  const known = spentCache.get(site.siteId);
+  if (known && known.until > Date.now() && known.credits >= cap) return { unavailable: "daily limit" };
   if (!limits.ai.take(ip) || !limits.siteAi.take(site.siteId)) return { unavailable: "rate" };
-  const choice = await modelFor(site.siteId, site.userId);
-  if (!choice) return { unavailable: "no model" };
 
   running.set(site.siteId, (running.get(site.siteId) ?? 0) + 1);
   try {
-    let spend;
-    try {
-      // Never waits for room: a visitor is waiting.
-      spend = await beginSpend({ userId: site.userId, siteId: site.siteId, runId: `agent:${site.siteId}:${sid}`, kind: "site-agent", command, waitMs: 0 });
-    } catch (err) {
-      if (err instanceof ClaudeAccessError) return { unavailable: err.code };
-      throw err;
+    // The checks read the database, so they run side by side: a visitor is waiting.
+    const [spent, choice, started] = await Promise.all([
+      spentToday(site),
+      modelFor(site.siteId, site.userId),
+      // Never waits for room.
+      beginSpend({ userId: site.userId, siteId: site.siteId, runId: `agent:${site.siteId}:${sid}`, kind: "site-agent", command, waitMs: 0 }).then(
+        (spend) => ({ spend }),
+        (err) => {
+          if (err instanceof ClaudeAccessError) return { refused: err.code };
+          throw err;
+        },
+      ),
+    ]);
+    const spend = started.spend;
+    const refusal = started.refused ?? (!spend ? "credits" : spent >= cap ? "daily limit" : !choice ? "no model" : null);
+    if (refusal) {
+      if (spend) await spend.finish({});
+      return { unavailable: refusal };
     }
-    if (!spend) return { unavailable: "credits" };
     const params = { model: choice.model, max_tokens: MAX_TOKENS, system, messages: [{ role: "user", content }] };
     params.max_tokens = spend.maxTokens(MAX_TOKENS, params);
+    if (!params.max_tokens) {
+      await spend.finish({});
+      return { unavailable: "credits" };
+    }
     let message;
     try {
-      if (!params.max_tokens) return { unavailable: "credits" };
       const signal = AbortSignal.timeout(AI_TIMEOUT_MS);
       // The chosen model first; when its provider is out on the app's account, the next one that
       // has a key (ai-failover.js), with the room recounted at that model's prices.
@@ -367,11 +396,11 @@ async function askModel({ site, ip, sid, command, system, content }) {
       ));
     } catch (err) {
       console.warn(`The site agent's model request failed (${choice.model}): ${err.message}`);
+      await spend.finish({});
       return { failed: true };
-    } finally {
-      await spend.finish(message ? { model: message.model, usage: message.usage } : {});
-      spentCache.delete(site.siteId);
     }
+    // Charged without holding up the reply (finish never throws); the daily total is read again next time.
+    spend.finish({ model: message.model, usage: message.usage }).then(() => spentCache.delete(site.siteId));
     if (message.stop_reason === "max_tokens") return { failed: true };
     return { text: message.content.filter((b) => b.type === "text").map((b) => b.text).join("") };
   } finally {
@@ -455,8 +484,49 @@ const allowedTargets = (site, pages) => new Set([...(site.agent.goals ?? []).map
 const intro = (agent) =>
   `You are ${agent.name || DEFAULT_SETTINGS.name}, the helper on the website "${agent.siteName || "this website"}". Your tone is ${TONES[agent.tone] ?? TONES.friendly}.`;
 
-/** A suggestion for the visitor now (the model writes it), or null. Recorded by the caller. */
+const draftKey = (ctx, session) => `${ctx.site.siteId}:${session.sid}`;
+
+/** Starts writing the suggestion a resting trigger will need (not awaited), once per thing. */
+function startDraft(ctx, session, trigger) {
+  const key = draftKey(ctx, session);
+  const entry = drafts.get(key) ?? { made: 0, current: null };
+  const current = entry.current;
+  if (current && current.thingId === trigger.thingId && current.path === session.page.path && Date.now() - current.at < DRAFT_MS) return;
+  if (entry.made >= DRAFTS_PER_SESSION) return;
+  entry.made += 1;
+  // A copy: the session goes on changing (and is saved) while this is written.
+  const promise = composeSuggestion(ctx, structuredClone(session), trigger).catch((err) => {
+    console.warn("The site agent couldn't write a suggestion ahead:", err.message);
+    return null;
+  });
+  entry.current = { thingId: trigger.thingId, path: session.page.path, type: trigger.type, promise, at: Date.now() };
+  entry.until = Date.now() + 60 * 60_000;
+  drafts.set(key, entry);
+}
+
+/** The suggestion written ahead for this trigger, if there is one, taken (so it's used once). */
+function takeDraft(ctx, session, trigger) {
+  const entry = drafts.get(draftKey(ctx, session));
+  const current = entry?.current;
+  if (!current || !trigger.thingId) return null;
+  if (current.thingId !== trigger.thingId || current.type !== trigger.type || current.path !== session.page.path || Date.now() - current.at > DRAFT_MS) return null;
+  entry.current = null;
+  return current.promise;
+}
+
+/** A suggestion for the visitor now (written ahead when the trigger was seen coming), or null. Recorded by the caller. */
 async function writeSuggestion(ctx, session, trigger) {
+  const draft = takeDraft(ctx, session, trigger);
+  if (draft) {
+    const ready = await draft;
+    const suggested = new Set((session.suggestions ?? []).map((s) => s.target));
+    if (ready && !suggested.has(ready.target) && ready.target !== session.page.path) return { ...ready, at: new Date() };
+  }
+  return composeSuggestion(ctx, session, trigger);
+}
+
+/** A suggestion for the visitor (the model writes it), or null. */
+async function composeSuggestion(ctx, session, trigger) {
   const { site } = ctx;
   const pages = await siteKnowledge(site);
   // Never the same place twice in one visit (accepted, dismissed or ignored).

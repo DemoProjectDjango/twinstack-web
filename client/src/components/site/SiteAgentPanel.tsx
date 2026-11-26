@@ -40,6 +40,7 @@ const OUTCOMES: Record<AgentOutcome, { label: string; tone: string }> = {
 
 const TRIGGERS: Record<string, string> = {
   "goal-hover": "Lingered over a goal",
+  "link-hover": "Lingered over a link",
   "repeat-clicks": "Clicked around",
   leaving: "About to leave",
   browsing: "Browsing without a goal",

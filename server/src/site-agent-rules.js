@@ -44,6 +44,8 @@ export const LIMITS = Object.freeze({
 export const TRIGGERS = Object.freeze({
   // Resting on something that leads to one of the owner's goals this long (ms, added up on the page).
   goalHoverMs: 1_500,
+  // Resting on a link to another of the site's pages (not a goal) this long.
+  linkHoverMs: 2_500,
   // The same thing clicked this many times on one page without going anywhere.
   repeatClicks: 3,
   // A visitor about to leave who has been on the site at least this long.
@@ -285,33 +287,51 @@ export function matchesGoal(target, goal) {
  * Whether a suggestion may be made now (the per-session limits): no more than
  * LIMITS.suggestionsPerSession, one per page, LIMITS.cooldownMs apart, none in the first seconds.
  */
-export function maySuggest(session, now) {
+export function maySuggest(session, now, { resting = false } = {}) {
   if (!session.page) return false;
   if (session.suggestions.length >= LIMITS.suggestionsPerSession) return false;
   if (session.suggestions.some((s) => pageKey(s.path) === pageKey(session.page.path))) return false;
   const last = session.suggestions.at(-1);
   if (last && now - new Date(last.at).getTime() < LIMITS.cooldownMs) return false;
-  return now - new Date(session.startedAt).getTime() >= LIMITS.quietStartMs;
+  // Resting on something is a deliberate act, so the quiet start doesn't hold it back.
+  return resting || now - new Date(session.startedAt).getTime() >= LIMITS.quietStartMs;
 }
+
+/** A link on the page to another of the site's own pages (not a phone, email or outside link). */
+const sitePageLink = (thing, current) => typeof thing.link === "string" && thing.link.startsWith("/") && pageKey(thing.link) !== pageKey(current);
 
 /**
  * The trigger for a suggestion now, or null: the cheap rules that decide WHEN (the model only
- * writes WHAT). In order: resting on something that leads to a goal, clicking the same thing again
- * and again, leaving, browsing pages without reaching a goal, reading one page for a long time.
- * `{ type, goal?, thing?, about }`, where `about` says what happened in a few words for the model.
+ * writes WHAT). In order: resting on something that leads to a goal, resting on a link to another
+ * of the site's pages, clicking the same thing again and again, leaving, browsing pages without
+ * reaching a goal, reading one page for a long time.
+ * `{ type, goal?, thing?, thingId?, about }`, where `about` says what happened in a few words for the model.
+ *
+ * `lead` (ms) counts every rest as that much longer, and then only the resting triggers are looked
+ * at: what would trigger if the pointer stays put, so the suggestion can be written ahead of time.
  */
-export function decide(session, goals, now) {
-  if (!maySuggest(session, now)) return null;
+export function decide(session, goals, now, { lead = 0 } = {}) {
+  if (!session.page) return null;
   const page = session.page;
   const visitedPaths = new Set(session.pages.map((p) => pageKey(p.path)));
   const open = goals.filter((g) => !visitedPaths.has(pageKey(g.path)));
-  const things = Object.entries(page.labels).map(([id, thing]) => ({ id, ...thing, hover: page.hovers[id] ?? 0, clicks: page.clicks[id] ?? 0 }));
+  const things = Object.entries(page.labels).map(([id, thing]) => ({ id, ...thing, hover: (page.hovers[id] ?? 0) + (page.hovers[id] ? lead : 0), clicks: page.clicks[id] ?? 0 }));
 
-  for (const thing of things.sort((a, b) => b.hover - a.hover)) {
-    if (thing.hover < TRIGGERS.goalHoverMs || thing.clicks > 0) continue;
-    const goal = open.find((g) => matchesGoal(thing, g));
-    if (goal) return { type: "goal-hover", goal, thing: thing.label, about: `paused for a while over "${thing.label || goal.label}" without clicking it` };
+  if (maySuggest(session, now, { resting: true })) {
+    const resting = things.filter((t) => t.clicks === 0).sort((a, b) => b.hover - a.hover);
+    for (const thing of resting) {
+      if (thing.hover < TRIGGERS.goalHoverMs) break;
+      const goal = open.find((g) => matchesGoal(thing, g));
+      if (goal) return { type: "goal-hover", goal, thing: thing.label, thingId: thing.id, about: `paused for a while over "${thing.label || goal.label}" without clicking it` };
+    }
+    for (const thing of resting) {
+      if (thing.hover < TRIGGERS.linkHoverMs) break;
+      if (sitePageLink(thing, page.path) && !goals.some((g) => matchesGoal(thing, g))) {
+        return { type: "link-hover", thing: thing.label, thingId: thing.id, about: `paused over "${thing.label || thing.link}" (a link to ${thing.link}) without clicking it` };
+      }
+    }
   }
+  if (lead || !maySuggest(session, now)) return null;
   const repeated = things.find((t) => t.clicks >= TRIGGERS.repeatClicks);
   if (repeated) return { type: "repeat-clicks", thing: repeated.label, about: `clicked "${repeated.label || "the same part of the page"}" several times, maybe looking for something that isn't there` };
   if (page.exit && now - new Date(session.startedAt).getTime() >= TRIGGERS.leavingAfterMs) {

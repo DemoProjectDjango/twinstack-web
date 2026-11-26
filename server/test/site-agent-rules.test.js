@@ -140,11 +140,48 @@ describe("sessions", () => {
 describe("decide", () => {
   const session = () => newSession({ siteId: 1, sid: SID, now: T0, device: "Desktop" });
 
-  it("waits a few seconds into a visit", () => {
+  it("waits a few seconds into a visit, except for a deliberate rest on something", () => {
     const s = session();
-    applyBatch(s, batch([{ k: "h", l: "Donate", u: "/donate.html", x: "link", d: 3000 }]), at(1));
-    assert.equal(decide(s, GOALS, at(1)), null);
-    assert.equal(decide(s, GOALS, at(10)).type, "goal-hover");
+    applyBatch(s, batch([{ k: "t", d: 1 }, { k: "s", d: 90 }]), at(1));
+    s.page.seconds = 60;
+    assert.equal(decide(s, GOALS, at(1)), null, "reading needs the quiet start over");
+    const resting = session();
+    applyBatch(resting, batch([{ k: "h", l: "Donate", u: "/donate.html", x: "link", d: 1500 }]), at(2));
+    assert.equal(decide(resting, GOALS, at(2)).type, "goal-hover");
+  });
+
+  it("link hover: resting longer on a link to another of the site's pages", () => {
+    const s = session();
+    applyBatch(s, batch([{ k: "h", l: "Gift cards", u: "/gift-cards.html", x: "link", d: 2000 }]), at(10));
+    assert.equal(decide(s, GOALS, at(10)), null, "not yet");
+    applyBatch(s, batch([{ k: "h", l: "Gift cards", u: "/gift-cards.html", x: "link", d: 600 }]), at(11));
+    const t = decide(s, GOALS, at(11));
+    assert.equal(t.type, "link-hover");
+    assert.equal(t.thingId, "/gift-cards.html");
+
+    const outside = session();
+    applyBatch(outside, batch([{ k: "h", l: "Our Instagram", u: "ext:instagram.com", x: "link", d: 5000 }, { k: "h", l: "Call", u: "tel", x: "link", d: 5000 }]), at(10));
+    assert.equal(decide(outside, GOALS, at(10)), null, "outside, phone and email links never");
+
+    const here = session();
+    applyBatch(here, batch([{ k: "h", l: "Home", u: "/", x: "link", d: 5000 }]), at(10));
+    assert.equal(decide(here, GOALS, at(10)), null, "never the page the visitor is on");
+  });
+
+  it("lead: what would trigger if the pointer stays put, resting triggers only", () => {
+    const s = session();
+    applyBatch(s, batch([{ k: "h", l: "Donate", u: "/donate.html", x: "link", d: 600 }]), at(10));
+    assert.equal(decide(s, GOALS, at(10)), null);
+    const ahead = decide(s, GOALS, at(10), { lead: 1000 });
+    assert.equal(ahead.type, "goal-hover");
+    assert.equal(ahead.thingId, "/donate.html");
+
+    const leaving = session();
+    applyBatch(leaving, batch([{ k: "x" }]), at(12));
+    assert.equal(decide(leaving, GOALS, at(12), { lead: 1000 }), null);
+    const nothing = session();
+    applyBatch(nothing, batch([]), at(12));
+    assert.equal(decide(nothing, GOALS, at(12), { lead: 5000 }), null, "no lead for things never rested on");
   });
 
   it("goal hover: resting on a goal's link (or its label) long enough, without clicking", () => {
