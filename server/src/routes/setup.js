@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requireAuth, requireGithub } from "../session.js";
+import { listKits } from "../kits.js";
 import { planSetup, previewSetup, skillsCatalog } from "../site-setup.js";
 import { handle, requireJson } from "./helpers.js";
 
@@ -16,6 +17,15 @@ setupRouter.get(
   handle(async (req, res) => {
     res.set("Cache-Control", "private, max-age=300");
     res.json({ skills: skillsCatalog() });
+  }),
+);
+
+/* The starter kits a new site can start from (kits.js): all free for now. */
+setupRouter.get(
+  "/kits",
+  handle(async (req, res) => {
+    res.set("Cache-Control", "private, max-age=300");
+    res.json({ kits: await listKits() });
   }),
 );
 

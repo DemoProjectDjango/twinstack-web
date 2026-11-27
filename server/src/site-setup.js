@@ -7,6 +7,7 @@ import { ClaudeAccessError, anthropicUserId, beginSpend, claudeKeyFor } from "./
 import { anthropicClient } from "./assistant/turn.js";
 import { saveBrand } from "./brand.js";
 import { normalizeLink } from "./links.js";
+import { kitById, sameAddress } from "./kits.js";
 import { prepareBuild } from "./setup-build.js";
 import { SETUP_FIRST_WEEK_MS, listSiteSetups, saveSiteSetup } from "./db.js";
 import { readDataFile, writeDataFile } from "./site-files.js";
@@ -520,6 +521,8 @@ function readBody(body) {
     favicon: typeof body?.favicon === "string" && LOGO_PATH.test(body.favicon) ? body.favicon : null,
     known: checkKnown(body?.known),
     findings: checkFindings(body?.findings),
+    // A starter kit (kits.js) to start from instead of the AI designing the homepage; checked in saveSetup.
+    kit: typeof body?.kit === "string" && /^[a-z0-9-]{1,40}$/.test(body.kit) ? body.kit : null,
   };
 }
 
@@ -863,6 +866,7 @@ export async function saveSetup({ key, siteId, body, options = {} }) {
     await saveSiteSetup(siteId, {
       type: setup.type.id,
       version: setup.type.version,
+      ...(setup.kit && { kit: setup.kit }),
       by: setup.by,
       brief: setup.brief,
       questions: setup.questions.map((q) => ({ title: q.title, status: q.status, skipped: setup.skipped.includes(q.id) })),
@@ -879,7 +883,21 @@ export async function saveSetup({ key, siteId, body, options = {} }) {
     }).catch((err) => console.error(`Couldn't record the setup of site ${siteId}:`, err.message));
   }
   const photosField = fieldsOfQuestions(setup.questions).find((f) => f.type === "photos");
-  const plan = buildPlan(setup, { chrome: options.chrome !== false, photos: (photosField && setup.answers[photosField.id]) || [] });
+  let plan = buildPlan(setup, { chrome: options.chrome !== false, photos: (photosField && setup.answers[photosField.id]) || [] });
+  const kit = await kitById(setup.kit);
+  if (kit) {
+    // The kit's pages are designed already: no AI homepage, picture or header and footer design, and
+    // the chosen pages the kit has aren't written again (the standard header and footer keep the
+    // owner's settings in `navigation`).
+    plan = {
+      ...plan,
+      kit: kit.id,
+      home: null,
+      picture: null,
+      chrome: null,
+      pages: plan.pages.filter((p) => !kit.pages.some((k) => sameAddress(k.url, p.address))),
+    };
+  }
   const prepared = await prepareBuild(key, plan);
   return { request: planText(plan), build: Boolean(prepared.home || prepared.chrome || prepared.pages.length) };
 }

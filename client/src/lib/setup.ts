@@ -82,6 +82,19 @@ export type SetupAnswers = {
   /** The browser-tab icon, when it isn't the logo (or, without one, the initial mark). */
   favicon: File | null;
   photos: File[];
+  /** The starter kit to start from (`GET /api/setup/kits`), or null for the AI to design the homepage. */
+  kit: string | null;
+};
+
+/** A starter kit, as `GET /api/setup/kits` lists it. */
+export type StarterKit = {
+  id: string;
+  version: number;
+  label: string;
+  description: string;
+  category: string;
+  free: boolean;
+  pages: { url: string; title: string }[];
 };
 
 /** The header's button: the booking link, the phone number, the Contact page, the owner's own, or none. */
@@ -280,7 +293,7 @@ export function clearPendingSetup(owner: string, repo: string) {
  * the paths they were saved at, under their questions' fields.
  */
 export function setupBody(setup: Omit<SetupAnswers, "logo" | "favicon" | "photos">, files: { logo?: string; favicon?: string; photos?: string[] } = {}) {
-  const { name, what, brief, type, by, questions, answers, skipped, pages, chrome, chromeChoice, known, findings } = setup;
+  const { name, what, brief, type, by, questions, answers, skipped, pages, chrome, chromeChoice, known, findings, kit } = setup;
   const fields = questions.flatMap((q) => q.fields);
   const logoField = fields.find((f) => f.type === "logo");
   const photosField = fields.find((f) => f.type === "photos");
@@ -297,6 +310,7 @@ export function setupBody(setup: Omit<SetupAnswers, "logo" | "favicon" | "photos
     chromeChoice,
     known,
     findings,
+    ...(kit && { kit }),
     // A logo given on the header and footer step, when no question asked for one.
     ...(!logoField && files.logo && { logo: files.logo }),
     ...(files.favicon && { favicon: files.favicon }),

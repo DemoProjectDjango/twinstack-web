@@ -1,0 +1,12 @@
+{
+  "id": "simple",
+  "version": 1,
+  "label": "Simple",
+  "description": "A clean homepage and a contact page. Works for any business.",
+  "category": "business",
+  "free": true,
+  "pages": [
+    { "file": "home.md", "url": "/", "title": "Home" },
+    { "file": "contact.md", "url": "/contact.html", "title": "Contact", "menu": true }
+  ]
+}

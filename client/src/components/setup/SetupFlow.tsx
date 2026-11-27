@@ -26,6 +26,7 @@ import {
   type PageAction,
   type PagePlan,
   type SetupAnswers,
+  type StarterKit,
   type SetupGroup,
   type SetupPlan,
   type Skill,
@@ -35,6 +36,7 @@ import {
   type ChromePreviewData,
   type PreviewPick,
 } from "./ChromePreview";
+import { KitPicker } from "./KitPicker";
 import { LogoAndIcon, SetupFields } from "./SetupFields";
 import { Button, ErrorText, Spinner, inputClass } from "../site/ui";
 
@@ -54,6 +56,7 @@ type Step =
   | "what"
   | "brief"
   | "analysis"
+  | "design"
   | "chrome"
   | "review"
   | `q:${string}`;
@@ -208,6 +211,15 @@ export function SetupFlow({
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [finishing, setFinishing] = useState(false);
+  // The starter kits (server/kits/) and the one picked: null is the AI designing the homepage.
+  const [kits, setKits] = useState<StarterKit[]>([]);
+  const [kit, setKit] = useState<string | null>(null);
+
+  useEffect(() => {
+    call<{ kits: StarterKit[] }>("/api/setup/kits")
+      .then((data) => setKits(data.kits ?? []))
+      .catch(() => setKits([]));
+  }, []);
 
   useEffect(() => {
     call<{ skills: Skill[] }>("/api/setup/skills")
@@ -242,6 +254,8 @@ export function SetupFlow({
     "brief",
     "analysis",
     ...asked.map((q) => `q:${q.id}` as const),
+    // Only when there's a kit to pick; servers without kits keep the old steps.
+    ...(kits.length ? (["design"] as const) : []),
     ...(newChrome ? (["chrome"] as const) : []),
     "review",
   ];
@@ -426,6 +440,7 @@ export function SetupFlow({
     logo,
     favicon,
     photos,
+    kit,
   });
 
   // The review's preview of what gets saved, from the server's own composition.
@@ -536,7 +551,7 @@ export function SetupFlow({
       ? "Skip the questions"
       : group
         ? "Skip this question"
-        : current === "chrome"
+        : current === "chrome" || current === "design"
           ? null
           : current === "review"
             ? null
@@ -699,6 +714,24 @@ export function SetupFlow({
             onPhotos={setPhotos}
             onError={setError}
           />
+        </>
+      )}
+
+      {current === "design" && (
+        <>
+          <h2
+            id="setup-step-title"
+            className="mt-1 text-2xl font-semibold tracking-tight"
+          >
+            Pick a starting design
+          </h2>
+          <p className="mt-2 text-sm text-zinc-500">
+            Start from a ready-made design, or let the AI design your homepage. You can change
+            everything afterwards.
+          </p>
+          <div className="mt-5">
+            <KitPicker kits={kits} value={kit} onChange={setKit} />
+          </div>
         </>
       )}
 
