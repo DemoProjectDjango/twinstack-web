@@ -3,10 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { StarterKit } from "@/lib/setup";
 
-// The setup's "Pick a starting design" step. Owners call the starter kits (server/kits/) templates:
-// the step offers "Use a template", which opens the gallery (search, category filter, a card with a
-// thumbnail per template, each with a full-screen Preview), or the AI designing the homepage.
-
 /** Where a template's sample site is served (server/kits/<id>/preview/, built by `npm --prefix server run kits:build`). */
 const previewUrl = (kit: StarterKit) => `/api/kit-preview/${kit.id}/`;
 
@@ -223,7 +219,7 @@ function TemplateGallery({
     });
   }, [kits, query, category]);
   const chip = (on: boolean) =>
-    `rounded-full border px-3 py-1 text-sm font-medium transition ${
+    `rounded-full border px-3 py-1 text-sm font-medium transition cursor-pointer ${
       on
         ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
         : "border-zinc-300 text-zinc-600 hover:border-zinc-500 dark:border-zinc-600 dark:text-zinc-300"
