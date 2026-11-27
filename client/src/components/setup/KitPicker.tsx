@@ -191,14 +191,11 @@ function TemplateGallery({
     const el = dialog.current;
     if (el && !el.open) el.showModal();
     const frame = requestAnimationFrame(() => setShown(true));
-    // The app's header stays in view above the gallery: no page dimming while it's open (globals.css).
-    document.documentElement.dataset.templateGallery = "open";
-    return () => {
-      cancelAnimationFrame(frame);
-      delete document.documentElement.dataset.templateGallery;
-    };
+    return () => cancelAnimationFrame(frame);
   }, []);
   const enter = `transition duration-300 ease-out motion-reduce:transition-none ${shown ? "translate-y-0 opacity-100" : "translate-y-3 opacity-0"}`;
+  // The window itself grows in slightly as it fades in.
+  const pop = `transition duration-300 ease-out motion-reduce:transition-none ${shown ? "scale-100 opacity-100" : "scale-[0.97] opacity-0"}`;
 
   const categories = useMemo(
     () => [
@@ -240,12 +237,12 @@ function TemplateGallery({
         if (e.target === e.currentTarget) onClose();
       }}
       aria-labelledby="template-gallery-title"
-      // Below the app's header (Navbar.tsx: h-14 and a 1px border), which stays in view.
-      className="m-0 mt-[calc(3.5rem+1px)] h-[calc(100dvh-3.5rem-1px)] max-h-none w-screen max-w-none border-t border-zinc-200 bg-zinc-50 p-0 dark:border-zinc-800 dark:bg-zinc-900"
+      // A centred window over the dimmed page, not the whole screen.
+      className={`m-auto h-[min(85dvh,900px)] max-h-none w-[calc(100%-2rem)] max-w-5xl overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 p-0 text-foreground shadow-2xl backdrop:bg-black/50 dark:border-zinc-800 dark:bg-zinc-900 ${pop}`}
     >
-      <div className={`flex h-full flex-col ${enter}`}>
-        <div className="border-b border-zinc-200 bg-white px-4 py-4 sm:px-8 dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3">
+      <div className="flex h-full flex-col">
+        <div className="border-b border-zinc-200 bg-white px-4 py-4 sm:px-6 dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="flex flex-wrap items-center gap-3">
             <h2
               id="template-gallery-title"
               className="text-xl font-semibold tracking-tight"
@@ -270,7 +267,7 @@ function TemplateGallery({
             </button>
           </div>
           <div
-            className="mx-auto mt-3 flex max-w-6xl flex-wrap gap-2"
+            className="mt-3 flex flex-wrap gap-2"
             role="group"
             aria-label="Category"
           >
@@ -288,8 +285,8 @@ function TemplateGallery({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8">
-          <div className="mx-auto max-w-6xl">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+          <div>
             <p className="text-sm text-zinc-500" aria-live="polite">
               {matching.length} template{matching.length === 1 ? "" : "s"}
             </p>
