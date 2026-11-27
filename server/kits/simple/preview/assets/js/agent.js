@@ -727,6 +727,73 @@
     flush(true);
   });
 
+  // Phones and tablets have no pointer to rest on. There, scrolling stopping with a link or button
+  // in the middle of the screen counts as resting on it (the same rests, sent the same way, so the
+  // owner's goals and pace work alike), else the section there; and a quick flick back towards the
+  // top after a while on the page counts as about to leave.
+  var TOUCH = Boolean(window.matchMedia && window.matchMedia('(hover: none), (pointer: coarse)').matches);
+  var STILL_MS = 600;
+  function inFocus() {
+    var mid = window.innerHeight / 2;
+    var band = window.innerHeight * 0.3;
+    var best = null;
+    var bestDistance = Infinity;
+    var list = document.querySelectorAll(TARGETS);
+    for (var i = 0; i < list.length && i < 600; i++) {
+      var el = list[i];
+      if (inWidget(el) || (el.closest && el.closest('header,nav,footer,form,[role="navigation"]'))) continue;
+      var r = el.getBoundingClientRect();
+      if (!r.width || !r.height || r.bottom <= 0 || r.top >= window.innerHeight) continue;
+      var distance = Math.abs((r.top + r.bottom) / 2 - mid);
+      if (distance < band && distance < bestDistance) {
+        best = el;
+        bestDistance = distance;
+      }
+    }
+    if (best) return thingOf(best);
+    var centre = document.elementFromPoint(window.innerWidth / 2, mid);
+    return centre && !inWidget(centre) ? thingOf(centre) : null;
+  }
+  if (TOUCH) {
+    var still = null;
+    var settle = function () {
+      still = null;
+      if (document.visibilityState === 'hidden') return;
+      var thing = inFocus();
+      if (!thing || (hovering && hovering.thing.el === thing.el)) return;
+      endHover();
+      hovering = { thing: thing, at: Date.now(), sent: 0, timer: null };
+      if (thing.x !== 'section' && state.suggested < MAX_SUGGESTIONS) nextCheckpoint();
+    };
+    var lastY = window.scrollY;
+    var lastAt = Date.now();
+    var upwards = 0;
+    window.addEventListener(
+      'scroll',
+      function () {
+        // Moving again: what was in the middle of the screen isn't being looked at any more.
+        if (hovering) endHover();
+        clearTimeout(still);
+        still = setTimeout(settle, STILL_MS);
+        var now = Date.now();
+        var moved = window.scrollY - lastY;
+        var speed = Math.abs(moved) / Math.max(1, now - lastAt);
+        if (moved < 0 && speed > 2) upwards -= moved;
+        else if (moved > 0) upwards = 0;
+        lastY = window.scrollY;
+        lastAt = now;
+        if (!left && upwards > window.innerHeight * 1.5 && window.scrollY < window.innerHeight && secondsOnPage() >= 10) {
+          left = true;
+          queue.push({ k: 'x' });
+          flush(true);
+        }
+      },
+      { passive: true },
+    );
+    // The first screen counts too, once it has had a moment to be read.
+    setTimeout(settle, 1500);
+  }
+
   var sending = false;
   // Something to send arrived while a request was out: sent as soon as that one comes back.
   var again = false;
