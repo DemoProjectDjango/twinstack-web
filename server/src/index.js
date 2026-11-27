@@ -1,4 +1,4 @@
-import { findChrome } from "./assistant/view-page.js";
+import { browserStatus, findChrome } from "./assistant/view-page.js";
 import express from "express";
 import cookieParser from "cookie-parser";
 import { config } from "./config.js";
@@ -58,9 +58,13 @@ app.use((req, res, next) => {
 });
 app.use(cookieParser());
 
-app.get("/api/health", (req, res) => {
+app.get("/api/health", async (req, res) => {
   // `browser`: whether copying websites and looking at pages can run here (deploy.sh reports it).
-  res.json({ ok: true, msg: "API is running now.", browser: Boolean(findChrome()) });
+  // `?browser=check` really starts it (cached 10 minutes): "starts", "starts without its sandbox",
+  // "not installed" or "doesn't start".
+  const body = { ok: true, msg: "API is running now.", browser: Boolean(findChrome()) };
+  if (req.query.browser === "check") body.browserStarts = await browserStatus().catch(() => "doesn't start");
+  res.json(body);
 });
 
 app.get("/api/me", requireAuth, (req, res) => {

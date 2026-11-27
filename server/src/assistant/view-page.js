@@ -83,6 +83,27 @@ export function noBrowser(what) {
   return new WorkspaceError(`${what[0].toUpperCase()}${what.slice(1)} isn't available on this server right now. The team has been told; please try again later.`, 503);
 }
 
+let browserCheck = null;
+/**
+ * Whether a browser really starts here (for /api/health): "starts", "starts without its sandbox",
+ * "not installed" or "doesn't start". Checked once, then every 10 minutes.
+ */
+export async function browserStatus() {
+  if (browserCheck && Date.now() - browserCheck.at < 10 * 60_000) return browserCheck.status;
+  const chrome = findChrome();
+  let status = "not installed";
+  if (chrome) {
+    const client = await launch(chrome).catch(() => null);
+    if (client) {
+      const ok = (await Promise.race([client.evaluate("1 + 1"), sleep(10_000)]).catch(() => null)) === 2;
+      client.close();
+      status = ok ? (sandboxFails ? "starts without its sandbox" : "starts") : "doesn't start";
+    } else status = "doesn't start";
+  }
+  browserCheck = { at: Date.now(), status };
+  return status;
+}
+
 export function findChrome() {
   const candidates = [
     process.env.CHROME_PATH,
@@ -172,14 +193,55 @@ function closeAllOnExit() {
   }
 }
 
-/** Starts the browser and returns a small DevTools client for one page. */
-export async function launch(executable) {
+// Chrome's sandbox needs kernel features some servers block for ordinary users (Ubuntu 24.04's
+// AppArmor rule on unprivileged user namespaces, many containers). There Chrome exits at once, so
+// it's started again without the sandbox, and later launches go straight to that. (deploy.sh's own
+// check runs without the sandbox, so it passed where the app failed.)
+let sandboxFails = false;
+const BASE_ARGS = ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0"];
+
+/** Starts Chrome and waits for its DevTools address: `{ browser, profile, port }`, or null when it exited or never answered. */
+async function startChrome(executable, noSandbox) {
   const profile = await fs.mkdtemp(path.join(os.tmpdir(), "twinstack-view-"));
-  const browser = spawn(executable, ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: "ignore", env: jobEnv(null, null) });
+  const args = [...BASE_ARGS, ...(noSandbox ? ["--no-sandbox"] : []), `--user-data-dir=${profile}`, "about:blank"];
+  const browser = spawn(executable, args, { stdio: "ignore", env: jobEnv(null, null) });
   closeAllOnExit();
   running.add(browser);
-  browser.once("exit", () => running.delete(browser));
+  let exited = false;
+  browser.once("exit", () => {
+    exited = true;
+    running.delete(browser);
+  });
+  browser.once("error", () => {
+    exited = true;
+  });
+  for (let i = 0; i < 75 && !exited; i++) {
+    const port = (await fs.readFile(path.join(profile, "DevToolsActivePort"), "utf8").catch(() => "")).split("\n")[0];
+    if (port) return { browser, profile, port };
+    await sleep(200);
+  }
+  try {
+    browser.kill();
+  } catch {
+    // Already gone.
+  }
+  await fs.rm(profile, { recursive: true, force: true }).catch(() => {});
+  return { failed: exited ? "exited" : "timeout" };
+}
+
+/** Starts the browser and returns a small DevTools client for one page. */
+export async function launch(executable) {
+  let started = sandboxFails || process.platform !== "linux" ? null : await startChrome(executable, false);
+  if (process.platform === "linux" && !started?.browser) {
+    started = await startChrome(executable, true);
+    if (started.browser && !sandboxFails) {
+      sandboxFails = true;
+      console.warn("Chrome's sandbox can't run on this server, so the browser for copying websites runs without it.");
+    }
+  } else if (!started) started = await startChrome(executable, false);
+  const { browser, profile } = started;
   const close = () => {
+    if (!browser) return;
     browser.once("exit", () => setTimeout(() => fs.rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }).catch(() => {}), 300).unref());
     try {
       browser.kill();
@@ -188,10 +250,9 @@ export async function launch(executable) {
     }
   };
   let ws = null;
-  for (let i = 0; i < 75 && !ws; i++) {
+  for (let i = 0; i < 75 && !ws && browser; i++) {
     try {
-      const port = (await fs.readFile(path.join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0];
-      const page = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((t) => t.type === "page");
+      const page = (await (await fetch(`http://127.0.0.1:${started.port}/json`)).json()).find((t) => t.type === "page");
       if (page) ws = new WS(page.webSocketDebuggerUrl);
     } catch {
       // Not up yet.
