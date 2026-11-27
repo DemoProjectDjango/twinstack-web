@@ -175,6 +175,18 @@ describe("starter kit previews", () => {
     }
   });
 
+  it("were built from the current template (run npm --prefix server run kits:build after a template change)", { skip: !existsSync(path.join(TEMPLATE, ".git")) && "no twinstack-site git checkout beside this repo" }, async () => {
+    const { KITS_DIR } = await import("../src/kits.js");
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: TEMPLATE, encoding: "utf8" }).trim();
+    for (const kit of await loadKits()) {
+      const file = path.join(KITS_DIR, kit.id, "built-from.json");
+      assert.ok(existsSync(file), `${kit.id} has no built-from.json: run kits:build`);
+      const built = JSON.parse(await fs.readFile(file, "utf8"));
+      assert.equal(built.uncommitted, false, `${kit.id}'s preview was built from uncommitted template changes: commit them, then run kits:build`);
+      assert.equal(built.template, head, `${kit.id}'s preview is from template ${String(built.template).slice(0, 7)}, the template is now at ${head.slice(0, 7)}: run kits:build`);
+    }
+  });
+
   it("serves them publicly, sandboxed, and nothing else", async () => {
     const express = (await import("express")).default;
     const { kitPreviewRouter } = await import("../src/kits.js");

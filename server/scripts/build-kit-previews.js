@@ -110,6 +110,19 @@ if (!existsSync(path.join(TEMPLATE, "scripts/build.js")) || !existsSync(path.joi
   process.exit(1);
 }
 
+// The template's commit, and whether it had changes not committed yet (a preview of those can't
+// be matched to a commit, so it counts as out of date).
+const git = (...args) => execFileSync("git", args, { cwd: TEMPLATE, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+let TEMPLATE_COMMIT = null;
+let TEMPLATE_DIRTY = false;
+try {
+  TEMPLATE_COMMIT = git("rev-parse", "HEAD");
+  TEMPLATE_DIRTY = git("status", "--porcelain").length > 0;
+} catch {
+  console.warn("  ! The template isn't a git checkout: previews can't be matched to a template version.");
+}
+if (TEMPLATE_DIRTY) console.warn("  ! The template has uncommitted changes: commit them and build again before committing previews.");
+
 let failed = false;
 for (const entry of await fs.readdir(KITS_DIR, { withFileTypes: true })) {
   if (!entry.isDirectory()) continue;
@@ -154,6 +167,9 @@ for (const entry of await fs.readdir(KITS_DIR, { withFileTypes: true })) {
     await fs.cp(path.join(work, "dist"), out, { recursive: true });
     if (CHROME) await thumbnail(kit.id, out);
     else console.warn(`  ! No Chrome found (set CHROME_PATH): ${kit.id} has no gallery thumbnail.`);
+    // Which template commit the preview shows (outside preview/, which is public): the kit test
+    // fails once the local template has moved on, so a template change can't leave it stale.
+    await fs.writeFile(path.join(kitDir, "built-from.json"), `${JSON.stringify({ template: TEMPLATE_COMMIT, uncommitted: TEMPLATE_DIRTY }, null, 2)}\n`);
     console.log(`✔ ${kit.id}: preview built (${kit.pages.length} pages${CHROME ? ", thumbnail" : ""})`);
   } catch (err) {
     failed = true;
