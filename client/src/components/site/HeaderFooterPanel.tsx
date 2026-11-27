@@ -169,8 +169,6 @@ export function HeaderFooterPanel() {
     }
   }
 
-  const [restoring, setRestoring] = useState(false);
-
   async function installTemplates() {
     const ok = await confirmModal(
       "This replaces templates/partials/header.html, templates/partials/footer.html and scripts/lib/content.js with the template's versions. Changes you made to those files by hand are lost (you can undo them on the Publish screen before publishing). Continue?",
@@ -180,10 +178,9 @@ export function HeaderFooterPanel() {
     setInstalling(true);
     setError(null);
     try {
-      // The owner chose this here, so a copied or AI-designed header and footer may be replaced.
       const result = await api<{ written: string[]; status: WorkspaceStatus }>(workspacePath(owner, repo, "/install/header-footer"), {
         method: "POST",
-        body: { replaceDesigned: true },
+        body: {},
       });
       setInstalled(result.written);
       setStatus(result.status);
@@ -286,44 +283,6 @@ export function HeaderFooterPanel() {
       </Section>
 
       <ClaudeDesign designed={designedHeader || designedFooter} dirty={dirty} />
-
-      {info.replacedDesigned && info.replacedDesigned.length > 0 && (
-        <Notice tone="warning">
-          <p className="font-medium">Your header and footer were replaced by the standard ones</p>
-          <p className="mt-1 text-sm">
-            Your published site has your own {info.replacedDesigned.length === 2 ? "header and footer" : info.replacedDesigned[0].includes("header") ? "header" : "footer"} (copied from a website or designed by the AI),
-            but they were swapped for the standard ones here and that isn&apos;t published yet. Bring them back so the preview matches your live site.
-          </p>
-          <Button
-            variant="primary"
-            className="mt-2"
-            disabled={restoring}
-            onClick={async () => {
-              setRestoring(true);
-              setError(null);
-              try {
-                // The editor may be busy for a moment (its own preview build, an update installing itself).
-                for (let attempt = 0; ; attempt++) {
-                  try {
-                    setStatus(await api<WorkspaceStatus>(workspacePath(owner, repo, "/discard"), { method: "POST", body: { paths: info.replacedDesigned } }));
-                    break;
-                  } catch (err) {
-                    if (attempt >= 20 || !(err instanceof ApiError && err.status === 409 && /busy/i.test(err.message))) throw err;
-                    await new Promise((r) => setTimeout(r, 1500));
-                  }
-                }
-                await load();
-              } catch (err) {
-                setError(err);
-              } finally {
-                setRestoring(false);
-              }
-            }}
-          >
-            {restoring ? "Bringing them back…" : "Bring back your header and footer"}
-          </Button>
-        </Notice>
-      )}
 
       {copied ? (
         <Notice>

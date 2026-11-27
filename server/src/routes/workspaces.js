@@ -31,7 +31,6 @@ import {
   setDomain,
   setHttps,
   startDeploy,
-  watchDeploy,
 } from "../publishing.js";
 import { requireAuth, requireGithub } from "../session.js";
 import { getNextSteps, sampleContent } from "../next-steps.js";
@@ -173,8 +172,6 @@ workspacesRouter.post(
     if (branch !== undefined && typeof branch !== "string") throw new WorkspaceError("Invalid branch name.", 400);
     const accessToken = await getAccessToken(req, res);
     const result = await commitAndPush({ key, accessToken, user: req.user.github, message: message.trim(), mode, branch });
-    // Straight to the live branch: make sure GitHub really deploys it.
-    if (mode === "direct" && result.commit) watchDeploy(accessToken, repoName(req), result.commit);
     siteIdFor(key).then(noteSetupPublished, () => {});
     res.json({ ...result, status: await getStatus(key) });
   }),
@@ -1306,19 +1303,8 @@ workspacesRouter.post(
   handle(async (req, res) => {
     const key = keyFor(req);
     const accessToken = await getAccessToken(req, res);
-    // A header or footer copied from a website or designed by the AI (data-designed) is the owner's:
-    // only Look & logo's own "go back to the standard ones" (replaceDesigned) may replace it. Any
-    // other tools update leaves it as it is.
-    const designed = new Set();
-    if (req.body?.replaceDesigned !== true) {
-      for (const file of ["templates/partials/header.html", "templates/partials/footer.html"]) {
-        const current = await readFile(path.join(workspaceDir(key), file), "utf8").catch(() => "");
-        if (/\sdata-designed\s*=/.test(current)) designed.add(file);
-      }
-    }
     const files = {};
     for (const file of HEADER_FOOTER_FILES) {
-      if (designed.has(file)) continue;
       const content = await readTemplateFile(req.user, accessToken, file);
       const marker = HEADER_FOOTER_MARKERS[file] ?? APPEARANCE_MARKER;
       if (content === null || !content.includes(marker)) {
