@@ -222,14 +222,31 @@ export function HeaderFooterPanel() {
         ))}
       </datalist>
 
-      <div className="sticky top-16 z-10 flex flex-wrap items-center gap-3 rounded-lg border border-zinc-200 bg-background/95 px-4 py-2.5 backdrop-blur dark:border-zinc-800">
+      {/* Stays in its place (it never floats over what's being edited); with unsaved changes a small
+          strip in the bottom-right corner, above the AI box, keeps Save in reach wherever the page is. */}
+      {dirty && (
+        <div className="fixed bottom-24 right-4 z-30 flex max-w-[calc(100vw-2rem)] flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-background px-3 py-2 shadow-lg dark:border-amber-800 sm:right-6">
+          <span className="text-sm font-medium">Unsaved changes</span>
+          <Button disabled={disabled} onClick={discard}>
+            Discard
+          </Button>
+          <Button variant="primary" disabled={disabled || busy} onClick={save}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-200 bg-background px-4 py-2.5 dark:border-zinc-800">
         <p className="mr-auto text-sm">
           {dirty ? (
             <span className="font-medium">You have unsaved changes.</span>
           ) : saved ? (
             <span className="text-green-700 dark:text-green-400">Saved. Edit site shows it by itself.</span>
           ) : (
-            <span className="text-zinc-500">Edit below or click any part of the preview. Changes show in the preview straight away.</span>
+            <span className="text-zinc-500">
+              {copied || designedHeader || designedFooter
+                ? "Change the menu, button, logo and copyright below, then save."
+                : "Edit below or click any part of the preview. Changes show in the preview straight away."}
+            </span>
           )}
         </p>
         {saved && !dirty && <Button onClick={() => showSection("home")}>See it on Edit site</Button>}
