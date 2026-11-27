@@ -238,11 +238,13 @@ const firstDeployTried = new Map();
  * started, at most every 10 minutes. Returns the status, with `deployStarted` when it did.
  */
 export async function ensurePublished(accessToken, fullName, status) {
-  if (!status.neverDeployed || !status.enabled || !status.canConfigure) return status;
+  if (!status.neverDeployed || !status.canConfigure || status.private) return status;
   const last = firstDeployTried.get(fullName) ?? 0;
   if (Date.now() - last < 10 * 60_000) return status;
   firstDeployTried.set(fullName, Date.now());
   try {
+    // Pages with GitHub Actions as its source, then the first deploy.
+    if (!status.enabled || !status.usesActions) await enablePages(accessToken, fullName);
     await startDeploy(accessToken, fullName, status.defaultBranch);
     console.info(`Started the first deploy of ${fullName}, which had never been published.`);
     return { ...status, deployStarted: true };
