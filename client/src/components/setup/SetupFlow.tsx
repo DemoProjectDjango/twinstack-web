@@ -248,17 +248,23 @@ export function SetupFlow({
     q.status === "ask" || extraAsk.has(q.id) ? "ask" : "later";
   const asked = questions.filter((q) => statusOf(q) === "ask");
   const newChrome = result?.chrome === "design";
-  const steps: Step[] = [
-    ...(askName ? (["name"] as const) : []),
-    "what",
-    "brief",
-    "analysis",
-    ...asked.map((q) => `q:${q.id}` as const),
-    // Only when there's a kit to pick; servers without kits keep the old steps.
-    ...(kits.length ? (["design"] as const) : []),
-    ...(newChrome ? (["chrome"] as const) : []),
-    "review",
-  ];
+  // The starting design comes first (only when there are kits; servers without them keep the old
+  // steps). A kit is a finished design, so it needs only the name and what the business does (the
+  // site's description, which its homepage shows): no brief, analysis, questions or review.
+  const steps: Step[] = kit
+    ? ["design", ...(askName ? (["name"] as const) : []), "what"]
+    : [
+        ...(kits.length ? (["design"] as const) : []),
+        ...(askName ? (["name"] as const) : []),
+        "what",
+        "brief",
+        "analysis",
+        ...asked.map((q) => `q:${q.id}` as const),
+        ...(newChrome ? (["chrome"] as const) : []),
+        "review",
+      ];
+  // With a kit, the last step creates the site.
+  const lastKitStep = Boolean(kit) && step >= steps.length - 1;
   const current = steps[Math.min(step, steps.length - 1)];
   const group = current.startsWith("q:")
     ? questions.find((q) => q.id === current.slice(2))
@@ -504,7 +510,7 @@ export function SetupFlow({
   }
 
   function next() {
-    if (current === "review") return void finish();
+    if (current === "review" || lastKitStep) return void finish();
     if (group)
       setSkipped((s) => new Set([...s].filter((id) => id !== group.id)));
     leave();
@@ -539,7 +545,8 @@ export function SetupFlow({
     current === "name"
       ? Boolean(name.trim())
       : current === "what"
-        ? Boolean(what.trim())
+        ? // Optional on a kit's last step: it creates the site, so there's nothing to skip to.
+          Boolean(what.trim()) || (lastKitStep && !finishing)
         : current === "brief"
           ? briefOk(brief)
           : current === "analysis"
@@ -551,12 +558,12 @@ export function SetupFlow({
       ? "Skip the questions"
       : group
         ? "Skip this question"
-        : current === "chrome" || current === "design"
+        : current === "chrome" || current === "design" || lastKitStep
           ? null
           : current === "review"
             ? null
             : "Skip";
-  const known = Boolean(result) || current === "review";
+  const known = Boolean(result) || current === "review" || Boolean(kit);
   const briefWords = wordCount(brief);
 
   const body = (
@@ -828,7 +835,7 @@ export function SetupFlow({
         >
           {finishing ? (
             <Spinner />
-          ) : current === "review" ? (
+          ) : current === "review" || lastKitStep ? (
             finishLabel
           ) : current === "analysis" ? (
             asked.length ? (

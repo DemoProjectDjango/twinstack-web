@@ -28,6 +28,8 @@ async function newSite(key) {
   await fs.cp(TEMPLATE, dir, { recursive: true, filter: (src) => !SKIP.has(path.basename(src)) });
   // A junction needs no admin rights on Windows; elsewhere it's a plain link.
   await fs.symlink(path.join(TEMPLATE, "node_modules"), path.join(dir, "node_modules"), "junction");
+  // Every real site is a git checkout: the setup keeps its build plan in .git/.
+  await fs.mkdir(path.join(dir, ".git"), { recursive: true });
   await fs.writeFile(path.join(dir, "content/pages/home.md"), STARTER_HOME);
   const config = JSON.parse(await fs.readFile(path.join(dir, "site.config.json"), "utf8"));
   config.name = "Harbour Street Bakery";
@@ -106,6 +108,23 @@ describe("starter kits", () => {
       const again = await applyKit(key, "simple");
       assert.deepEqual(again.pages, []);
       assert.match(await fs.readFile(path.join(dir, "content/pages/contact.md"), "utf8"), /Mine/);
+    });
+
+    it("a setup saved with a kit and only the name and what the business does builds the site with no AI", async () => {
+      const kitKey = "u1.e1/owner/kit-only";
+      const kitDir = await newSite(kitKey);
+      const { saveSetup } = await import("../src/site-setup.js");
+      const body = { name: "Harbour Street Bakery", what: "Fresh bread every morning.", brief: "", type: "generic", by: "keywords", questions: [], answers: {}, skipped: [], pages: [], chrome: "design", chromeChoice: {}, known: [], findings: [], kit: "simple" };
+      const saved = await saveSetup({ key: kitKey, siteId: null, body, options: { chrome: true } });
+      assert.equal(saved.build, false, "nothing is left for the AI to build");
+      assert.match(await fs.readFile(path.join(kitDir, "content/pages/home.md"), "utf8"), /What we offer/);
+      assert.ok(existsSync(path.join(kitDir, "content/pages/contact.md")));
+      const nav = JSON.parse(await fs.readFile(path.join(kitDir, "content/data/navigation.json"), "utf8"));
+      assert.ok(nav.header.items.some((i) => i.url === "/contact.html"), "Contact is in the header menu");
+      const config = JSON.parse(await fs.readFile(path.join(kitDir, "site.config.json"), "utf8"));
+      assert.equal(config.description, "Fresh bread every morning.");
+      node(kitDir, "scripts/build.js");
+      assert.doesNotMatch(node(kitDir, "scripts/check.js"), /^\s*error\s/m);
     });
 
     it("refuses a kit that doesn't exist", async () => {
