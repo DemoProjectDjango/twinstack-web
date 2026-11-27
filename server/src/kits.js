@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { withDescription } from "./kit-text.js";
 import { readSiteConfig } from "./site-files.js";
 import { updateSiteTree } from "./site-tree-sync.js";
 import { acquire, workspaceDir } from "./workspace.js";
@@ -100,7 +101,9 @@ export async function applyKit(key, kitId) {
       const name = there?.name ?? page.file;
       if (!there && existing.some((e) => e.name === name)) continue;
       await fs.mkdir(path.join(dir, pagesDir), { recursive: true });
-      await fs.copyFile(path.join(kit.dir, "pages", page.file), path.join(dir, pagesDir, name));
+      // The homepage gets the site's description for search results, the check warns without one.
+      const source = await fs.readFile(path.join(kit.dir, "pages", page.file), "utf8");
+      await fs.writeFile(path.join(dir, pagesDir, name), page.url === "/" ? withDescription(source, site.description) : source);
       written.push({ file: `${pagesDir}/${name}`, url: page.url, title: page.title, menu: page.menu === true });
     }
     await updateSiteTree(dir, { add: written.map((p) => p.url) }).catch((err) => console.error(`Couldn't add the ${kit.id} kit's pages to the site plan:`, err.message));

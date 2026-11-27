@@ -93,6 +93,8 @@ describe("starter kits", () => {
       node(dir, "scripts/build.js");
       const output = node(dir, "scripts/check.js");
       assert.doesNotMatch(output, /^\s*error\s/m, output);
+      // Not even a warning: the homepage gets the site's description for search results.
+      assert.doesNotMatch(output, /^\s*warning\s/m, output);
     });
 
     it("shows the owner's name, description and contact details", async () => {
@@ -133,6 +135,31 @@ describe("starter kits", () => {
     it("refuses a kit that doesn't exist", async () => {
       assert.equal(await applyKit(key, "nope"), null);
     });
+  });
+});
+
+describe("a template homepage's search description", async () => {
+  const { searchDescription, withDescription } = await import("../src/kit-text.js");
+  const page = "---\ntitle: Home\nurl: /\n---\n<section class=\"x\">Hi</section>\n";
+
+  it("comes from the site's description, after the title", () => {
+    assert.equal(withDescription(page, "Fresh bread every morning."), '---\ntitle: Home\ndescription: "Fresh bread every morning."\nurl: /\n---\n<section class="x">Hi</section>\n');
+  });
+
+  it("fits a search result, cut at a word", () => {
+    const cut = searchDescription("Bread and cakes ".repeat(20));
+    assert.ok(cut.length <= 155, cut);
+    assert.match(cut, /cakes…$|Bread…$|and…$/);
+  });
+
+  it("keeps a description the page has, and adds none when there's nothing to say", () => {
+    const own = "---\ntitle: Home\ndescription: Mine\n---\nx";
+    assert.equal(withDescription(own, "Other"), own);
+    assert.equal(withDescription(page, "  "), page);
+  });
+
+  it("never needs escapes the site's frontmatter reader doesn't undo", () => {
+    assert.match(withDescription(page, 'We say "hello"'), /^description: "We say ”hello”"$/m);
   });
 });
 

@@ -11,6 +11,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { withDescription } from "../src/kit-text.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const KITS_DIR = path.resolve(here, "../kits");
@@ -124,7 +125,10 @@ for (const entry of await fs.readdir(KITS_DIR, { withFileTypes: true })) {
     const pagesDir = config.collections.pages.dir;
     for (const name of await fs.readdir(path.join(work, pagesDir)).catch(() => [])) await fs.rm(path.join(work, pagesDir, name));
     await fs.mkdir(path.join(work, pagesDir), { recursive: true });
-    for (const page of kit.pages) await fs.copyFile(path.join(kitDir, "pages", page.file), path.join(work, pagesDir, page.file));
+    for (const page of kit.pages) {
+      const source = await fs.readFile(path.join(kitDir, "pages", page.file), "utf8");
+      await fs.writeFile(path.join(work, pagesDir, page.file), page.url === "/" ? withDescription(source, SAMPLE.description) : source);
+    }
     Object.assign(config, { name: SAMPLE.name, shortName: SAMPLE.name, description: SAMPLE.description });
     config.brand = { ...config.brand, logoText: SAMPLE.name };
     config.contact = { ...config.contact, ...SAMPLE.contact };
@@ -142,6 +146,8 @@ for (const entry of await fs.readdir(KITS_DIR, { withFileTypes: true })) {
     run("scripts/build.js");
     const check = run("scripts/check.js");
     if (/^\s*error\s/m.test(check)) throw new Error(`the site check failed:\n${check}`);
+    // Warnings too: a template should start a site with nothing to fix.
+    if (/^\s*warning\s/m.test(check)) throw new Error(`the site check has warnings:\n${check}`);
 
     const out = path.join(kitDir, "preview");
     await fs.rm(out, { recursive: true, force: true });

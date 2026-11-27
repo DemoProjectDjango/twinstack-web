@@ -7,7 +7,7 @@ import { ClaudeAccessError, anthropicUserId, beginSpend, claudeKeyFor } from "./
 import { anthropicClient } from "./assistant/turn.js";
 import { saveBrand } from "./brand.js";
 import { normalizeLink } from "./links.js";
-import { kitById, sameAddress } from "./kits.js";
+import { kitById, loadKits, sameAddress } from "./kits.js";
 import { prepareBuild } from "./setup-build.js";
 import { SETUP_FIRST_WEEK_MS, listSiteSetups, saveSiteSetup } from "./db.js";
 import { readDataFile, writeDataFile } from "./site-files.js";
@@ -978,5 +978,30 @@ export async function setupStats({ days = 90 } = {}) {
       pages: [...pages.entries()].map(([address, count]) => ({ address, count })).sort((a, b) => b.count - a.count).slice(0, MAX_LISTED),
     };
   });
-  return { days, total: docs.length, types };
+  // How sites started: the AI's design or each template (siteSetups.kit), so the two can be compared.
+  const kits = await loadKits();
+  const startIds = [...new Set(["ai", ...kits.map((k) => k.id), ...docs.map((d) => d.kit).filter(Boolean)])];
+  const starts = startIds
+    .map((id) => {
+      const setups = docs.filter((d) => (d.kit ?? "ai") === id);
+      const weekOver = setups.filter((d) => now - d.savedAt.getTime() >= SETUP_FIRST_WEEK_MS);
+      const signal = (name) => average(weekOver.map((d) => d.signals?.[name] ?? 0));
+      const published = setups.filter((d) => d.publishedAt);
+      return {
+        id,
+        label: id === "ai" ? "AI design" : `Template: ${kits.find((k) => k.id === id)?.label ?? id}`,
+        sites: setups.length,
+        published: published.length,
+        medianHoursToPublish: median(published.map((d) => (d.publishedAt.getTime() - d.savedAt.getTime()) / 3_600_000)),
+        firstWeek: {
+          sites: weekOver.length,
+          messages: signal("messages"),
+          commands: signal("commands"),
+          discards: signal("discards"),
+          publishedInWeek: weekOver.filter((d) => d.publishedAt && d.publishedAt.getTime() - d.savedAt.getTime() < SETUP_FIRST_WEEK_MS).length,
+        },
+      };
+    })
+    .filter((row) => row.id === "ai" || row.sites > 0 || kits.some((k) => k.id === row.id));
+  return { days, total: docs.length, types, starts };
 }
