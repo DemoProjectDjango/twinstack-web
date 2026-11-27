@@ -132,3 +132,36 @@ describe("starter kits", () => {
     });
   });
 });
+
+describe("starter kit previews", () => {
+  it("every kit has a built preview (npm run kits:build)", async () => {
+    const { KITS_DIR } = await import("../src/kits.js");
+    for (const kit of await loadKits()) {
+      assert.ok(existsSync(path.join(KITS_DIR, kit.id, "preview/index.html")), `${kit.id} has preview/index.html`);
+      for (const page of kit.pages.filter((p) => p.url !== "/")) {
+        assert.ok(existsSync(path.join(KITS_DIR, kit.id, "preview", page.url)), `${kit.id} preview has ${page.url}`);
+      }
+    }
+  });
+
+  it("serves them publicly, sandboxed, and nothing else", async () => {
+    const express = (await import("express")).default;
+    const { kitPreviewRouter } = await import("../src/kits.js");
+    const app = express();
+    app.use("/api/kit-preview", kitPreviewRouter());
+    const server = app.listen(0);
+    const base = `http://127.0.0.1:${server.address().port}/api/kit-preview`;
+    try {
+      for (const url of ["/simple", "/simple/", "/simple/contact.html", "/simple/assets/css/main.css"]) {
+        const res = await fetch(base + url);
+        assert.equal(res.status, 200, url);
+        assert.match(res.headers.get("content-security-policy"), /^sandbox /, url);
+      }
+      for (const url of ["/simple/.nojekyll", "/simple/..%2fkit.json", "/simple/missing.html", "/Bad_Kit/x", "/nope/"]) {
+        assert.equal((await fetch(base + url)).status, 404, url);
+      }
+    } finally {
+      server.close();
+    }
+  });
+});

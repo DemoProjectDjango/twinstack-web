@@ -1,3 +1,4 @@
+import express from "express";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -101,4 +102,29 @@ export async function applyKit(key, kitId) {
     release();
   }
   return { kit: { id: kit.id, version: kit.version }, pages: written };
+}
+
+/**
+ * GET /api/kit-preview/<kit>/…: each kit's built preview (server/kits/<id>/preview/, made by
+ * `npm --prefix server run kits:build`). Public, because the setup shows it in a sandboxed frame,
+ * whose requests carry no cookie; it's only our own sample pages. Sandboxed like the site preview.
+ */
+export function kitPreviewRouter() {
+  const router = express.Router();
+  const HEADERS = {
+    "Content-Security-Policy": "sandbox allow-scripts allow-popups",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "public, max-age=300",
+  };
+  router.use("/:kit", (req, res, next) => {
+    if (!KIT_ID.test(req.params.kit)) return res.status(404).end();
+    // The homepage: Next.js's rewrite drops the trailing slash, so "/api/kit-preview/<kit>" arrives bare.
+    if (req.url === "" || req.url === "/" || req.url.startsWith("?")) req.url = "/index.html";
+    express.static(path.join(KITS_DIR, req.params.kit, "preview"), {
+      dotfiles: "ignore",
+      redirect: false,
+      setHeaders: (r) => r.set(HEADERS),
+    })(req, res, () => res.status(404).set(HEADERS).end());
+  });
+  return router;
 }

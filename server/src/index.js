@@ -17,6 +17,7 @@ import { loadImageModelChoice } from "./image-model.js";
 import { previewRouter } from "./routes/preview.js";
 import { settingsRouter } from "./routes/settings.js";
 import { setupRouter } from "./routes/setup.js";
+import { kitPreviewRouter } from "./kits.js";
 import { jobsRouter, workspacesRouter } from "./routes/workspaces.js";
 import { requireAuth, requireGithub } from "./session.js";
 import { ReauthRequiredError, getAccessToken, listRepos } from "./github.js";
@@ -269,6 +270,8 @@ app.delete("/api/repos/:owner/:repo", requireAuth, requireGithub, async (req, re
 
 // Public: published sites' visit counter posts here (analytics.js). It never answers with data.
 app.use("/api/collect", collectRouter);
+// Starter kits' sample sites, shown in the new site setup (public: see kits.js).
+app.use("/api/kit-preview", kitPreviewRouter());
 // Public: published sites' site agent widget posts here (site-agent.js). It answers only the
 // site's published hosts, and every model request is paid from the owner's credits within limits.
 app.use("/api/agent", agentPublicRouter);
