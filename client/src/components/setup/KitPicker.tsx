@@ -4,8 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { StarterKit } from "@/lib/setup";
 
 /** Where a kit's sample site is served (server/kits/<id>/preview/, built by `npm --prefix server run kits:build`). */
-const previewUrl = (kit: StarterKit, page = "/") =>
-  `/api/kit-preview/${kit.id}${page === "/" ? "/" : page}`;
+const previewUrl = (kit: StarterKit) => `/api/kit-preview/${kit.id}/`;
 
 /**
  * The setup's "Pick a starting design" step: the starter kits (server/kits/, all free for now),
@@ -92,12 +91,12 @@ export function KitPicker({
 }
 
 /**
- * A kit's sample site, full screen: its pages, at computer or phone width, with "Use this design".
+ * A kit's sample site, full screen, at computer or phone width, with "Use this design". Its other
+ * pages are reached through the sample site's own menu.
  * The frame is sandboxed without allow-same-origin, like the editor's site preview.
  */
 function KitPreview({ kit, onClose, onUse }: { kit: StarterKit; onClose: () => void; onUse: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [page, setPage] = useState(kit.pages[0]?.url ?? "/");
   const [width, setWidth] = useState<"computer" | "phone">("computer");
   useEffect(() => {
     const el = dialog.current;
@@ -118,13 +117,6 @@ function KitPreview({ kit, onClose, onUse }: { kit: StarterKit; onClose: () => v
       <div className="flex h-full flex-col">
         <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950">
           <p className="font-semibold">{kit.label}</p>
-          <div className="flex gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800" role="group" aria-label="Page">
-            {kit.pages.map((p) => (
-              <button key={p.url} type="button" onClick={() => setPage(p.url)} className={tab(page === p.url)} aria-pressed={page === p.url}>
-                {p.title}
-              </button>
-            ))}
-          </div>
           <div className="flex gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800" role="group" aria-label="Screen size">
             <button type="button" onClick={() => setWidth("computer")} className={tab(width === "computer")} aria-pressed={width === "computer"}>
               Computer
@@ -147,9 +139,8 @@ function KitPreview({ kit, onClose, onUse }: { kit: StarterKit; onClose: () => v
         </p>
         <div className="flex min-h-0 flex-1 justify-center overflow-auto p-4">
           <iframe
-            key={page}
-            title={`${kit.label}: ${kit.pages.find((p) => p.url === page)?.title ?? "page"}`}
-            src={previewUrl(kit, page)}
+            title={`Preview of the ${kit.label} design`}
+            src={previewUrl(kit)}
             sandbox="allow-scripts allow-popups"
             className={`h-full rounded-lg border border-zinc-200 bg-white shadow-sm dark:border-zinc-700 ${width === "phone" ? "w-[390px] shrink-0" : "w-full"}`}
           />
