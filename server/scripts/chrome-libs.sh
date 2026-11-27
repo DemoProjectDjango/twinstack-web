@@ -50,6 +50,8 @@ done
 echo "Fetching ${#need[@]} packages."
 for p in "${need[@]}"; do apt-get download "$p" >/dev/null 2>&1 || true; done
 for d in ./*.deb; do [ -e "$d" ] && dpkg-deb -x "$d" "$dest/root"; done
+# The downloaded packages aren't needed once unpacked: they'd only take disk space.
+rm -f ./*.deb
 
 # Where the libraries landed, and a font setup that also sees the fetched fonts.
 libdirs=$(find "$dest/root" -name '*.so*' -printf '%h\n' 2>/dev/null | sort -u | paste -sd: -)
