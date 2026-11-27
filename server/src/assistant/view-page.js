@@ -98,7 +98,7 @@ export async function browserStatus() {
       const ok = (await Promise.race([client.evaluate("1 + 1"), sleep(10_000)]).catch(() => null)) === 2;
       client.close();
       status = ok ? (sandboxFails ? "starts without its sandbox" : "starts") : "doesn't start";
-    } else status = "doesn't start";
+    } else status = `doesn't start (${lastFailure ?? "unknown"})`;
   }
   browserCheck = { at: Date.now(), status };
   return status;
@@ -198,13 +198,20 @@ function closeAllOnExit() {
 // it's started again without the sandbox, and later launches go straight to that. (deploy.sh's own
 // check runs without the sandbox, so it passed where the app failed.)
 let sandboxFails = false;
+// Why the browser last failed to start, in a few safe words (no paths), for /api/health.
+let lastFailure = null;
 const BASE_ARGS = ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0"];
 
 /** Starts Chrome and waits for its DevTools address: `{ browser, profile, port }`, or null when it exited or never answered. */
 async function startChrome(executable, noSandbox) {
   const profile = await fs.mkdtemp(path.join(os.tmpdir(), "twinstack-view-"));
   const args = [...BASE_ARGS, ...(noSandbox ? ["--no-sandbox"] : []), `--user-data-dir=${profile}`, "about:blank"];
-  const browser = spawn(executable, args, { stdio: "ignore", env: jobEnv(null, null) });
+  const browser = spawn(executable, args, { stdio: ["ignore", "ignore", "pipe"], env: jobEnv(null, null) });
+  // What Chrome says when it fails (a missing system library, a sandbox refusal), for /api/health.
+  let said = "";
+  browser.stderr?.on("data", (chunk) => {
+    said = (said + chunk).slice(-4000);
+  });
   closeAllOnExit();
   running.add(browser);
   let exited = false;
@@ -226,6 +233,9 @@ async function startChrome(executable, noSandbox) {
     // Already gone.
   }
   await fs.rm(profile, { recursive: true, force: true }).catch(() => {});
+  lastFailure = (said.match(/error while loading shared libraries: [^:\s]+|No usable sandbox[^\n]*|Running as root without --no-sandbox[^\n]*|cannot open display[^\n]*|Failed to [^\n]{0,80}/i)?.[0] ?? (exited ? "it exited at once" : "it didn't answer in 15 s"))
+    .replace(/\/[^\s:]+/g, "")
+    .slice(0, 160);
   return { failed: exited ? "exited" : "timeout" };
 }
 
