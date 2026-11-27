@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
+import { BUY_CREDITS_HREF, OUT_OF_CREDITS_OUTPUT } from "@/lib/claude";
 import { COPY_PROGRESS_EVENT, COPY_STOP_EVENT, type CopyProgress } from "@/lib/copy-website";
 import { api, workspacePath } from "@/lib/site-api";
 import { attachmentUrl, type AssistantAction } from "@/lib/assistant-api";
@@ -588,6 +590,11 @@ export function ActionCard({ id }: { id: string }) {
         })()}
         {(action.status === "failed" || interrupted) && !busy && (
           <>
+            {action.status === "failed" && OUT_OF_CREDITS_OUTPUT.test(action.result ?? "") && (
+              <Link href={BUY_CREDITS_HREF} className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-900">
+                Buy credits
+              </Link>
+            )}
             <Button className="text-xs" onClick={() => void retry(action)}>
               Try again
             </Button>

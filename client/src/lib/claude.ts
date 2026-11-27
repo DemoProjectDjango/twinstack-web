@@ -18,6 +18,10 @@ export type ClaudeAccess = {
 
 export const CLAUDE_SETUP_HREF = "/settings#ai";
 export const BUY_CREDITS_HREF = "/credits";
+
+/** A job's or request's output saying the account's AI credits ran out (the proxy's 402 billing_error). */
+export const OUT_OF_CREDITS_OUTPUT = /used all your (?:Claude |AI )?credits|billing_error/i;
+export const OUT_OF_CREDITS_WORDS = "You've used all your AI credits, so this wasn't done. Buy more credits, then press Try again.";
 /** Where the account connects GitHub, which also brings its free credits. */
 export const CONNECT_GITHUB_HREF = "/settings#github";
 

@@ -13,6 +13,7 @@ import {
   type DisplayEntry,
   type Turn,
 } from "@/lib/assistant-api";
+import { OUT_OF_CREDITS_OUTPUT, OUT_OF_CREDITS_WORDS } from "@/lib/claude";
 import { confirmModal } from "@/lib/confirm";
 import { api, workspacePath, type HtmlSource, type Overview, type Proposal, type SiteCheck, type WorkspaceStatus } from "@/lib/site-api";
 import { noteFeature } from "../FeatureGuide";
@@ -148,7 +149,9 @@ export function useOptionalAssistant() {
   return useContext(AssistantCtx);
 }
 
-const tail = (output: string) => output.trim().split("\n").slice(-OUTPUT_TAIL_LINES).join("\n");
+// A job's last lines for a failed card, or plain words when it stopped because the credits ran out.
+const tail = (output: string) =>
+  OUT_OF_CREDITS_OUTPUT.test(output) ? OUT_OF_CREDITS_WORDS : output.trim().split("\n").slice(-OUTPUT_TAIL_LINES).join("\n");
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export function AssistantProvider({ context, children }: { context: AssistantContext; children: ReactNode }) {

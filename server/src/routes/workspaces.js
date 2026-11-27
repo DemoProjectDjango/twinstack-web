@@ -298,6 +298,9 @@ async function pageFields(key, input) {
   return { title: fields.title || null, url: fields.url || null };
 }
 
+// Commands that run the site's page writer with the AI (see the route below).
+const TOOLS_FIRST = new Set(["page-edit", "page-generate", "chrome-design", "page-convert"]);
+
 workspacesRouter.post(
   "/:owner/:repo/commands/:command",
   handle(async (req, res) => {
@@ -321,6 +324,17 @@ workspacesRouter.post(
       } catch (err) {
         if (!(err instanceof ClaudeAccessError)) throw err;
         return res.status(err.status).json({ error: err.code, message: err.message });
+      }
+    }
+
+    // The AI's page and header-and-footer writer is the site's own script: bring it up to the
+    // template's newest (design rules, edits in place for long pages) first, so a site made before a
+    // fix gets it without installing the site update. At most every few minutes; never blocks.
+    if (TOOLS_FIRST.has(name)) {
+      try {
+        await updateCopyTools(key, templateToken(req.user, await getAccessToken(req, res)));
+      } catch {
+        // The site's current tools still work.
       }
     }
 
