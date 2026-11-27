@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { WorkspaceError, acquire, workspaceDir } from "./workspace.js";
+import { WorkspaceError, acquire, git, workspaceDir } from "./workspace.js";
 import { applyUrlPattern, contentVersion, frontmatter, inside, listFiles, readText } from "./site-files.js";
 import { normalizeLink } from "./links.js";
 
@@ -132,6 +132,17 @@ export async function sitePages(dir, site) {
   return pages;
 }
 
+/** The partials (of header.html, footer.html) whose published version carries data-designed while the working one doesn't. */
+async function replacedDesigned(dir, header, footer) {
+  const out = [];
+  for (const [file, now] of [["templates/partials/header.html", header], ["templates/partials/footer.html", footer]]) {
+    if (/\sdata-designed\s*=/.test(now)) continue;
+    const published = await git(dir, ["show", `HEAD:${file}`]).catch(() => "");
+    if (/\sdata-designed\s*=/.test(published)) out.push(file);
+  }
+  return out;
+}
+
 /** The header and footer as the editor works on them, with what it needs to show and check them. */
 export async function getNavigation(key) {
   const dir = workspaceDir(key);
@@ -160,6 +171,9 @@ export async function getNavigation(key) {
       footer: footer.includes(COPIED_MARK),
       from: chromeSource(header) ?? chromeSource(footer),
     },
+    // The published header and footer were the owner's (copied or designed by the AI) but the working
+    // copy has others: they were replaced and not published yet. Look & logo offers them back.
+    replacedDesigned: await replacedDesigned(dir, header, footer),
     // The newer standard header and footer: header styles, footer layouts, social icons, the strip.
     supportsStyles: header.includes(HEADER_STYLES_MARKER) && footer.includes(FOOTER_LAYOUTS_MARKER),
     version: contentVersion(text ?? ""),
