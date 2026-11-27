@@ -477,7 +477,7 @@ function CopyPrototype({ action, building }: { action: AssistantAction; building
 }
 
 export function ActionCard({ id }: { id: string }) {
-  const { actions, working, apply, retry, skip, keep, throwAway, turn, applyingAll } = useAssistant();
+  const { actions, working, apply, retry, skip, keep, throwAway, turn, applyingAll, send } = useAssistant();
   const { busy: siteBusy, editFile, showSection, showOnSite, overview } = useSite();
   const action = actions[id];
   if (!action) return null;
@@ -533,6 +533,16 @@ export function ActionCard({ id }: { id: string }) {
               Skip
             </Button>
           </>
+        )}
+        {action.status === "applied" && !busy && action.tool === "copy_website" && (
+          <Button
+            variant="primary"
+            className="text-xs"
+            disabled={siteBusy || Boolean(turn)}
+            onClick={() => void send("Review the copied site fully and suggest the best upgrades for it: what would make it clearly better than the original for this business.")}
+          >
+            Get upgrade ideas
+          </Button>
         )}
         {action.status === "ready" && !busy && action.tool === "copy_website" && (
           <>

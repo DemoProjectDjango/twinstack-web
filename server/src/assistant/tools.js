@@ -37,6 +37,7 @@ import {
   keepingSiteTree,
 } from "../site-files.js";
 import { readCheckReport } from "../site-check.js";
+import { reviewSite } from "../site-review.js";
 import { checkStaticInfo, getStaticInfo, saveStaticInfo } from "../static-info.js";
 import { WorkspaceError, commitAndPush, discardChanges, getStatus, readMeta, siteIdFor, workspaceDir } from "../workspace.js";
 import { watchDeploy } from "../publishing.js";
@@ -177,6 +178,13 @@ const TOOLS = [
     {},
     [],
     { kind: "read", activity: () => "Checking what stops your site from publishing" },
+  ),
+  tool(
+    "review_site",
+    "A full review of the site as it's built, measured page by page: outline and headings, how much each page says, what it asks visitors to do (buttons), forms and where they send, phone and email links, pictures (missing alt text, oversized files, ones loading from another website), links back to another website, search description, structured data; and the site as a whole (contact details, social links, logo, favicon, visits counting, site agent, totals). Use it before suggesting upgrades: after copying a website, and whenever the owner asks how to improve the site.",
+    {},
+    [],
+    { kind: "read", activity: () => "Reviewing your whole site" },
   ),
   tool(
     "read_stylesheet",
@@ -981,6 +989,8 @@ async function runRead(name, input, key, context) {
         })),
       };
     }
+    case "review_site":
+      return reviewSite(key);
     case "read_site_problems": {
       const { report, fresh } = await readCheckReport(key);
       if (!report) return "The site hasn't been checked yet. The What's changed screen checks it by itself when the owner opens it.";

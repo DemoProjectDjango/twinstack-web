@@ -123,7 +123,7 @@ export function findChrome() {
 }
 
 /** The built site to look at: the editor's preview when it's current, else a build of its own inside .git. */
-async function builtSite(key) {
+export async function builtSite(key) {
   const dir = workspaceDir(key);
   if (await previewIsFresh(key)) return path.join(dir, "dist");
   const out = path.join(dir, VIEW_DIR);
