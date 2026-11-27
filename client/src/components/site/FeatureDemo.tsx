@@ -47,7 +47,8 @@ export type DemoKind =
   | "undo"
   | "versions"
   | "publish"
-  | "updates";
+  | "updates"
+  | "templates";
 
 /** Which demo each step of the guide shows (by step id). */
 export const STEP_DEMOS: Record<string, DemoKind> = {
@@ -66,6 +67,7 @@ export const STEP_DEMOS: Record<string, DemoKind> = {
   "page-add": "add-page",
   "page-open": "edit-page",
   "page-menu": "page-menu",
+  templates: "templates",
   "page-on-site": "on-site",
   find: "find",
   design: "colors",
@@ -131,6 +133,7 @@ const FRAMES: Record<DemoKind, number> = {
   versions: 3,
   publish: 3,
   updates: 2,
+  templates: 3,
 };
 
 // ——— Playing ———
@@ -369,6 +372,37 @@ function Scene({ kind, f }: { kind: DemoKind; f: number }) {
           </div>
           <Site narrow={f === 1} />
         </div>
+      );
+    case "templates":
+      // The template choice, the gallery (searching), then the site it makes.
+      return f === 0 ? (
+        <div className="space-y-1.5">
+          <div className="rounded-md border-2 border-zinc-900 bg-white p-2">
+            <p className="text-[9px] font-semibold text-zinc-900">Use a template</p>
+            <Bar w="70%" />
+          </div>
+          <div className="rounded-md border border-zinc-200 bg-white p-2">
+            <p className="text-[9px] font-semibold text-zinc-900">Let the AI design it</p>
+            <Bar w="60%" />
+          </div>
+        </div>
+      ) : f === 1 ? (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1">
+            <span className="text-[9px] font-semibold text-zinc-900">Templates</span>
+            <span className="flex-1 rounded border border-zinc-300 bg-white px-1 py-0.5 text-[7px] text-zinc-500">café</span>
+          </div>
+          <div className="grid grid-cols-3 gap-1">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className={clsx("rounded border bg-white p-1", i === 0 ? "border-zinc-900" : "border-zinc-200")}>
+                <div className="h-6 rounded-sm bg-gradient-to-br from-teal-100 to-zinc-100" />
+                <Bar w="70%" />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <Site title="Rosie's Bakery" />
       );
     case "page-picker": {
       const pages = ["Home", "About us", "Our menu"];
