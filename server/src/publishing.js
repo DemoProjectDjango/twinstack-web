@@ -280,3 +280,33 @@ export async function getPublishedHosts(accessToken, fullName) {
   }
   return { url, hosts: [...hosts] };
 }
+
+/**
+ * After a publish pushed `commit` to the default branch: if GitHub hasn't started a deploy of it
+ * within about a minute (its push never ran the workflow, as on sites made by an older builder),
+ * one is started. Runs in the background; never throws.
+ */
+export function watchDeploy(accessToken, fullName, commit) {
+  const check = async () => {
+    try {
+      const repo = await json(`/repos/${fullName}`, accessToken);
+      const branch = repo.body?.default_branch;
+      if (!branch) return;
+      for (let i = 0; i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 15_000));
+        const runs = await json(`/repos/${fullName}/actions/runs?branch=${encodeURIComponent(branch)}&head_sha=${commit}&per_page=1`, accessToken);
+        if (runs.res.ok && (runs.body?.total_count ?? 0) > 0) return;
+      }
+      // The branch moved on since: that newer push is the one that counts.
+      const head = await json(`/repos/${fullName}/git/ref/heads/${encodeURIComponent(branch)}`, accessToken);
+      if (head.body?.object?.sha && head.body.object.sha !== commit) return;
+      console.info(`No deploy started for ${fullName} ${commit.slice(0, 7)}: starting it.`);
+      const pages = await json(`/repos/${fullName}/pages`, accessToken);
+      if (!pages.res.ok || pages.body?.build_type !== "workflow") await enablePages(accessToken, fullName).catch(() => {});
+      await startDeploy(accessToken, fullName, branch);
+    } catch (err) {
+      console.warn(`Couldn't make sure ${fullName} deployed: ${err.message}`);
+    }
+  };
+  void check();
+}

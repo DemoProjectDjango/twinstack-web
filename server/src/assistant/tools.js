@@ -38,7 +38,8 @@ import {
 } from "../site-files.js";
 import { readCheckReport } from "../site-check.js";
 import { checkStaticInfo, getStaticInfo, saveStaticInfo } from "../static-info.js";
-import { WorkspaceError, commitAndPush, discardChanges, getStatus, siteIdFor, workspaceDir } from "../workspace.js";
+import { WorkspaceError, commitAndPush, discardChanges, getStatus, readMeta, siteIdFor, workspaceDir } from "../workspace.js";
+import { watchDeploy } from "../publishing.js";
 import { SYSTEM_PROMPT } from "./prompt.js";
 
 // The assistant's tools. Read tools run on the server as soon as Claude calls them. Change tools
@@ -1650,6 +1651,8 @@ async function applyAction(key, action, { accessToken, user } = {}) {
     case "publish_changes": {
       if (!accessToken) throw new WorkspaceError("Publishing needs GitHub. Reconnect it and try again.", 401);
       const result = await commitAndPush({ key, accessToken, user, message: input.message, mode: "direct" });
+      const meta = await readMeta(workspaceDir(key)).catch(() => null);
+      if (result.commit && meta?.fullName) watchDeploy(accessToken, meta.fullName, result.commit);
       return `Published to ${result.branch}. The live site updates in about a minute.`;
     }
     default:
