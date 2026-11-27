@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import fs from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
@@ -197,6 +197,23 @@ function closeAllOnExit() {
 // AppArmor rule on unprivileged user namespaces, many containers). There Chrome exits at once, so
 // it's started again without the sandbox, and later launches go straight to that. (deploy.sh's own
 // check runs without the sandbox, so it passed where the app failed.)
+// System libraries deploy.sh fetched for the browser without admin rights (server/scripts/chrome-libs.sh):
+// its env file says where they are (LD_LIBRARY_PATH, FONTCONFIG_FILE). Empty when there's none.
+const CHROME_LIBS_ENV = process.env.CHROME_LIBS_ENV || path.join(os.homedir(), ".cache", "twinstack-chrome-libs", "env");
+function chromeEnv() {
+  if (!existsSync(CHROME_LIBS_ENV)) return {};
+  try {
+    const out = {};
+    for (const line of readFileSync(CHROME_LIBS_ENV, "utf8").split("\n")) {
+      const m = /^(LD_LIBRARY_PATH|FONTCONFIG_FILE|FONTCONFIG_PATH)=(.*)$/.exec(line.trim());
+      if (m && m[2]) out[m[1]] = m[2];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 let sandboxFails = false;
 // Why the browser last failed to start, in a few safe words (no paths), for /api/health.
 let lastFailure = null;
@@ -206,7 +223,7 @@ const BASE_ARGS = ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no
 async function startChrome(executable, noSandbox) {
   const profile = await fs.mkdtemp(path.join(os.tmpdir(), "twinstack-view-"));
   const args = [...BASE_ARGS, ...(noSandbox ? ["--no-sandbox"] : []), `--user-data-dir=${profile}`, "about:blank"];
-  const browser = spawn(executable, args, { stdio: ["ignore", "ignore", "pipe"], env: jobEnv(null, null) });
+  const browser = spawn(executable, args, { stdio: ["ignore", "ignore", "pipe"], env: { ...jobEnv(null, null), ...chromeEnv() } });
   // What Chrome says when it fails (a missing system library, a sandbox refusal), for /api/health.
   let said = "";
   browser.stderr?.on("data", (chunk) => {

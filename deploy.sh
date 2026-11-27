@@ -143,9 +143,13 @@ else
   npx --yes "playwright@$PLAYWRIGHT_VERSION" install chromium-headless-shell || echo "Couldn't download it. Copying websites stays off until a browser is installed (DEPLOY.md, step 6)." >&2
 fi
 shell=$(compgen -G "$HOME/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell" | sort | tail -1 || true)
-if [ -n "$shell" ] && ! "$shell" --headless --no-sandbox --disable-gpu --dump-dom about:blank >/dev/null 2>&1; then
-  echo "The headless Chrome can't start: this server is missing system libraries it needs. Run this once as an admin, then deploy again:" >&2
-  echo "  sudo npx --yes playwright@$PLAYWRIGHT_VERSION install-deps chromium-headless-shell" >&2
+# A server without Chrome's system libraries gets them fetched into this user's folder (no admin
+# rights; server/scripts/chrome-libs.sh), which the API then gives the browser.
+if [ -n "$shell" ]; then
+  if ! bash server/scripts/chrome-libs.sh "$shell"; then
+    echo "Copying websites stays off until the browser can start. An admin can fix it once with:" >&2
+    echo "  sudo npx --yes playwright@$PLAYWRIGHT_VERSION install-deps chromium-headless-shell" >&2
+  fi
 fi
 
 step "Checking health"
