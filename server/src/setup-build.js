@@ -8,6 +8,7 @@ import { generateImage, imagesAvailable } from "./images.js";
 import { getNavigation, saveNavigation, setPageMenu } from "./navigation.js";
 import { createHomepage, createPageAt, getOverview } from "./site-files.js";
 import { saveBrand } from "./brand.js";
+import { applyKit, sameAddress } from "./kits.js";
 import { acquire, workspaceDir } from "./workspace.js";
 
 // A new site's build from its setup answers (site-setup.js's buildPlan), run by the server as one
@@ -33,6 +34,8 @@ const FOOTER_PAGE = /privacy|terms|cookie|legal|imprint|disclaimer/i;
  * plan (and logged); the build still runs for the rest. Resolves to the plan as saved.
  */
 export async function prepareBuild(key, plan) {
+  // A starter kit first: its pages replace the starter homepage, so nothing below makes another.
+  const kit = plan.kit ? await applyKit(key, plan.kit).catch((err) => (console.error(`Couldn't start ${key} from the ${plan.kit} kit:`, err.message), null)) : null;
   const overview = await getOverview(key);
   const at = (address) => overview.collections.flatMap((c) => c.pages).find((p) => p.address === address)?.file;
   const saved = { ...plan, home: null, pages: [] };
@@ -53,8 +56,28 @@ export async function prepareBuild(key, plan) {
     }
   }
   if (plan.navigation) await applyNavigation(key, plan.navigation).catch((err) => console.error(`Couldn't set up the header and footer of ${key}:`, err.message));
+  if (kit) await addKitMenu(key, kit.pages.filter((p) => p.menu), Boolean(plan.navigation), overview.features.pageMenus).catch((err) => console.error(`Couldn't add the kit's pages to the menu of ${key}:`, err.message));
   await fs.writeFile(path.join(workspaceDir(key), BUILD_PLAN), JSON.stringify(saved));
   return saved;
+}
+
+/**
+ * Puts a kit's menu pages in the header: a link in navigation.json when the setup wrote the header's
+ * links (`explicit`), else the page's own frontmatter `menu` on copies that read it.
+ */
+async function addKitMenu(key, pages, explicit, pageMenus) {
+  if (!pages.length) return;
+  if (!explicit && pageMenus) {
+    for (const page of pages) await setPageMenu(key, page.file, "header");
+    return;
+  }
+  const { navigation, version, supportsAppearance } = await getNavigation(key);
+  const items = navigation.header?.items ?? [];
+  const missing = pages.filter((p) => !items.some((item) => typeof item.url === "string" && sameAddress(item.url, p.url)));
+  if (!missing.length) return;
+  const next = { ...navigation, header: { ...navigation.header, items: [...items, ...missing.map((p) => ({ label: p.title, url: p.url }))] } };
+  if (!supportsAppearance) delete next.appearance;
+  await saveNavigation(key, next, version);
 }
 
 /**

@@ -23,7 +23,16 @@ type TypeStats = {
   answers: AnswerStats[];
   pages: { address: string; count: number }[];
 };
-type Stats = { days: number; total: number; types: TypeStats[] };
+/** How sites started: the AI's design, or a template (server/kits/). Older servers don't send it. */
+type StartStats = {
+  id: string;
+  label: string;
+  sites: number;
+  published: number;
+  medianHoursToPublish: number | null;
+  firstWeek: { sites: number; messages: number | null; commands: number | null; discards: number | null; publishedInWeek: number };
+};
+type Stats = { days: number; total: number; types: TypeStats[]; starts?: StartStats[] };
 
 type State = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; stats: Stats };
 
@@ -77,12 +86,53 @@ export function AdminSetupStats() {
       {state.status === "ready" && (
         <>
           {state.stats.total === 0 && <Notice>No site has answered the setup questions in the last {state.stats.days} days.</Notice>}
+          {state.stats.starts && state.stats.starts.length > 0 && <StartsCard starts={state.stats.starts} />}
           {state.stats.types.map((type) => (
             <TypeCard key={type.id} type={type} />
           ))}
         </>
       )}
     </div>
+  );
+}
+
+/** The AI's design next to each template: do template sites get published, and need fewer changes? */
+function StartsCard({ starts }: { starts: StartStats[] }) {
+  return (
+    <section className="rounded-xl border border-zinc-200 p-5 dark:border-zinc-800">
+      <h2 className="text-lg font-semibold">How sites started</h2>
+      <p className="mt-1 text-sm text-zinc-500">The AI&apos;s design or a template, chosen in the setup&apos;s first step.</p>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-xl text-left text-sm">
+          <thead className="text-xs text-zinc-500">
+            <tr>
+              <th className="py-1 pr-3 font-medium">Started from</th>
+              <th className="py-1 pr-3 text-right font-medium">Sites</th>
+              <th className="py-1 pr-3 text-right font-medium">Published</th>
+              <th className="py-1 pr-3 text-right font-medium">Time to publish</th>
+              <th className="py-1 pr-3 text-right font-medium">Published in week 1</th>
+              <th className="py-1 pr-3 text-right font-medium">AI messages, week 1</th>
+              <th className="py-1 pr-3 text-right font-medium">AI commands, week 1</th>
+              <th className="py-1 text-right font-medium">Thrown away, week 1</th>
+            </tr>
+          </thead>
+          <tbody className="tabular-nums">
+            {starts.map((s) => (
+              <tr key={s.id} className="border-t border-zinc-100 dark:border-zinc-800">
+                <td className="py-1.5 pr-3">{s.label}</td>
+                <td className="py-1.5 pr-3 text-right">{s.sites}</td>
+                <td className="py-1.5 pr-3 text-right">{percent(s.published, s.sites)}</td>
+                <td className="py-1.5 pr-3 text-right">{duration(s.medianHoursToPublish)}</td>
+                <td className="py-1.5 pr-3 text-right">{percent(s.firstWeek.publishedInWeek, s.firstWeek.sites)}</td>
+                <td className="py-1.5 pr-3 text-right">{decimal(s.firstWeek.messages)}</td>
+                <td className="py-1.5 pr-3 text-right">{decimal(s.firstWeek.commands)}</td>
+                <td className="py-1.5 text-right">{decimal(s.firstWeek.discards)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 

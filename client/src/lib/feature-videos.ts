@@ -29,6 +29,7 @@ export const FEATURE_VIDEOS: Partial<Record<string, string>> = {
   // "page-add": "",         Add a page
   // "page-open": "",        Edit a whole page
   // "page-menu": "",        Menu, hide, delete
+  // "templates": "",       Started from a template?
   // "page-on-site": "",     Jump to it on your site
   // "find": "",             Find any page
   // Look & logo
