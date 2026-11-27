@@ -16,7 +16,8 @@ import {
   htmlSourceExists,
   isEditableMarkdown,
 } from "./site-files.js";
-import { WorkspaceError, clearPreviewStamp, markInstalled, markPreviewBuilt } from "./workspace.js";
+import { WorkspaceError, clearPreviewStamp, markInstalled, markPreviewBuilt, workspaceDir } from "./workspace.js";
+import { adoptHeaderLogo } from "./brand.js";
 import { SEO_REPORT } from "./seo.js";
 import { MAX_REFERENCES, copyReference, referencePath } from "./assistant/attachments.js";
 import { saveCheckReport } from "./site-check.js";
@@ -399,7 +400,11 @@ export const COMMANDS = {
       if (flag(input, "dryRun")) args.push("--dry-run", `--proposal-out=${PROPOSAL_FILE}`);
       return [script("edit-page.js", args, 20 * MINUTE)];
     },
-    prepare: (key, input) => (flag(input, "dryRun") ? clearProposal(key, [HEADER_PARTIAL, FOOTER_PARTIAL]) : undefined),
+    // A copied header's logo becomes Look & logo's first, so the new design shows the business's logo.
+    prepare: async (key, input) => {
+      await adoptHeaderLogo(workspaceDir(key));
+      if (flag(input, "dryRun")) await clearProposal(key, [HEADER_PARTIAL, FOOTER_PARTIAL]);
+    },
   },
 
   // An existing HTML page (uploaded into .git by saveHtmlSource) converted into the page's markdown.

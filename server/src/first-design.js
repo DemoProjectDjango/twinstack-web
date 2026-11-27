@@ -53,4 +53,8 @@ export async function firstDesign(key, command, input) {
 }
 
 /** How many design reviews a page command gets: FIRST_HOME_REVIEWS for the site's first homepage, else none. */
-export const designReviews = (command, first) => ((command === "page-edit" || command === "page-generate") && first === "homepage" ? FIRST_HOME_REVIEWS : 0);
+// A redesign the owner asked for (the AI words it "Redesign …"): the writer looks at its page and
+// improves it once, which is what keeps a new design from coming out as the generic AI look.
+export const REDESIGN = /\b(re-?design|new design|unique design|fresh design|art direction|design it from scratch)\b/i;
+export const designReviews = (command, first, instruction = "") =>
+  (command === "page-edit" || command === "page-generate") && (first === "homepage" || REDESIGN.test(String(instruction ?? ""))) ? FIRST_HOME_REVIEWS : 0;

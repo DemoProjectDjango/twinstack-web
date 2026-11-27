@@ -360,7 +360,7 @@ workspacesRouter.post(
           env = jobEnv(claude.apiKey, model);
         }
         if (first) env.TWINSTACK_EFFORT = FIRST_DESIGN_EFFORT;
-        reviews = designReviews(name, first);
+        reviews = designReviews(name, first, input?.instruction);
         if (reviews) {
           env.TWINSTACK_DESIGN_REVIEW = String(reviews);
           env.TWINSTACK_REVIEW_MODEL = REVIEW_MODEL;

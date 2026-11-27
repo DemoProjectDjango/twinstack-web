@@ -113,6 +113,33 @@ export function headerLogoOf(header) {
   return { src: img[2], alt, designed };
 }
 
+/**
+ * Makes Look & logo's logo the one a copied header draws, while the site has none of its own
+ * (`brand.logo` empty): a copied header shows its picture by itself, but a header designed later
+ * (a redesign, "Design with the AI") reads `site.brand.logo`, and without this it would show the
+ * placeholder name instead of the business's logo. For a caller that already holds the workspace's
+ * lock (the copy's finish, a command's prepare). Returns the logo it set, or null. Never throws.
+ */
+export async function adoptHeaderLogo(dir) {
+  try {
+    const header = await fs.readFile(path.join(dir, HEADER), "utf8").catch(() => "");
+    const logo = headerLogoOf(header);
+    if (logo?.designed !== "copied") return null;
+    const src = decodeURIComponent(logo.src.split(/[?#]/)[0]);
+    if (!BRAND_IMAGE.test(src) || src.split("/").includes("..") || !existsSync(path.join(dir, src.slice(1)))) return null;
+    const { text, data } = await readConfig(dir);
+    if (typeof data.brand?.logo === "string" && data.brand.logo.trim()) return null;
+    const brand = { ...(data.brand ?? {}), logo: src };
+    const merged = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, k === "brand" ? brand : v]));
+    if (!("brand" in data)) merged.brand = brand;
+    const newline = text.includes("\r\n") ? "\r\n" : "\n";
+    await fs.writeFile(path.join(dir, CONFIG), `${JSON.stringify(merged, null, 2)}\n`.replace(/\n/g, newline));
+    return src;
+  } catch {
+    return null;
+  }
+}
+
 /** A site address or a web address for an image in a partial ("{{ site.url }}/…" and data: aren't). */
 const plainSrc = (src) => /^\/assets\/img\/[\w./-]+$/i.test(src) || /^https?:\/\/[^\s"'<>{}]+$/i.test(src);
 

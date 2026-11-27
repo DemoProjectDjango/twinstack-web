@@ -7,6 +7,7 @@ import { FetchRefused, checkUrl, hostIsPublic, safeFetch } from "./safe-fetch.js
 import { sitePages } from "./navigation.js";
 import { createPageAt, readSiteConfig, saveHtmlSource } from "./site-files.js";
 import { WorkspaceError, acquire, workspaceDir } from "./workspace.js";
+import { adoptHeaderLogo } from "./brand.js";
 
 // "Copy a website": the owner (or the AI, for "make my site like example.com") gives an address,
 // and the site gets that website's pages with their design. It works in two halves:
@@ -976,6 +977,8 @@ export async function finishCopiedWebsite(key) {
         }
       }
     }
+    // Look & logo shows the copied logo, and a header designed later keeps it.
+    await adoptHeaderLogo(dir);
   } finally {
     release();
   }
