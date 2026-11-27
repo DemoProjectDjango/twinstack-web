@@ -26,6 +26,7 @@ import {
   type PageAction,
   type PagePlan,
   type SetupAnswers,
+  type StarterKit,
   type SetupGroup,
   type SetupPlan,
   type Skill,
@@ -35,6 +36,7 @@ import {
   type ChromePreviewData,
   type PreviewPick,
 } from "./ChromePreview";
+import { KitPicker } from "./KitPicker";
 import { LogoAndIcon, SetupFields } from "./SetupFields";
 import { Button, ErrorText, Spinner, inputClass } from "../site/ui";
 
@@ -54,6 +56,7 @@ type Step =
   | "what"
   | "brief"
   | "analysis"
+  | "design"
   | "chrome"
   | "review"
   | `q:${string}`;
@@ -208,6 +211,15 @@ export function SetupFlow({
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [finishing, setFinishing] = useState(false);
+  // The starter kits (server/kits/) and the one picked: null is the AI designing the homepage.
+  const [kits, setKits] = useState<StarterKit[]>([]);
+  const [kit, setKit] = useState<string | null>(null);
+
+  useEffect(() => {
+    call<{ kits: StarterKit[] }>("/api/setup/kits")
+      .then((data) => setKits(data.kits ?? []))
+      .catch(() => setKits([]));
+  }, []);
 
   useEffect(() => {
     call<{ skills: Skill[] }>("/api/setup/skills")
@@ -236,15 +248,23 @@ export function SetupFlow({
     q.status === "ask" || extraAsk.has(q.id) ? "ask" : "later";
   const asked = questions.filter((q) => statusOf(q) === "ask");
   const newChrome = result?.chrome === "design";
-  const steps: Step[] = [
-    ...(askName ? (["name"] as const) : []),
-    "what",
-    "brief",
-    "analysis",
-    ...asked.map((q) => `q:${q.id}` as const),
-    ...(newChrome ? (["chrome"] as const) : []),
-    "review",
-  ];
+  // The starting design comes first (only when there are kits; servers without them keep the old
+  // steps). A kit is a finished design, so it needs only the name and what the business does (the
+  // site's description, which its homepage shows): no brief, analysis, questions or review.
+  const steps: Step[] = kit
+    ? ["design", ...(askName ? (["name"] as const) : []), "what"]
+    : [
+        ...(kits.length ? (["design"] as const) : []),
+        ...(askName ? (["name"] as const) : []),
+        "what",
+        "brief",
+        "analysis",
+        ...asked.map((q) => `q:${q.id}` as const),
+        ...(newChrome ? (["chrome"] as const) : []),
+        "review",
+      ];
+  // With a kit, the last step creates the site.
+  const lastKitStep = Boolean(kit) && step >= steps.length - 1;
   const current = steps[Math.min(step, steps.length - 1)];
   const group = current.startsWith("q:")
     ? questions.find((q) => q.id === current.slice(2))
@@ -426,6 +446,7 @@ export function SetupFlow({
     logo,
     favicon,
     photos,
+    kit,
   });
 
   // The review's preview of what gets saved, from the server's own composition.
@@ -489,7 +510,7 @@ export function SetupFlow({
   }
 
   function next() {
-    if (current === "review") return void finish();
+    if (current === "review" || lastKitStep) return void finish();
     if (group)
       setSkipped((s) => new Set([...s].filter((id) => id !== group.id)));
     leave();
@@ -524,7 +545,8 @@ export function SetupFlow({
     current === "name"
       ? Boolean(name.trim())
       : current === "what"
-        ? Boolean(what.trim())
+        ? // Optional on a kit's last step: it creates the site, so there's nothing to skip to.
+          Boolean(what.trim()) || (lastKitStep && !finishing)
         : current === "brief"
           ? briefOk(brief)
           : current === "analysis"
@@ -536,12 +558,12 @@ export function SetupFlow({
       ? "Skip the questions"
       : group
         ? "Skip this question"
-        : current === "chrome"
+        : current === "chrome" || current === "design" || lastKitStep
           ? null
           : current === "review"
             ? null
             : "Skip";
-  const known = Boolean(result) || current === "review";
+  const known = Boolean(result) || current === "review" || Boolean(kit);
   const briefWords = wordCount(brief);
 
   const body = (
@@ -702,6 +724,24 @@ export function SetupFlow({
         </>
       )}
 
+      {current === "design" && (
+        <>
+          <h2
+            id="setup-step-title"
+            className="mt-1 text-2xl font-semibold tracking-tight"
+          >
+            Pick a starting design
+          </h2>
+          <p className="mt-2 text-sm text-zinc-500">
+            Start from a ready-made template, or let the AI design your homepage. You can change
+            everything afterwards.
+          </p>
+          <div className="mt-5">
+            <KitPicker kits={kits} value={kit} onChange={setKit} />
+          </div>
+        </>
+      )}
+
       {current === "chrome" && (
         <ChromeStep
           choice={chromeChoice}
@@ -795,7 +835,7 @@ export function SetupFlow({
         >
           {finishing ? (
             <Spinner />
-          ) : current === "review" ? (
+          ) : current === "review" || lastKitStep ? (
             finishLabel
           ) : current === "analysis" ? (
             asked.length ? (

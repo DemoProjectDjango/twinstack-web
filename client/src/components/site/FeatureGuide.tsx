@@ -237,6 +237,15 @@ const STEPS: Step[] = [
     done: "read",
   },
   {
+    id: "templates",
+    chapter: "pages",
+    title: "Started from a template?",
+    text: "A new site can start from a ready-made template (free, ready in seconds) instead of the AI's design: pick one in Create a new site. Its pages are yours like any other: click to change the words, ask the AI to redesign a section, and replace the sample items it marks for you.",
+    section: "pages",
+    target: ["screen"],
+    done: "read",
+  },
+  {
     id: "page-on-site",
     chapter: "pages",
     title: "Jump to it on your site",

@@ -8,7 +8,8 @@
     "start": "node --env-file-if-exists=.env src/index.js",
     "record-copies": "node --env-file-if-exists=.env scripts/record-copies.js",
     "check-task-size": "node scripts/check-task-size.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test --test-force-exit test/*.test.js",
+    "kits:build": "node scripts/build-kit-previews.js"
   },
   "type": "module",
   "dependencies": {
