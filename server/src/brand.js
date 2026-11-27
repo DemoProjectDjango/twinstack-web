@@ -93,8 +93,21 @@ const IMG_SRC = /<img\b[^>]*?\bsrc\s*=\s*(["'])([^"']+)\1[^>]*>/i;
 export function headerLogoOf(header) {
   const designed = /data-designed\s*=\s*["'](claude|copied)["']/i.exec(header)?.[1] ?? null;
   if (!designed) return null;
-  const nav = header.search(/<nav\b|<ul\b/i);
-  const img = IMG_SRC.exec(nav > 0 ? header.slice(0, nav) : header) ?? IMG_SRC.exec(header);
+  // The logo: a picture marked as one (its class, alt text or file name says "logo"), else one inside
+  // a link to the homepage, else the first picture before the menu, else the first picture.
+  const visible = header.replace(/<template\b[\s\S]*?<\/template\s*>/gi, "");
+  const pictures = [...visible.matchAll(/<img\b[^>]*?\bsrc\s*=\s*(["'])([^"']+)\1[^>]*>/gi)];
+  const nav = visible.search(/<nav\b|<ul\b/i);
+  const homeLink = (m) => {
+    const before = visible.slice(0, m.index);
+    const a = before.lastIndexOf("<a ");
+    return a >= 0 && before.lastIndexOf("</a>") < a && /\bhref\s*=\s*["'](?:\/|\/index\.html|\{\{[^}]*\}\}\/?|https?:\/\/[^"'/]+\/?)["']/i.test(before.slice(a, a + 300));
+  };
+  const img =
+    pictures.find((m) => /logo/i.test(m[0])) ??
+    pictures.find(homeLink) ??
+    pictures.find((m) => nav < 0 || m.index < nav) ??
+    pictures[0];
   if (!img) return null;
   const alt = /\balt\s*=\s*(["'])([^"']*)\1/i.exec(img[0])?.[2] ?? "";
   return { src: img[2], alt, designed };
