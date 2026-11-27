@@ -369,7 +369,7 @@ export function decide(session, goals, now, { lead = 0, pace = PACES.balanced } 
   // Resting works for every goal not suggested yet this visit (a goal page seen isn't a goal done),
   // goals not seen yet first. A place already offered is never offered again in the visit.
   const offered = new Set(session.suggestions.map((s) => pageKey(s.target)));
-  const restGoals = [...open, ...goals.filter((g) => !open.includes(g))].filter((g) => !offered.has(pageKey(g.path)));
+  const restGoals = [...open, ...goals.filter((g) => !open.includes(g))].filter((g) => !offeredForGoal(session, g));
   const things = Object.entries(page.labels).map(([id, thing]) => ({ id, ...thing, hover: (page.hovers[id] ?? 0) + (page.hovers[id] ? lead : 0), clicks: page.clicks[id] ?? 0 }));
 
   if (maySuggest(session, now, { resting: true, pace })) {
@@ -564,6 +564,28 @@ export function visitorMemory(visitor, previousVisitAt) {
 }
 
 /** Addresses the visitor turned down on an earlier visit: not offered again while they're remembered. */
+/**
+ * Whether `goal`'s page was already offered in this visit since it became a goal. A place offered
+ * before the owner made it a goal (or before goals had a date) may be offered again for it, once.
+ */
+export function offeredForGoal(session, goal) {
+  const since = goal.since ? new Date(goal.since).getTime() : 0;
+  return session.suggestions.some((s) => pageKey(s.target) === pageKey(goal.path) && (!since || new Date(s.at).getTime() >= since));
+}
+
+/** Addresses this visitor turned down on an earlier visit, except goals the owner set after that. */
+export function declinedPlaces(session, goals = []) {
+  const out = new Set();
+  for (const s of session.memory?.suggestions ?? []) {
+    if (s.outcome !== "dismissed") continue;
+    const goal = goals.find((g) => pageKey(g.path) === pageKey(s.target));
+    const since = goal?.since ? new Date(goal.since).getTime() : 0;
+    if (goal && since && (!s.at || new Date(s.at).getTime() < since)) continue;
+    out.add(s.target);
+  }
+  return out;
+}
+
 export const declinedBefore = (session) => new Set((session.memory?.suggestions ?? []).filter((s) => s.outcome === "dismissed").map((s) => s.target));
 
 /* ------------------------------------------------------------------ settings */
@@ -575,7 +597,7 @@ export class SettingsError extends Error {}
  * The owner's settings as they may be saved, from what the editor sent. `pages` are the site's
  * addresses (goals must lead to one of them). Throws SettingsError.
  */
-export function cleanSettings(input, pages) {
+export function cleanSettings(input, pages, previousGoals = [], now = new Date()) {
   const name = clean(input?.name, 40);
   if (!name) throw new SettingsError("Give your agent a name.");
   const greeting = clean(input?.greeting, 200);
@@ -589,7 +611,9 @@ export function cleanSettings(input, pages) {
     if (!label) throw new SettingsError("Each goal needs a name, like Donate or Contact us.");
     if (!path || !pages.has(path)) throw new SettingsError(`Choose one of your site's pages for "${label}".`);
     if (goals.some((g) => g.path === path)) throw new SettingsError(`Two goals lead to the same page (${path}).`);
-    goals.push({ label, path, note: clean(raw?.note, 160) });
+    // When it became a goal: a place offered or turned down before that may be offered again for it.
+    const before = previousGoals.find((g) => g.path === path);
+    goals.push({ label, path, note: clean(raw?.note, 160), since: before?.since ?? now.toISOString() });
   }
   if (goals.length > MAX_GOALS) throw new SettingsError(`Keep it to ${MAX_GOALS} goals at most.`);
   const daily = Number(input?.dailyCredits);

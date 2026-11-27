@@ -14,6 +14,8 @@ import {
   labelOf,
   matchesGoal,
   maySuggest,
+  offeredForGoal,
+  declinedPlaces,
   newSession,
   outcomeOf,
   pageKey,
@@ -290,6 +292,28 @@ describe("decide", () => {
   });
 });
 
+describe("goals set during a visit", () => {
+  const session = () => newSession({ siteId: 1, sid: SID, now: T0, device: "Desktop" });
+  it("a place offered before it became a goal can be offered again for the goal, once", () => {
+    const s = session();
+    applyBatch(s, batch([{ k: "x" }]), at(10));
+    s.suggestions.push({ id: "a", path: "/", target: "/contact.html", at: at(20) });
+    const goal = { label: "Contact us", path: "/contact.html", since: at(60).toISOString() };
+    assert.equal(offeredForGoal(s, goal), false, "offered before it was a goal");
+    s.suggestions.push({ id: "b", path: "/", target: "/contact.html", at: at(90) });
+    assert.equal(offeredForGoal(s, goal), true, "offered for the goal: not again");
+    assert.equal(offeredForGoal(s, { label: "Contact", path: "/contact.html" }), true, "an undated goal counts every offer");
+  });
+
+  it("a returning visitor's no counts only for goals set before it", () => {
+    const s = session();
+    s.memory = { suggestions: [{ target: "/donate.html", outcome: "dismissed", at: "2026-11-20T00:00:00Z" }, { target: "/shop.html", outcome: "dismissed", at: "2026-11-20T00:00:00Z" }] };
+    const declined = declinedPlaces(s, [{ label: "Donate", path: "/donate.html", since: "2026-11-25T00:00:00Z" }, { label: "Shop", path: "/shop.html", since: "2026-11-01T00:00:00Z" }]);
+    assert.equal(declined.has("/donate.html"), false, "made a goal after the no");
+    assert.equal(declined.has("/shop.html"), true, "a goal before the no");
+  });
+});
+
 describe("matchesGoal", () => {
   it("matches by link or by the goal's words in the label", () => {
     assert.ok(matchesGoal({ link: "/donate", label: "" }, GOALS[0]));
@@ -336,12 +360,19 @@ describe("cleanSettings", () => {
   const base = { name: "Sam", greeting: "Hello!", tone: "calm", goals: [{ label: "Donate", path: "/donate.html" }], dailyCredits: 2000 };
 
   it("keeps valid settings", () => {
-    assert.deepEqual(cleanSettings(base, pages), { ...base, goals: [{ label: "Donate", path: "/donate.html", note: "" }], remember: false, rememberAfterBanner: false, reads: "full", pace: "balanced", greet: true, color: "", position: "right", icon: "chat", iconImage: "", label: "", animation: "none" });
+    const at = new Date("2026-11-27T10:00:00Z");
+    assert.deepEqual(cleanSettings(base, pages, [], at), { ...base, goals: [{ label: "Donate", path: "/donate.html", note: "", since: at.toISOString() }], remember: false, rememberAfterBanner: false, reads: "full", pace: "balanced", greet: true, color: "", position: "right", icon: "chat", iconImage: "", label: "", animation: "none" });
     assert.equal(cleanSettings({ ...base, reads: "start" }, pages).reads, "start");
     assert.equal(cleanSettings({ ...base, icon: "image", iconImage: "/assets/img/brand/agent-me.png" }, pages).iconImage, "/assets/img/brand/agent-me.png");
     assert.throws(() => cleanSettings({ ...base, icon: "image", iconImage: "/etc/passwd" }, pages), SettingsError);
     assert.throws(() => cleanSettings({ ...base, color: "red; background:url(x)" }, pages), SettingsError);
     assert.equal(cleanSettings({ ...base, remember: true }, pages).remember, true);
+  });
+
+  it("a goal keeps the date it was first set", () => {
+    const first = cleanSettings(base, pages, [], new Date("2026-11-20T00:00:00Z")).goals[0];
+    const again = cleanSettings(base, pages, [first], new Date("2026-11-27T00:00:00Z")).goals[0];
+    assert.equal(again.since, "2026-11-20T00:00:00.000Z");
   });
 
   it("refuses what it can't save", () => {

@@ -20,6 +20,7 @@ import {
 } from "@/lib/site-api";
 import { confirmModal } from "@/lib/confirm";
 import { HeaderFooterPreview } from "./HeaderFooterPreview";
+import { RealChromePreview } from "./RealChromePreview";
 import { JobLog } from "./JobLog";
 import { ProposalReview } from "./ProposalReview";
 import { useAutoApply } from "./assistant/AssistantProvider";
@@ -250,8 +251,8 @@ export function HeaderFooterPanel() {
       <Section
         title="Preview"
         description={
-          designedHeader || designedFooter
-            ? "What the menu and footer hold, in the template's colours rather than the AI's design (Edit site shows the real look). Links to pages the site doesn't have yet are struck through: the build leaves them out until those pages exist."
+          copied || designedHeader || designedFooter
+            ? "Your header and footer exactly as visitors see them, from your site's latest preview."
             : "An approximation in the template's colours. Links to pages the site doesn't have yet are struck through: the build leaves them out until those pages exist."
         }
       >
@@ -265,16 +266,20 @@ export function HeaderFooterPanel() {
             ]}
           />
         </div>
-        <HeaderFooterPreview
-          navigation={draft}
-          info={info}
-          brand={brand}
-          pageIndex={index}
-          device={device}
-          styled={styled}
-          selected={selected}
-          onSelect={select}
-        />
+        {copied || designedHeader || designedFooter ? (
+          <RealChromePreview device={device} />
+        ) : (
+          <HeaderFooterPreview
+            navigation={draft}
+            info={info}
+            brand={brand}
+            pageIndex={index}
+            device={device}
+            styled={styled}
+            selected={selected}
+            onSelect={select}
+          />
+        )}
       </Section>
 
       <ClaudeDesign designed={designedHeader || designedFooter} dirty={dirty} />

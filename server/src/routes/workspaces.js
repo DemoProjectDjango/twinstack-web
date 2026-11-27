@@ -89,6 +89,7 @@ import { readMissingPages } from "../missing-pages.js";
 import { editPreviewText, stylePreviewText } from "../text-edit.js";
 import { claudeResolver, getUpdateStatus, siteUpdateSteps, undoSiteUpdate } from "../site-update.js";
 import { readTemplateFile, templateToken } from "../sites.js";
+import { copyToolsStep, updateCopyTools } from "../copy-tools.js";
 import { listVersions, restoreVersion } from "../versions.js";
 import {
   WorkspaceError,
@@ -633,6 +634,8 @@ workspacesRouter.post(
   handle(async (req, res) => {
     const key = keyFor(req);
     const result = await importZip(key, req.body ?? {});
+    // The pages are brought in next, with the newest converter.
+    await updateCopyTools(key, templateToken(req.user, await getAccessToken(req, res)));
     await logOwnerEdit(key, { command: "owner:files", file: "static/", instruction: `The owner uploaded a website as a zip: ${result.pages.length} pages and ${result.files} files` });
     res.json({ ...result, status: await getStatus(key) });
   }),
@@ -642,6 +645,7 @@ workspacesRouter.post(
   "/:owner/:repo/original-pages/prepare",
   handle(async (req, res) => {
     const key = keyFor(req);
+    await updateCopyTools(key, templateToken(req.user, await getAccessToken(req, res)));
     const prepared = await prepareOriginalPage(key, req.body?.file);
     res.json({ ...prepared, status: await getStatus(key) });
   }),
@@ -667,6 +671,7 @@ workspacesRouter.post(
     // design belong to someone.
     if (req.body?.permission !== true) throw new WorkspaceError("Confirm that the website is yours or that you have permission to copy it.", 400);
     const maxPages = Math.min(MAX_PAGES, Math.max(1, Number(req.body?.maxPages) || DEFAULT_PAGES));
+    const accessToken = await getAccessToken(req, res);
     const release = acquire(key, "copying a website");
     try {
       const job = startJob({
@@ -674,7 +679,7 @@ workspacesRouter.post(
         userId: req.user.id,
         command: "copy-website",
         label: "Copy a website",
-        steps: [copyWebsiteStep(key, { url, maxPages })],
+        steps: [copyToolsStep(key, templateToken(req.user, accessToken)), copyWebsiteStep(key, { url, maxPages })],
         cwd: workspaceDir(key),
         env: jobEnv(null, null),
         release,
@@ -693,6 +698,7 @@ workspacesRouter.post(
     const key = keyFor(req);
     const id = String(req.body?.id ?? "");
     if (!/^\d{2}$/.test(id)) throw new WorkspaceError("Which copied page?", 400);
+    await updateCopyTools(key, templateToken(req.user, await getAccessToken(req, res)));
     const prepared = await prepareCopiedPage(key, id);
     res.json({ ...prepared, status: await getStatus(key) });
   }),
