@@ -151,7 +151,9 @@ export function useSiteTools({
   // Publishing first: SEO's files include build.js and check.js too, so the newest win.
   if (publishing && !publishing.workflowReady) needed.push({ id: "publishing", what: "publishing on the web" });
   if (overview?.features.seo === false || overview?.features.seoTemplate === false) needed.push({ id: "seo", what: "search settings" });
-  if (appearance === false && !kept) needed.push({ id: "header-footer", what: "header and footer colours" });
+  // Never for a header and footer copied from a website or designed by the AI: the standard ones
+  // would replace them (the server refuses that too).
+  if (appearance === false && !kept && !custom) needed.push({ id: "header-footer", what: "header and footer colours" });
   const ids = needed.map((n) => n.id).join(",");
 
   const update = useCallback(async () => {

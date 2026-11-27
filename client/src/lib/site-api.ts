@@ -160,6 +160,8 @@ export type NavigationInfo = {
    * style settings don't change it until the standard one is put back. Absent from older servers.
    */
   copied?: { header: boolean; footer: boolean; from: string | null };
+  /** Published header/footer files that were copied or AI-designed but were replaced in the working copy. */
+  replacedDesigned?: string[];
   /** The copy's header and footer have the newer styles (header style, footer layout, social icons, the strip). */
   supportsStyles?: boolean;
   version: string;
