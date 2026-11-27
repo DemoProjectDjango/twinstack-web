@@ -191,7 +191,12 @@ function TemplateGallery({
     const el = dialog.current;
     if (el && !el.open) el.showModal();
     const frame = requestAnimationFrame(() => setShown(true));
-    return () => cancelAnimationFrame(frame);
+    // The app's header stays in view above the gallery: no page dimming while it's open (globals.css).
+    document.documentElement.dataset.templateGallery = "open";
+    return () => {
+      cancelAnimationFrame(frame);
+      delete document.documentElement.dataset.templateGallery;
+    };
   }, []);
   const enter = `transition duration-300 ease-out motion-reduce:transition-none ${shown ? "translate-y-0 opacity-100" : "translate-y-3 opacity-0"}`;
 
@@ -235,7 +240,8 @@ function TemplateGallery({
         if (e.target === e.currentTarget) onClose();
       }}
       aria-labelledby="template-gallery-title"
-      className="m-0 h-dvh max-h-none w-screen max-w-none bg-zinc-50 p-0 backdrop:bg-black/50 dark:bg-zinc-900"
+      // Below the app's header (Navbar.tsx: h-14 and a 1px border), which stays in view.
+      className="m-0 mt-[calc(3.5rem+1px)] h-[calc(100dvh-3.5rem-1px)] max-h-none w-screen max-w-none border-t border-zinc-200 bg-zinc-50 p-0 dark:border-zinc-800 dark:bg-zinc-900"
     >
       <div className={`flex h-full flex-col ${enter}`}>
         <div className="border-b border-zinc-200 bg-white px-4 py-4 sm:px-8 dark:border-zinc-800 dark:bg-zinc-950">

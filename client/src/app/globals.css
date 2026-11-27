@@ -152,3 +152,9 @@ body {
     animation: none;
   }
 }
+
+/* While the setup's template gallery is open (KitPicker.tsx), no dialog dims the page, so the app's
+   header stays visible above the gallery, which covers the rest. */
+html[data-template-gallery] dialog::backdrop {
+  background: transparent;
+}
