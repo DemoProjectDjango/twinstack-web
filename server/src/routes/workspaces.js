@@ -25,6 +25,7 @@ import {
   PUBLISHING_FILES,
   checkDomain,
   enablePages,
+  ensurePublished,
   getPublishing,
   normalizeDomain,
   setDomain,
@@ -916,7 +917,9 @@ workspacesRouter.get(
   "/:owner/:repo/publishing",
   handle(async (req, res) => {
     keyFor(req);
-    res.json(await getPublishing(await getAccessToken(req, res), repoName(req)));
+    const accessToken = await getAccessToken(req, res);
+    // A site that was never published (its first deploy never ran) is started here, so it goes live.
+    res.json(await ensurePublished(accessToken, repoName(req), await getPublishing(accessToken, repoName(req))));
   }),
 );
 

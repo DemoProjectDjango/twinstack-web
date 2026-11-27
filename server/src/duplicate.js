@@ -65,8 +65,8 @@ async function git(args, { cwd, env }) {
 }
 
 /**
- * Creates `newName` in the user's account and pushes every branch and tag
- * (full history) of `owner/repo` into it. The source is read with
+ * Creates `newName` in the user's account and pushes the default branch
+ * (full history) and tags of `owner/repo` into it. The source is read with
  * `sourceToken` (the app's template token, see sites.js) when given, so the
  * user needn't have access to it; the new repo is always created and pushed
  * with the user's own `accessToken`.
@@ -125,7 +125,13 @@ export async function duplicateRepo({ accessToken, sourceToken = accessToken, us
 
     // An empty source has no refs; the new empty repo is already a faithful copy.
     if (await hasRefs(repoDir, env)) {
-      await git(["push", "--quiet", target.clone_url, "refs/heads/*:refs/heads/*", "refs/tags/*:refs/tags/*"], {
+      // Only the source's default branch (its whole history) and its tags: a site never needs the
+      // template's work branches, and with one branch GitHub makes it the default by itself. A push
+      // of many branches at once made the alphabetically first one ("chore/…") the default and left
+      // the deploy workflow unregistered, so such sites never published.
+      const main = source.body.default_branch;
+      const branch = main && (await hasRef(repoDir, `refs/heads/${main}`, env)) ? [`refs/heads/${main}:refs/heads/${main}`] : ["refs/heads/*:refs/heads/*"];
+      await git(["push", "--quiet", target.clone_url, ...branch, "refs/tags/*:refs/tags/*"], {
         cwd: repoDir,
         env,
       });
@@ -143,7 +149,13 @@ export async function duplicateRepo({ accessToken, sourceToken = accessToken, us
   if (pushed && source.body.default_branch) settings.default_branch = source.body.default_branch;
   if (reused && target.private !== isPrivate) settings.private = isPrivate;
   if (Object.keys(settings).length) {
-    await githubJson(`/repos/${target.full_name}`, accessToken, { method: "PATCH", body: settings }).catch(() => {});
+    // Checked and tried again: GitHub may not know the pushed branch for a moment.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const patched = await githubJson(`/repos/${target.full_name}`, accessToken, { method: "PATCH", body: settings }).catch(() => null);
+      if (patched?.res.ok && (!settings.default_branch || patched.body?.default_branch === settings.default_branch)) break;
+      if (attempt === 4) console.error(`Couldn't set ${target.full_name}'s default branch to ${settings.default_branch}: ${patched?.res.status ?? "no answer"}`);
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    }
   }
 
   return {
@@ -161,6 +173,11 @@ export async function duplicateRepo({ accessToken, sourceToken = accessToken, us
     updatedAt: new Date().toISOString(),
     permission: "admin",
   };
+}
+
+async function hasRef(repoDir, ref, env) {
+  const { stdout } = await execFileAsync("git", ["for-each-ref", ref], { cwd: repoDir, env });
+  return stdout.trim() !== "";
 }
 
 async function hasRefs(repoDir, env) {

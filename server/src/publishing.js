@@ -104,6 +104,9 @@ export async function getPublishing(accessToken, fullName) {
     url: pages.res.ok ? pages.body.html_url : null,
     // The copy's deploy.yml on the default branch passes BASE_PATH to the build.
     workflowReady: Boolean(workflow?.includes("BASE_PATH")),
+    // No deploy has ever run on the default branch (or GitHub hasn't registered the workflow):
+    // the site was never published, so ensurePublished starts one.
+    neverDeployed: Boolean(workflow?.includes("BASE_PATH")) && !run,
     run: run
       ? {
           status: run.status, // queued | in_progress | completed | …
@@ -195,14 +198,57 @@ export async function checkDomain(accessToken, fullName) {
   return { pending: false, domain: summary(result.body?.domain), altDomain: summary(result.body?.alt_domain) };
 }
 
-/** Runs the deploy workflow on the default branch now. */
+const dispatch = (accessToken, fullName, branch) =>
+  json(`/repos/${fullName}/actions/workflows/${DEPLOY_WORKFLOW}/dispatches`, accessToken, { method: "POST", body: { ref: branch } });
+
+/**
+ * Runs the deploy workflow on the default branch now. When GitHub won't (Actions switched off for
+ * the repository, or the workflow never registered because the repository was made by pushing many
+ * branches at once), it switches Actions on and registers the workflow with an empty commit on the
+ * branch, whose push runs the deploy (on: push).
+ */
 export async function startDeploy(accessToken, fullName, branch) {
-  const result = await json(`/repos/${fullName}/actions/workflows/${DEPLOY_WORKFLOW}/dispatches`, accessToken, {
-    method: "POST",
-    body: { ref: branch },
-  });
-  if (!result.res.ok) {
-    throw new WorkspaceError(githubMessage(result.body, `GitHub refused to start the deploy (${result.res.status}).`), 422);
+  let result = await dispatch(accessToken, fullName, branch);
+  if (result.res.ok) return;
+  await json(`/repos/${fullName}/actions/permissions`, accessToken, { method: "PUT", body: { enabled: true, allowed_actions: "all" } }).catch(() => null);
+  await json(`/repos/${fullName}/actions/workflows/${DEPLOY_WORKFLOW}/enable`, accessToken, { method: "PUT" }).catch(() => null);
+  result = await dispatch(accessToken, fullName, branch);
+  if (result.res.ok) return;
+  const ref = await json(`/repos/${fullName}/git/ref/heads/${encodeURIComponent(branch)}`, accessToken);
+  const head = ref.res.ok ? ref.body?.object?.sha : null;
+  const commit = head ? await json(`/repos/${fullName}/git/commits/${head}`, accessToken) : null;
+  const made = commit?.res.ok
+    ? await json(`/repos/${fullName}/git/commits`, accessToken, { method: "POST", body: { message: "Publish the site", tree: commit.body.tree.sha, parents: [head] } })
+    : null;
+  const moved = made?.res.ok
+    ? await json(`/repos/${fullName}/git/refs/heads/${encodeURIComponent(branch)}`, accessToken, { method: "PATCH", body: { sha: made.body.sha } })
+    : null;
+  if (moved?.res.ok) return;
+  throw new WorkspaceError(
+    "GitHub didn't start publishing. On GitHub, open this site's repository, then Settings → Actions → General, choose \"Allow all actions\" and save; then publish again.",
+    422,
+  );
+}
+
+// Sites checked for a first deploy recently (fullName → time): the status is polled often.
+const firstDeployTried = new Map();
+
+/**
+ * A site that has never been published (neverDeployed) while Pages is on gets its first deploy
+ * started, at most every 10 minutes. Returns the status, with `deployStarted` when it did.
+ */
+export async function ensurePublished(accessToken, fullName, status) {
+  if (!status.neverDeployed || !status.enabled || !status.canConfigure) return status;
+  const last = firstDeployTried.get(fullName) ?? 0;
+  if (Date.now() - last < 10 * 60_000) return status;
+  firstDeployTried.set(fullName, Date.now());
+  try {
+    await startDeploy(accessToken, fullName, status.defaultBranch);
+    console.info(`Started the first deploy of ${fullName}, which had never been published.`);
+    return { ...status, deployStarted: true };
+  } catch (err) {
+    console.warn(`Couldn't start the first deploy of ${fullName}: ${err.message}`);
+    return { ...status, deployProblem: err.message };
   }
 }
 
