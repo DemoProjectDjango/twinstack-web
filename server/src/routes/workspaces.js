@@ -86,7 +86,7 @@ import { APPEARANCE_MARKER, HEADER_FOOTER_FILES, HEADER_FOOTER_MARKERS, getNavig
 import { SEO_FILES, SEO_MARKERS, installSeo, readSeo } from "../seo.js";
 import { readCheckReport } from "../site-check.js";
 import { readMissingPages } from "../missing-pages.js";
-import { editPreviewText, stylePreviewText } from "../text-edit.js";
+import { editPreviewText, replacePreviewImage, stylePreviewText } from "../text-edit.js";
 import { claudeResolver, getUpdateStatus, siteUpdateSteps, undoSiteUpdate } from "../site-update.js";
 import { readTemplateFile, templateToken } from "../sites.js";
 import { copyToolsStep, updateCopyTools } from "../copy-tools.js";
@@ -518,6 +518,19 @@ workspacesRouter.post(
       instruction: "The owner changed text on the site",
       point: `“${logQuote(before, 60)}” → “${logQuote(after, 60)}”`,
     });
+    res.json({ file, status: await getStatus(key), history: await undoState(key) });
+  }),
+);
+
+/* A picture clicked in the preview, swapped for one from the site's files or a new upload (text-edit.js). No AI, no credits. */
+
+workspacesRouter.post(
+  "/:owner/:repo/pages/image",
+  handle(async (req, res) => {
+    const key = keyFor(req);
+    const { address, before, after, index, count } = req.body ?? {};
+    const { file } = await replacePreviewImage(key, { address, before, after, index: Number(index) || 0, count: Number(count) || 1 });
+    if (file) await logOwnerEdit(key, { command: "owner:edit-image", file, instruction: "The owner changed a picture on the site", point: `${logQuote(before, 80)} → ${logQuote(after, 80)}` });
     res.json({ file, status: await getStatus(key), history: await undoState(key) });
   }),
 );

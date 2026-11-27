@@ -25,6 +25,7 @@
   var style = document.createElement("style");
   style.textContent =
     "[data-ts-hover]{outline:2px dashed rgba(37,99,235,.8)!important;outline-offset:3px;cursor:text!important}" +
+    "img[data-ts-hover]{cursor:pointer!important}" +
     "[data-ts-editing]{outline:2px solid rgb(37,99,235)!important;outline-offset:3px;cursor:text!important}" +
     "[data-ts-saving]{outline:2px solid rgba(37,99,235,.35)!important;outline-offset:3px}" +
     "[data-ts-failed]{outline:2px solid rgb(220,38,38)!important;outline-offset:3px}" +
@@ -76,6 +77,25 @@
     var all = document.querySelectorAll("main " + el.tagName);
     for (var i = 0; i < all.length; i++) if (all[i].textContent.trim() === text) same.push(all[i]);
     return { index: same.indexOf(el), count: same.length };
+  }
+
+  // The picture a pointer is on inside <main> (an <img>, or the <picture> around one), or null.
+  // Themes often lay a link box or hover layer over a picture, so the picture under the pointer
+  // (x, y) counts too, unless text sits above it.
+  function pictureAt(node, x, y) {
+    if (!node || !node.closest) return null;
+    var img = node.tagName === "IMG" ? node : node.tagName === "PICTURE" ? node.querySelector("img") : null;
+    if (!img && typeof x === "number" && document.elementsFromPoint) {
+      var stack = document.elementsFromPoint(x, y);
+      for (var i = 0; i < stack.length && i < 8; i++) {
+        if (stack[i].tagName === "IMG") {
+          img = stack[i];
+          break;
+        }
+        if (editableFrom(stack[i])) break;
+      }
+    }
+    return img && img.closest("main") && img.getAttribute("src") ? img : null;
   }
 
   function setHover(el) {
@@ -382,7 +402,7 @@
     "mouseover",
     function (event) {
       if (!editing || active) return;
-      setHover(editableFrom(event.target));
+      setHover(pictureAt(event.target, event.clientX, event.clientY) || editableFrom(event.target));
       // Over the button itself, its section stays.
       if (event.target !== askButton) setSection(sectionOf(event.target));
     },
@@ -400,6 +420,16 @@
       event.stopPropagation();
       if (active && active.el.contains(event.target)) return;
       if (active) active.el.blur();
+      // A picture: the editor offers to swap it (one of the site's images, or an upload).
+      var picture = pictureAt(event.target, event.clientX, event.clientY);
+      if (picture) {
+        var src = picture.getAttribute("src") || "";
+        var same = Array.prototype.filter.call(document.querySelectorAll("main img"), function (img) {
+          return img.getAttribute("src") === src;
+        });
+        send({ type: "image", path: window.location.pathname, src: src, alt: picture.getAttribute("alt") || "", index: same.indexOf(picture), count: same.length });
+        return;
+      }
       var el = editableFrom(event.target);
       if (el) start(el, event.clientX, event.clientY);
       else send({ type: "not-editable" });

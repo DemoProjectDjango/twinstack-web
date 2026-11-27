@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, isHomePage, workspacePath, type WorkspaceStatus } from "@/lib/site-api";
 import { useAssistant } from "./assistant/AssistantProvider";
 import { noteFeature } from "./FeatureGuide";
+import { PictureSwap, type PictureTarget } from "./PictureSwap";
 import { useSite } from "./site-context";
 import { Button, ErrorText, Notice, Segmented, Spinner } from "./ui";
 
@@ -47,6 +48,8 @@ type FrameMessage =
       style: { kind: "bold" | "italic" | "underline" | "align" | "color"; value?: string };
     }
   | { type: "not-editable" }
+  // A picture clicked while editing: the editor offers to swap it (PictureSwap).
+  | { type: "image"; path: string; src: string; alt: string; index: number; count: number }
   | { type: "ask-section"; path: string; heading: string; start: string; position: number; count: number };
 
 type Note = { tone: "info" | "saving" | "saved" | "error"; text?: string; error?: unknown };
@@ -89,6 +92,8 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
   const [editing, setEditing] = useState(true);
   const [typing, setTyping] = useState(false);
   const [note, setNote] = useState<Note | null>(null);
+  // A picture clicked in the preview, waiting to be swapped.
+  const [picture, setPicture] = useState<PictureTarget | null>(null);
   // Undo and redo of the owner's own edits here (server/src/undo-history.js), by button or Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y.
   const [history, setHistory] = useState<{ canUndo: boolean; canRedo: boolean; undoLabel: string | null; redoLabel: string | null } | null>(null);
   const stepping = useRef(false);
@@ -389,8 +394,22 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
       } else if (data.type === "ask-section") {
         askAbout.current(data);
         noteFeature("ask-section");
+      } else if (data.type === "image") {
+        if (!editingRef.current) return;
+        if (data.path !== base && !data.path.startsWith(`${base}/`)) return;
+        // The preview serves the site under its own prefix: the page's file has the site's address.
+        let src = data.src;
+        try {
+          const url = new URL(src, window.location.href);
+          if (url.origin === window.location.origin) src = url.pathname.startsWith(`${base}/`) ? url.pathname.slice(base.length) : url.pathname;
+          else src = url.href;
+        } catch {
+          return;
+        }
+        setPicture({ address: data.path.slice(base.length) || "/", before: src, alt: data.alt, index: data.index, count: data.count });
+        noteFeature("edit-text");
       } else if (data.type === "not-editable") {
-        setNote({ tone: "info", text: "That part can't be typed into. Click a heading, a paragraph or a button's words, or ask the AI below to change it." });
+        setNote({ tone: "info", text: "That part can't be typed into. Click a heading, a paragraph, a button's words or a picture, or ask the AI below to change it." });
       }
     }
     window.addEventListener("message", onMessage);
@@ -398,10 +417,25 @@ export function EditablePreview({ dimmed, phone, onPath }: { dimmed: boolean; ph
   }, [owner, repo, previewUrl, base, setStatus, loadHistory]);
 
   if (!previewUrl) return null;
+  const pictureSwap = picture ? (
+    <PictureSwap
+      target={picture}
+      onClose={() => setPicture(null)}
+      onSaved={(result) => {
+        setPicture(null);
+        if (result.file) {
+          setStatus(result.status);
+          setNote({ tone: "saved", text: "Picture changed. The preview updates by itself, and it goes live when you publish." });
+          loadHistory();
+        }
+      }}
+    />
+  ) : null;
   // Text the server couldn't place (the design's own words, text in two places…): the AI can still change it.
   const refused = note?.tone === "error" && note.error instanceof ApiError && note.error.status < 500;
   return (
     <div className="space-y-2">
+      {pictureSwap}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {pages.length > 0 && (
           <div data-tour="page-picker" className="flex min-w-0 items-center gap-2 text-sm">

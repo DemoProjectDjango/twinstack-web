@@ -530,3 +530,80 @@ export async function stylePreviewText(key, { address, text, index, count, tag, 
     release();
   }
 }
+
+/* ------------------------------------------------------------ pictures */
+
+// A picture the owner clicked in the preview, swapped for another of the site's images (one from
+// its files, or one just uploaded). The clicked <img>'s address is looked for in the page's own
+// file, then in the header and footer and the shared data files; the occurrence the click was on
+// is changed (`index` of `count` images with that address on the page), and on an <img> tag its
+// srcset/sizes go too, or the browser would keep showing the old picture.
+const NEW_IMAGE = /^\/(assets\/img|static)\/[\w./@%+-]+\.(png|jpe?g|gif|webp|avif|svg)$/i;
+const SHARED_FILES = ["templates/partials/header.html", "templates/partials/footer.html"];
+
+/** Where `src` occurs in `text`, written root-relative ("/assets/…") or without the slash. */
+export function occurrences(text, src) {
+  const forms = src.startsWith("/") ? [src, src.slice(1)] : [src];
+  const found = [];
+  for (const form of forms) {
+    const re = new RegExp(`(["'(\\s=,])(${form.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})(?=["')\\s?#,])`, "g");
+    for (const m of text.matchAll(re)) {
+      const at = m.index + m[1].length;
+      if (!found.some((f) => f.at === at)) found.push({ at, length: m[2].length });
+    }
+  }
+  return found.sort((a, b) => a.at - b.at);
+}
+
+/** `text` with the occurrence at `at` replaced by `next`, dropping srcset/sizes from its <img>/<source> tag. */
+export function swapAt(text, { at, length }, next) {
+  const tagStart = text.lastIndexOf("<", at);
+  const tagEnd = text.indexOf(">", at);
+  const inTag = tagStart >= 0 && tagEnd > at && text.indexOf(">", tagStart) >= at && /^<(img|source)\b/i.test(text.slice(tagStart, tagStart + 8));
+  let out = text.slice(0, at) + next + text.slice(at + length);
+  if (inTag) {
+    const end = tagEnd + next.length - length;
+    const tag = out.slice(tagStart, end + 1).replace(/\s(?:srcset|sizes|data-srcset)\s*=\s*("[^"]*"|'[^']*')/gi, "");
+    out = out.slice(0, tagStart) + tag + out.slice(end + 1);
+  }
+  return out;
+}
+
+export async function replacePreviewImage(key, { address, before, after, index = 0, count = 1 } = {}) {
+  if (typeof address !== "string" || !address.startsWith("/") || address.length > 500) fail("Which page was that?", 400);
+  // A picture of the site's own ("/assets/…"), or one loading from a web address (a copied page's).
+  if (typeof before !== "string" || !/^(\/|https?:\/\/)/i.test(before) || before.length > 1000 || /[\s"'<>]/.test(before)) fail("Click a picture to change it.", 400);
+  if (typeof after !== "string" || !NEW_IMAGE.test(after) || after.split("/").includes("..")) fail("Choose a picture from your site's files, or upload one.", 400);
+  const dir = workspaceDir(key);
+  if (!(await fs.stat(inside(dir, after.slice(1))).then((s) => s.isFile(), () => false))) fail("That picture isn't in your site's files any more. Choose it again.", 400);
+  const src = before.split(/[?#]/)[0];
+  if (src === after) return { file: null };
+  let decoded;
+  try {
+    decoded = decodeURIComponent(address);
+  } catch {
+    fail("Which page was that?", 400);
+  }
+  const { page } = await pageAt(dir, decoded);
+  const dataFiles = (await fs.readdir(path.join(dir, "content", "data")).catch(() => [])).filter((f) => f.endsWith(".json")).map((f) => `content/data/${f}`);
+  const candidates = [...(page ? [page.file] : []), ...SHARED_FILES, ...dataFiles, "site.config.json"];
+  for (const file of candidates) {
+    const target = inside(dir, file);
+    const source = await readText(target);
+    if (source === null) continue;
+    const found = occurrences(source, src);
+    if (!found.length) continue;
+    const release = acquire(key, `changing a picture in ${file}`);
+    try {
+      // The clicked one when the page shows the address as often as the file has it; else the first.
+      const pick = found.length === count && index >= 0 && index < found.length ? found[index] : found[0];
+      const next = swapAt(source, pick, after);
+      await fs.writeFile(target, next);
+      await recordEdit(dir, file, source, next, "picture change");
+      return { file, where: file === page?.file ? "page" : file.startsWith("templates/") ? "shared" : "details" };
+    } finally {
+      release();
+    }
+  }
+  fail("This picture is part of the page's design (set in its stylesheet), so it can't be swapped here. Ask the AI to change it.", 409);
+}
