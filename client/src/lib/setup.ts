@@ -93,8 +93,12 @@ export type StarterKit = {
   label: string;
   description: string;
   category: string;
+  /** Words the gallery's search also matches. */
+  tags: string[];
   free: boolean;
   pages: { url: string; title: string }[];
+  /** The picture on its gallery card, or null when none was built. */
+  thumbnail: string | null;
 };
 
 /** The header's button: the booking link, the phone number, the Contact page, the owner's own, or none. */

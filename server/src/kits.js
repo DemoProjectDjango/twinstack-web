@@ -1,4 +1,5 @@
 import express from "express";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,16 +42,21 @@ export async function loadKits() {
   return cache;
 }
 
-/** What the setup shows: no folder paths. */
+/**
+ * What the setup's template gallery shows: no folder paths. `thumbnail` is the picture on its card
+ * (preview/thumbnail.png from kits:build), null until it's been built with Chrome.
+ */
 export async function listKits() {
-  return (await loadKits()).map(({ id, version, label, description, category, free, pages }) => ({
+  return (await loadKits()).map(({ id, version, label, description, category, tags, free, pages, dir }) => ({
     id,
     version,
     label,
     description,
-    category,
+    category: typeof category === "string" ? category : "Other",
+    tags: Array.isArray(tags) ? tags.filter((t) => typeof t === "string") : [],
     free,
     pages: pages.map((p) => ({ url: p.url, title: p.title })),
+    thumbnail: existsSync(path.join(dir, "preview", "thumbnail.png")) ? `/api/kit-preview/${id}/thumbnail.png` : null,
   }));
 }
 

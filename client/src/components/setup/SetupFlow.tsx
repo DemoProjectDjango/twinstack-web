@@ -733,7 +733,7 @@ export function SetupFlow({
             Pick a starting design
           </h2>
           <p className="mt-2 text-sm text-zinc-500">
-            Start from a ready-made design, or let the AI design your homepage. You can change
+            Start from a ready-made template, or let the AI design your homepage. You can change
             everything afterwards.
           </p>
           <div className="mt-5">

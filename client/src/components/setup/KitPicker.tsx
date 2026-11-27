@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { StarterKit } from "@/lib/setup";
 
-/** Where a kit's sample site is served (server/kits/<id>/preview/, built by `npm --prefix server run kits:build`). */
+// The setup's "Pick a starting design" step. Owners call the starter kits (server/kits/) templates:
+// the step offers "Use a template", which opens the gallery (search, category filter, a card with a
+// thumbnail per template, each with a full-screen Preview), or the AI designing the homepage.
+
+/** Where a template's sample site is served (server/kits/<id>/preview/, built by `npm --prefix server run kits:build`). */
 const previewUrl = (kit: StarterKit) => `/api/kit-preview/${kit.id}/`;
 
-/**
- * The setup's "Pick a starting design" step: the starter kits (server/kits/, all free for now),
- * each with a Preview of its sample site, and, last, the AI designing the homepage from the
- * owner's answers. `value` null is the AI.
- */
+const ALL = "All";
+
+/** `value` is the chosen template's id, or null for the AI designing the homepage. */
 export function KitPicker({
   kits,
   value,
@@ -20,7 +22,8 @@ export function KitPicker({
   value: string | null;
   onChange: (kit: string | null) => void;
 }) {
-  const [previewing, setPreviewing] = useState<StarterKit | null>(null);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const chosen = kits.find((k) => k.id === value) ?? null;
   const card = (selected: boolean) =>
     `rounded-xl border transition ${
       selected
@@ -29,40 +32,37 @@ export function KitPicker({
     }`;
   return (
     <div className="space-y-3" role="radiogroup" aria-label="Starting design">
-      {kits.map((kit) => (
-        <div key={kit.id} className={card(value === kit.id)}>
+      {chosen ? (
+        <div role="radio" aria-checked="true" className={`${card(true)} flex items-center gap-4 p-3`}>
+          <Thumbnail kit={chosen} className="w-32 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-zinc-500">Your template</p>
+            <p className="font-semibold">{chosen.label}</p>
+            <p className="truncate text-sm text-zinc-500">{chosen.description}</p>
+          </div>
           <button
             type="button"
-            role="radio"
-            aria-checked={value === kit.id}
-            onClick={() => onChange(kit.id)}
-            className="flex w-full flex-col items-start p-4 pb-2 text-left"
+            onClick={() => setGalleryOpen(true)}
+            className="shrink-0 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 dark:border-zinc-600 dark:hover:bg-zinc-800"
           >
-            <span className="flex w-full items-center justify-between gap-2">
-              <span className="font-semibold">{kit.label}</span>
-              {kit.free && (
-                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-                  Free
-                </span>
-              )}
-            </span>
-            <span className="mt-1 text-sm text-zinc-500">{kit.description}</span>
-            <span className="mt-2 text-xs text-zinc-500">
-              {kit.pages.length} pages: {kit.pages.map((p) => p.title).join(", ")}. Ready in
-              seconds, no AI needed.
-            </span>
+            Change
           </button>
-          <div className="px-4 pb-4">
-            <button
-              type="button"
-              onClick={() => setPreviewing(kit)}
-              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 dark:border-zinc-600 dark:hover:bg-zinc-800"
-            >
-              Preview
-            </button>
-          </div>
         </div>
-      ))}
+      ) : (
+        <button
+          type="button"
+          role="radio"
+          aria-checked="false"
+          onClick={() => setGalleryOpen(true)}
+          className={`${card(false)} flex w-full flex-col items-start p-4 text-left`}
+        >
+          <span className="font-semibold">Use a template</span>
+          <span className="mt-1 text-sm text-zinc-500">
+            Browse {kits.length} ready-made design{kits.length === 1 ? "" : "s"}, preview them, and
+            pick one. Ready in seconds, no AI needed.
+          </span>
+        </button>
+      )}
       <button
         type="button"
         role="radio"
@@ -76,13 +76,14 @@ export function KitPicker({
           minutes.
         </span>
       </button>
-      {previewing && (
-        <KitPreview
-          kit={previewing}
-          onClose={() => setPreviewing(null)}
-          onUse={() => {
-            onChange(previewing.id);
-            setPreviewing(null);
+      {galleryOpen && (
+        <TemplateGallery
+          kits={kits}
+          value={value}
+          onClose={() => setGalleryOpen(false)}
+          onUse={(id) => {
+            onChange(id);
+            setGalleryOpen(false);
           }}
         />
       )}
@@ -90,9 +91,189 @@ export function KitPicker({
   );
 }
 
+/** A template's card picture: its homepage's top, or a plain panel when none was built. */
+function Thumbnail({ kit, className = "" }: { kit: StarterKit; className?: string }) {
+  return (
+    <div className={`aspect-[8/5] overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 ${className}`}>
+      {kit.thumbnail ? (
+        // eslint-disable-next-line @next/next/no-img-element -- a small static picture from the API, no optimisation needed
+        <img src={kit.thumbnail} alt="" loading="lazy" className="h-full w-full object-cover object-top" />
+      ) : (
+        <div className="flex h-full items-center justify-center text-sm text-zinc-400">{kit.label}</div>
+      )}
+    </div>
+  );
+}
+
+/** Lower case, accents dropped, for matching what's typed against names, descriptions and tags. */
+const fold = (text: string) => text.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+/** The template gallery, full screen: search, category chips and a card per template. */
+function TemplateGallery({
+  kits,
+  value,
+  onClose,
+  onUse,
+}: {
+  kits: StarterKit[];
+  value: string | null;
+  onClose: () => void;
+  onUse: (id: string) => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState(ALL);
+  const [previewing, setPreviewing] = useState<StarterKit | null>(null);
+  useEffect(() => {
+    const el = dialog.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+
+  const categories = useMemo(
+    () => [ALL, ...[...new Set(kits.map((k) => k.category))].sort((a, b) => a.localeCompare(b))],
+    [kits],
+  );
+  const shown = useMemo(() => {
+    const words = fold(query).split(/\s+/).filter(Boolean);
+    return kits.filter((k) => {
+      if (category !== ALL && k.category !== category) return false;
+      const text = fold([k.label, k.description, k.category, ...k.tags, ...k.pages.map((p) => p.title)].join(" "));
+      return words.every((w) => text.includes(w));
+    });
+  }, [kits, query, category]);
+  const chip = (on: boolean) =>
+    `rounded-full border px-3 py-1 text-sm font-medium transition ${
+      on
+        ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
+        : "border-zinc-300 text-zinc-600 hover:border-zinc-500 dark:border-zinc-600 dark:text-zinc-300"
+    }`;
+
+  return (
+    <dialog
+      ref={dialog}
+      onCancel={(e) => {
+        // Escape closes the gallery only when it's the dialog's own (the preview handles its own).
+        if (e.target === e.currentTarget) onClose();
+      }}
+      aria-labelledby="template-gallery-title"
+      className="m-0 h-dvh max-h-none w-screen max-w-none bg-zinc-50 p-0 backdrop:bg-black/50 dark:bg-zinc-900"
+    >
+      <div className="flex h-full flex-col">
+        <div className="border-b border-zinc-200 bg-white px-4 py-4 sm:px-8 dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3">
+            <h2 id="template-gallery-title" className="text-xl font-semibold tracking-tight">
+              Templates
+            </h2>
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search templates"
+              aria-label="Search templates"
+              className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-900 sm:max-w-sm dark:border-zinc-600 dark:bg-zinc-900 dark:focus:border-white"
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={onClose}
+              className="ml-auto rounded-lg px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              Close
+            </button>
+          </div>
+          <div className="mx-auto mt-3 flex max-w-6xl flex-wrap gap-2" role="group" aria-label="Category">
+            {categories.map((c) => (
+              <button key={c} type="button" onClick={() => setCategory(c)} className={chip(category === c)} aria-pressed={category === c}>
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8">
+          <div className="mx-auto max-w-6xl">
+            <p className="text-sm text-zinc-500" aria-live="polite">
+              {shown.length} template{shown.length === 1 ? "" : "s"}
+            </p>
+            {shown.length ? (
+              <ul className="mt-3 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                {shown.map((kit) => (
+                  <li
+                    key={kit.id}
+                    className={`overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-zinc-950 ${
+                      value === kit.id ? "border-zinc-900 ring-2 ring-zinc-900 dark:border-white dark:ring-white" : "border-zinc-200 dark:border-zinc-700"
+                    }`}
+                  >
+                    <button type="button" onClick={() => setPreviewing(kit)} className="block w-full p-3 pb-0" aria-label={`Preview ${kit.label}`}>
+                      <Thumbnail kit={kit} />
+                    </button>
+                    <div className="p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-semibold">{kit.label}</p>
+                        {kit.free && (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">Free</span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-xs font-medium text-zinc-500">
+                        {kit.category} · {kit.pages.length} page{kit.pages.length === 1 ? "" : "s"}
+                      </p>
+                      <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{kit.description}</p>
+                      <div className="mt-4 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewing(kit)}
+                          className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 dark:border-zinc-600 dark:hover:bg-zinc-800"
+                        >
+                          Preview
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onUse(kit.id)}
+                          className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-900"
+                        >
+                          {value === kit.id ? "Selected" : "Use this template"}
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="mt-10 text-center text-sm text-zinc-500">
+                <p>No templates match.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery("");
+                    setCategory(ALL);
+                  }}
+                  className="mt-2 font-medium text-zinc-900 underline dark:text-white"
+                >
+                  Show all templates
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      {previewing && (
+        <KitPreview
+          kit={previewing}
+          onClose={() => setPreviewing(null)}
+          onUse={() => {
+            const id = previewing.id;
+            setPreviewing(null);
+            onUse(id);
+          }}
+        />
+      )}
+    </dialog>
+  );
+}
+
 /**
- * A kit's sample site, full screen, at computer or phone width, with "Use this design". Its other
- * pages are reached through the sample site's own menu.
+ * A template's sample site, full screen, at computer or phone width, with "Use this template". Its
+ * other pages are reached through the sample site's own menu.
  * The frame is sandboxed without allow-same-origin, like the editor's site preview.
  */
 function KitPreview({ kit, onClose, onUse }: { kit: StarterKit; onClose: () => void; onUse: () => void }) {
@@ -108,10 +289,10 @@ function KitPreview({ kit, onClose, onUse }: { kit: StarterKit; onClose: () => v
     <dialog
       ref={dialog}
       onCancel={(e) => {
-        // A file picker's cancel bubbles here too: only the dialog's own (Escape) closes it.
+        e.stopPropagation();
         if (e.target === e.currentTarget) onClose();
       }}
-      aria-label={`Preview of the ${kit.label} design`}
+      aria-label={`Preview of the ${kit.label} template`}
       className="m-0 h-dvh max-h-none w-screen max-w-none bg-zinc-100 p-0 backdrop:bg-black/50 dark:bg-zinc-900"
     >
       <div className="flex h-full flex-col">
@@ -130,7 +311,7 @@ function KitPreview({ kit, onClose, onUse }: { kit: StarterKit; onClose: () => v
               Close
             </button>
             <button type="button" onClick={onUse} className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-900">
-              Use this design
+              Use this template
             </button>
           </div>
         </div>
@@ -139,7 +320,7 @@ function KitPreview({ kit, onClose, onUse }: { kit: StarterKit; onClose: () => v
         </p>
         <div className="flex min-h-0 flex-1 justify-center overflow-auto p-4">
           <iframe
-            title={`Preview of the ${kit.label} design`}
+            title={`Preview of the ${kit.label} template`}
             src={previewUrl(kit)}
             sandbox="allow-scripts allow-popups"
             className={`h-full rounded-lg border border-zinc-200 bg-white shadow-sm dark:border-zinc-700 ${width === "phone" ? "w-[390px] shrink-0" : "w-full"}`}

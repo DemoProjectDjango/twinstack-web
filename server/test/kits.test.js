@@ -51,6 +51,9 @@ describe("starter kits", () => {
       assert.equal(kit.free, true);
       assert.equal(kit.dir, undefined);
       assert.ok(kit.pages.some((p) => p.url === "/"), `${kit.id} has a homepage`);
+      assert.equal(typeof kit.category, "string");
+      assert.ok(Array.isArray(kit.tags));
+      assert.equal(kit.thumbnail, `/api/kit-preview/${kit.id}/thumbnail.png`);
     }
   });
 
@@ -138,6 +141,7 @@ describe("starter kit previews", () => {
     const { KITS_DIR } = await import("../src/kits.js");
     for (const kit of await loadKits()) {
       assert.ok(existsSync(path.join(KITS_DIR, kit.id, "preview/index.html")), `${kit.id} has preview/index.html`);
+      assert.ok(existsSync(path.join(KITS_DIR, kit.id, "preview/thumbnail.png")), `${kit.id} has its gallery thumbnail`);
       for (const page of kit.pages.filter((p) => p.url !== "/")) {
         assert.ok(existsSync(path.join(KITS_DIR, kit.id, "preview", page.url)), `${kit.id} preview has ${page.url}`);
       }
@@ -152,7 +156,7 @@ describe("starter kit previews", () => {
     const server = app.listen(0);
     const base = `http://127.0.0.1:${server.address().port}/api/kit-preview`;
     try {
-      for (const url of ["/simple", "/simple/", "/simple/contact.html", "/simple/assets/css/main.css"]) {
+      for (const url of ["/simple", "/simple/", "/simple/contact.html", "/simple/assets/css/main.css", "/simple/thumbnail.png"]) {
         const res = await fetch(base + url);
         assert.equal(res.status, 200, url);
         assert.match(res.headers.get("content-security-policy"), /^sandbox /, url);
