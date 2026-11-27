@@ -28,11 +28,14 @@ type StartStats = {
   id: string;
   label: string;
   sites: number;
+  /** All-time uses (templates only). */
+  uses?: number;
   published: number;
   medianHoursToPublish: number | null;
   firstWeek: { sites: number; messages: number | null; commands: number | null; discards: number | null; publishedInWeek: number };
 };
-type Stats = { days: number; total: number; types: TypeStats[]; starts?: StartStats[] };
+type KitUse = { siteId: number; kitId: string; kit: string; site: string | null; owner: string | null; usedAt: string };
+type Stats = { days: number; total: number; types: TypeStats[]; starts?: StartStats[]; recentUses?: KitUse[] };
 
 type State = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; stats: Stats };
 
@@ -87,6 +90,7 @@ export function AdminSetupStats() {
         <>
           {state.stats.total === 0 && <Notice>No site has answered the setup questions in the last {state.stats.days} days.</Notice>}
           {state.stats.starts && state.stats.starts.length > 0 && <StartsCard starts={state.stats.starts} />}
+          {state.stats.recentUses && <KitUsesCard uses={state.stats.recentUses} />}
           {state.stats.types.map((type) => (
             <TypeCard key={type.id} type={type} />
           ))}
@@ -108,6 +112,7 @@ function StartsCard({ starts }: { starts: StartStats[] }) {
             <tr>
               <th className="py-1 pr-3 font-medium">Started from</th>
               <th className="py-1 pr-3 text-right font-medium">Sites</th>
+              <th className="py-1 pr-3 text-right font-medium">Uses, all time</th>
               <th className="py-1 pr-3 text-right font-medium">Published</th>
               <th className="py-1 pr-3 text-right font-medium">Time to publish</th>
               <th className="py-1 pr-3 text-right font-medium">Published in week 1</th>
@@ -121,6 +126,7 @@ function StartsCard({ starts }: { starts: StartStats[] }) {
               <tr key={s.id} className="border-t border-zinc-100 dark:border-zinc-800">
                 <td className="py-1.5 pr-3">{s.label}</td>
                 <td className="py-1.5 pr-3 text-right">{s.sites}</td>
+                <td className="py-1.5 pr-3 text-right">{s.uses ?? "–"}</td>
                 <td className="py-1.5 pr-3 text-right">{percent(s.published, s.sites)}</td>
                 <td className="py-1.5 pr-3 text-right">{duration(s.medianHoursToPublish)}</td>
                 <td className="py-1.5 pr-3 text-right">{percent(s.firstWeek.publishedInWeek, s.firstWeek.sites)}</td>
@@ -132,6 +138,42 @@ function StartsCard({ starts }: { starts: StartStats[] }) {
           </tbody>
         </table>
       </div>
+    </section>
+  );
+}
+
+/** Every site that started from a template, newest first (kitUses, kept when a site is deleted). */
+function KitUsesCard({ uses }: { uses: KitUse[] }) {
+  return (
+    <section className="rounded-xl border border-zinc-200 p-5 dark:border-zinc-800">
+      <h2 className="text-lg font-semibold">Template uses</h2>
+      <p className="mt-1 text-sm text-zinc-500">The latest {uses.length === 50 ? "50 " : ""}sites started from a template, all time.</p>
+      {uses.length === 0 ? (
+        <p className="mt-3 text-sm text-zinc-500">No site has started from a template yet.</p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-xl text-left text-sm">
+            <thead className="text-xs text-zinc-500">
+              <tr>
+                <th className="py-1 pr-3 font-medium">Template</th>
+                <th className="py-1 pr-3 font-medium">Site</th>
+                <th className="py-1 pr-3 font-medium">Owner</th>
+                <th className="py-1 text-right font-medium">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {uses.map((u) => (
+                <tr key={u.siteId} className="border-t border-zinc-100 dark:border-zinc-800">
+                  <td className="py-1.5 pr-3">{u.kit}</td>
+                  <td className="py-1.5 pr-3">{u.site ?? "Deleted site"}</td>
+                  <td className="py-1.5 pr-3">{u.owner ?? "–"}</td>
+                  <td className="py-1.5 text-right tabular-nums">{new Date(u.usedAt).toLocaleDateString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }

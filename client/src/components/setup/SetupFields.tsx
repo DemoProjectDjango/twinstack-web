@@ -335,7 +335,7 @@ function ItemsField({ field, value, onAnswer, label, hint }: { field: SetupField
   );
 }
 
-function PhotosField({ label, hint, photos, onPhotos, onError }: { label: React.ReactNode; hint?: string; photos: File[]; onPhotos: (f: File[]) => void; onError: (e: Error | null) => void }) {
+export function PhotosField({ label, hint, photos, onPhotos, onError }: { label: React.ReactNode; hint?: string; photos: File[]; onPhotos: (f: File[]) => void; onError: (e: Error | null) => void }) {
   // Thumbnails of the chosen photos, freed when they change.
   const previews = useMemo(() => photos.map((photo) => ({ name: photo.name, url: URL.createObjectURL(photo) })), [photos]);
   useEffect(() => () => previews.forEach((p) => URL.revokeObjectURL(p.url)), [previews]);

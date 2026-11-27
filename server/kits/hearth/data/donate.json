@@ -1,0 +1,11 @@
+{
+  "_comment": "url: your donation page (a Stripe Payment Link, PayPal, GoFundMe or JustGiving). Until it's set, Donate buttons go to the Contact page.",
+  "url": "",
+  "label": "Donate now",
+  "items": [
+    { "amount": "$10", "provides": "a food parcel for one person for a week", "sample": true },
+    { "amount": "$25", "provides": "a family's weekly shop of fresh fruit and vegetables", "sample": true },
+    { "amount": "$50", "provides": "ten hot meals on a winter evening", "sample": true },
+    { "amount": "$100", "provides": "a child's lunches for the whole summer holiday", "sample": true }
+  ]
+}

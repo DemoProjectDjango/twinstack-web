@@ -1,0 +1,140 @@
+{
+  "id": "hearth",
+  "version": 1,
+  "label": "Hearth",
+  "description": "A warm site for a community charity or food bank: causes with progress bars, donations, volunteering and events.",
+  "category": "Nonprofit",
+  "tags": [
+    "charity",
+    "community",
+    "food bank",
+    "nonprofit",
+    "volunteer",
+    "donate",
+    "fundraising",
+    "ngo"
+  ],
+  "free": true,
+  "sample": {
+    "name": "Your Charity",
+    "description": "We bring neighbours together to make sure nobody in our town goes without."
+  },
+  "pages": [
+    {
+      "file": "home.md",
+      "url": "/",
+      "title": "Home"
+    },
+    {
+      "file": "causes.md",
+      "url": "/causes.html",
+      "title": "Our work",
+      "menu": true
+    },
+    {
+      "file": "events.md",
+      "url": "/events.html",
+      "title": "Events",
+      "menu": true
+    },
+    {
+      "file": "volunteer.md",
+      "url": "/volunteer.html",
+      "title": "Volunteer",
+      "menu": true
+    },
+    {
+      "file": "about.md",
+      "url": "/about.html",
+      "title": "About",
+      "menu": true
+    },
+    {
+      "file": "contact.md",
+      "url": "/contact.html",
+      "title": "Contact",
+      "menu": true
+    },
+    {
+      "file": "donate.md",
+      "url": "/donate.html",
+      "title": "Donate",
+      "menu": true
+    }
+  ],
+  "data": [
+    "causes.json",
+    "copy.json",
+    "donate.json",
+    "events.json",
+    "impact.json",
+    "team.json",
+    "volunteer.json"
+  ],
+  "fill": {
+    "copy.json": [
+      "badge",
+      "heroNote",
+      "heroNoteText",
+      "workTitle",
+      "ctaTitle",
+      "ctaText",
+      "aboutTitle",
+      "story1",
+      "story2",
+      "volunteerTitle",
+      "volunteerText",
+      "donateTitle",
+      "donateText"
+    ],
+    "causes.json": [
+      "title",
+      "summary"
+    ],
+    "impact.json": [
+      "label"
+    ],
+    "events.json": [
+      "title",
+      "place",
+      "summary"
+    ],
+    "volunteer.json": [
+      "title",
+      "time",
+      "summary"
+    ],
+    "donate.json": [
+      "provides"
+    ],
+    "team.json": [
+      "role"
+    ]
+  },
+  "photos": [
+    {
+      "file": "hero.webp",
+      "label": "The big photo at the top of your homepage"
+    },
+    {
+      "file": "about.webp",
+      "label": "Your team or your place, on the About page"
+    },
+    {
+      "file": "volunteer.webp",
+      "label": "People helping, on the Volunteer page"
+    },
+    {
+      "file": "parcels.webp",
+      "label": "Your first project, on Our work and Donate"
+    },
+    {
+      "file": "meals.webp",
+      "label": "Your second project, on Our work"
+    },
+    {
+      "file": "lunches.webp",
+      "label": "Your third project, on Our work"
+    }
+  ]
+}

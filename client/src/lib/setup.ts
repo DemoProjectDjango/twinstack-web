@@ -97,6 +97,10 @@ export type StarterKit = {
   tags: string[];
   free: boolean;
   pages: { url: string; title: string }[];
+  /** How many sites have started from it, all time. */
+  uses: number;
+  /** Where the owner's own photos can go, in the order they're added (empty: the template has no photo slots). */
+  photoSlots: { file: string; label: string }[];
   /** The picture on its gallery card, or null when none was built. */
   thumbnail: string | null;
 };
@@ -315,6 +319,8 @@ export function setupBody(setup: Omit<SetupAnswers, "logo" | "favicon" | "photos
     known,
     findings,
     ...(kit && { kit }),
+    // The owner's own photos for a template's picture slots (the server puts them in order).
+    ...(kit && files.photos?.length && { photos: files.photos }),
     // A logo given on the header and footer step, when no question asked for one.
     ...(!logoField && files.logo && { logo: files.logo }),
     ...(files.favicon && { favicon: files.favicon }),

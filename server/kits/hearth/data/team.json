@@ -1,0 +1,8 @@
+{
+  "items": [
+    { "name": "Sam Taylor", "role": "Founder and chair", "initials": "ST", "sample": true },
+    { "name": "Priya Shah", "role": "Volunteer coordinator", "initials": "PS", "sample": true },
+    { "name": "Daniel Okafor", "role": "Warehouse lead", "initials": "DO", "sample": true },
+    { "name": "Maria Lopez", "role": "Treasurer", "initials": "ML", "sample": true }
+  ]
+}

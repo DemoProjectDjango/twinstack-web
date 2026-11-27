@@ -110,6 +110,7 @@ export async function connectDb() {
     users().createIndex({ "github.id": 1 }, { unique: true, partialFilterExpression: { "github.id": { $type: "number" } } }),
     siteCopies().createIndex({ userId: 1 }),
     siteSetups().createIndex({ savedAt: -1 }),
+    kitUses().createIndex({ kitId: 1, usedAt: -1 }),
     workLog().createIndex({ siteId: 1, createdAt: -1 }),
     workLogForgotten().createIndex({ siteId: 1, line: 1 }, { unique: true }),
     conversations().createIndex({ userId: 1, siteId: 1, archived: 1, updatedAt: -1 }),
@@ -177,6 +178,7 @@ export async function closeDb() {
 const users = () => db.collection("users");
 const siteCopies = () => db.collection("siteCopies");
 const siteSetups = () => db.collection("siteSetups");
+const kitUses = () => db.collection("kitUses");
 const workLog = () => db.collection("workLog");
 const workLogForgotten = () => db.collection("workLogForgotten");
 const conversations = () => db.collection("assistantConversations");
@@ -565,6 +567,48 @@ export async function saveSiteSetup(siteId, setup) {
     { ...setup, savedAt: new Date(), signals: Object.fromEntries(SETUP_SIGNALS.map((s) => [s, 0])) },
     { upsert: true },
   );
+}
+
+// Template uses (kits.js): one record per site that started from a template, `{ _id: siteId, kitId,
+// userId, usedAt }`, kept when the site is deleted so the counts never go down. Running the setup
+// again with another template moves the site to that one.
+
+/** Records that the site started from the template `kitId`. Never throws. */
+export async function recordKitUse(siteId, kitId) {
+  if (typeof siteId !== "number" || typeof kitId !== "string") return;
+  try {
+    const copy = await siteCopies().findOne({ _id: siteId }, { projection: { userId: 1 } });
+    await kitUses().updateOne(
+      { _id: siteId },
+      { $set: { kitId, userId: copy?.userId ?? null, usedAt: new Date() } },
+      { upsert: true },
+    );
+  } catch (err) {
+    console.error(`Couldn't record site ${siteId} starting from the ${kitId} template:`, err.message);
+  }
+}
+
+/** How many sites started from each template, all time: `{ [kitId]: count }`. */
+export async function countKitUses() {
+  const rows = await kitUses().aggregate([{ $group: { _id: "$kitId", count: { $sum: 1 } } }]).toArray();
+  return Object.fromEntries(rows.map((r) => [r._id, r.count]));
+}
+
+/** The latest template uses, newest first, with the site's repo and the owner's email for the admin. */
+export async function listKitUses(limit = 50) {
+  const docs = await kitUses().find().sort({ usedAt: -1 }).limit(limit).toArray();
+  const copies = await siteCopies().find({ _id: { $in: docs.map((d) => d._id) } }, { projection: { fullName: 1, displayName: 1 } }).toArray();
+  const owners = await users().find({ _id: { $in: docs.map((d) => objectId(d.userId)).filter(Boolean) } }, { projection: { email: 1 } }).toArray();
+  return docs.map((d) => {
+    const copy = copies.find((c) => c._id === d._id);
+    return {
+      siteId: d._id,
+      kitId: d.kitId,
+      site: copy?.displayName ?? copy?.fullName ?? null,
+      owner: owners.find((u) => String(u._id) === String(d.userId))?.email ?? null,
+      usedAt: d.usedAt,
+    };
+  });
 }
 
 /** Counts one `signal` for the site, only during its first week after setup. Never throws. */

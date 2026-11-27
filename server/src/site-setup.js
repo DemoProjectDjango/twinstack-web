@@ -9,10 +9,12 @@ import { saveBrand } from "./brand.js";
 import { normalizeLink } from "./links.js";
 import { kitById, loadKits, sameAddress } from "./kits.js";
 import { prepareBuild } from "./setup-build.js";
-import { SETUP_FIRST_WEEK_MS, listSiteSetups, saveSiteSetup } from "./db.js";
+import { fillKit } from "./kit-fill.js";
+import { swapKitPhotos } from "./kit-files.js";
+import { SETUP_FIRST_WEEK_MS, countKitUses, listKitUses, listSiteSetups, recordKitUse, saveSiteSetup } from "./db.js";
 import { readDataFile, writeDataFile } from "./site-files.js";
 import { getStaticInfo, saveStaticInfo } from "./static-info.js";
-import { WorkspaceError } from "./workspace.js";
+import { WorkspaceError, acquire, workspaceDir } from "./workspace.js";
 
 // A new site's setup, asked in Create a new site before the site exists (the client's SetupFlow):
 // - The site types (site-types/*.json) are our skills: guidance for a kind of business (the pages a
@@ -523,6 +525,8 @@ function readBody(body) {
     findings: checkFindings(body?.findings),
     // A starter kit (kits.js) to start from instead of the AI designing the homepage; checked in saveSetup.
     kit: typeof body?.kit === "string" && /^[a-z0-9-]{1,40}$/.test(body.kit) ? body.kit : null,
+    // The owner's own photos for a template's picture slots (kit.json → photos), uploaded beforehand.
+    kitPhotos: Array.isArray(body?.photos) ? body.photos.filter((p) => typeof p === "string" && /^\/assets\/img\/[\w./-]+$/.test(p) && !p.split("/").includes("..")).slice(0, 6) : [],
   };
 }
 
@@ -826,7 +830,7 @@ function withProfile(notes, profile) {
  * `build`: whether there's anything for the site-build command to do. `options.chrome` says
  * whether the site can have its header and footer designed.
  */
-export async function saveSetup({ key, siteId, body, options = {} }) {
+export async function saveSetup({ key, siteId, userId = null, body, options = {} }) {
   const setup = readBody(body);
   const { contact, social } = configChanges(setup);
 
@@ -886,6 +890,7 @@ export async function saveSetup({ key, siteId, body, options = {} }) {
   let plan = buildPlan(setup, { chrome: options.chrome !== false, photos: (photosField && setup.answers[photosField.id]) || [] });
   const kit = await kitById(setup.kit);
   if (kit) {
+    await recordKitUse(siteId, kit.id);
     // The kit's pages are designed already: no AI homepage, picture or header and footer design, and
     // the chosen pages the kit has aren't written again (the standard header and footer keep the
     // owner's settings in `navigation`).
@@ -899,6 +904,23 @@ export async function saveSetup({ key, siteId, body, options = {} }) {
     };
   }
   const prepared = await prepareBuild(key, plan);
+  // The template's sample wording, rewritten for what this owner does (kit-fill.js; never fails the save).
+  if (kit) {
+    // The owner's own photos in place of the template's (optional: none keeps the template's).
+    if (setup.kitPhotos.length) {
+      const release = acquire(key, "putting your photos in the template");
+      try {
+        const swapped = await swapKitPhotos(kit, workspaceDir(key), setup.kitPhotos);
+        console.log(`Template ${kit.id} for site ${siteId}: ${swapped} of its pictures replaced with the owner's photos.`);
+      } catch (err) {
+        console.error(`Couldn't put the owner's photos in the ${kit.id} template:`, err.message);
+      } finally {
+        release();
+      }
+    }
+    const result = await fillKit({ key, userId, siteId, kit, owner: { name: setup.name, what: setup.what, brief: setup.brief } });
+    console.log(`Template ${kit.id} for site ${siteId}: ${result.filled ? `${result.filled} texts made the owner's own` : `wording kept (${result.reason})`}.`);
+  }
   return { request: planText(plan), build: Boolean(prepared.home || prepared.chrome || prepared.pages.length) };
 }
 
@@ -1003,5 +1025,9 @@ export async function setupStats({ days = 90 } = {}) {
       };
     })
     .filter((row) => row.id === "ai" || row.sites > 0 || kits.some((k) => k.id === row.id));
-  return { days, total: docs.length, types, starts };
+  // All-time uses per template (kitUses), beside the period's numbers above.
+  const uses = await countKitUses();
+  for (const row of starts) if (row.id !== "ai") row.uses = uses[row.id] ?? 0;
+  const recentUses = (await listKitUses()).map((u) => ({ ...u, kit: kits.find((k) => k.id === u.kitId)?.label ?? u.kitId }));
+  return { days, total: docs.length, types, starts, recentUses };
 }

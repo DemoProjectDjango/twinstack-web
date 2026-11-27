@@ -1,0 +1,8 @@
+{
+  "_comment": "The numbers on the homepage. Replace them with your own.",
+  "items": [
+    { "value": "12,400", "label": "meals shared last year", "sample": true },
+    { "value": "340", "label": "families supported every week", "sample": true },
+    { "value": "85", "label": "volunteers giving their time", "sample": true }
+  ]
+}

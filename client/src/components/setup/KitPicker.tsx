@@ -318,6 +318,7 @@ function TemplateGallery({
                       <p className="mt-0.5 text-xs font-medium text-zinc-500">
                         {kit.category} · {kit.pages.length} page
                         {kit.pages.length === 1 ? "" : "s"}
+                        {kit.uses > 0 && ` · Used ${kit.uses.toLocaleString()} time${kit.uses === 1 ? "" : "s"}`}
                       </p>
                       <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
                         {kit.description}

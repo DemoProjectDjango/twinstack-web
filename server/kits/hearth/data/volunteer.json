@@ -1,0 +1,10 @@
+{
+  "_comment": "formUrl: your sign-up form (a Google Form, for example). Until it's set, Sign up emails you.",
+  "formUrl": "",
+  "items": [
+    { "title": "Packing and sorting", "time": "Saturday mornings", "summary": "Sort donations and pack food parcels with a friendly team.", "sample": true },
+    { "title": "Delivery driver", "time": "2 hours a week", "summary": "Take parcels to people who can't get to us. You'll need a car.", "sample": true },
+    { "title": "Kitchen helper", "time": "Winter evenings", "summary": "Cook and serve hot meals at our warm room.", "sample": true },
+    { "title": "Fundraising", "time": "Whenever suits you", "summary": "Help run events, collections and online appeals.", "sample": true }
+  ]
+}

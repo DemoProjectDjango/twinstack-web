@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { countKitUses } from "./db.js";
+import { copyKitFiles } from "./kit-files.js";
 import { withDescription } from "./kit-text.js";
 import { readSiteConfig } from "./site-files.js";
 import { updateSiteTree } from "./site-tree-sync.js";
@@ -48,7 +50,8 @@ export async function loadKits() {
  * (preview/thumbnail.png from kits:build), null until it's been built with Chrome.
  */
 export async function listKits() {
-  return (await loadKits()).map(({ id, version, label, description, category, tags, free, pages, dir }) => ({
+  const uses = await countKitUses().catch(() => ({}));
+  return (await loadKits()).map(({ id, version, label, description, category, tags, free, pages, photos, dir }) => ({
     id,
     version,
     label,
@@ -57,6 +60,9 @@ export async function listKits() {
     tags: Array.isArray(tags) ? tags.filter((t) => typeof t === "string") : [],
     free,
     pages: pages.map((p) => ({ url: p.url, title: p.title })),
+    // Where the owner's own photos can go, in order (kit.json → photos): the setup offers them as an optional step.
+    photoSlots: (Array.isArray(photos) ? photos : []).filter((p) => typeof p?.file === "string" && typeof p?.label === "string").map((p) => ({ file: p.file, label: p.label })),
+    uses: uses[id] ?? 0,
     thumbnail: existsSync(path.join(dir, "preview", "thumbnail.png")) ? `/api/kit-preview/${id}/thumbnail.png` : null,
   }));
 }
@@ -106,6 +112,7 @@ export async function applyKit(key, kitId) {
       await fs.writeFile(path.join(dir, pagesDir, name), page.url === "/" ? withDescription(source, site.description) : source);
       written.push({ file: `${pagesDir}/${name}`, url: page.url, title: page.title, menu: page.menu === true });
     }
+    await copyKitFiles(kit, dir);
     await updateSiteTree(dir, { add: written.map((p) => p.url) }).catch((err) => console.error(`Couldn't add the ${kit.id} kit's pages to the site plan:`, err.message));
   } finally {
     release();

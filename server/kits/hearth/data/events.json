@@ -1,0 +1,8 @@
+{
+  "_comment": "Events, soonest first. Remove events once they've happened.",
+  "items": [
+    { "day": "14", "month": "Dec", "title": "Winter food drive", "place": "Town square", "time": "10am – 3pm", "summary": "Drop off tins, dry food and toiletries, or help us sort donations.", "sample": true },
+    { "day": "21", "month": "Dec", "title": "Community carol evening", "place": "St Mary's Hall", "time": "6pm", "summary": "Mince pies, music and a collection for the winter meals.", "sample": true },
+    { "day": "18", "month": "Jan", "title": "New volunteer welcome", "place": "Our warehouse", "time": "7pm", "summary": "Meet the team, see how we work and pick a role that suits you.", "sample": true }
+  ]
+}

@@ -37,7 +37,7 @@ import {
   type PreviewPick,
 } from "./ChromePreview";
 import { KitPicker } from "./KitPicker";
-import { LogoAndIcon, SetupFields } from "./SetupFields";
+import { LogoAndIcon, PhotosField, SetupFields } from "./SetupFields";
 import { Button, ErrorText, Spinner, inputClass } from "../site/ui";
 
 // A new site's setup, in a modal: what the business does, a brief for the website, then the AI's
@@ -57,6 +57,7 @@ type Step =
   | "brief"
   | "analysis"
   | "design"
+  | "photos"
   | "chrome"
   | "review"
   | `q:${string}`;
@@ -251,8 +252,10 @@ export function SetupFlow({
   // The starting design comes first (only when there are kits; servers without them keep the old
   // steps). A kit is a finished design, so it needs only the name and what the business does (the
   // site's description, which its homepage shows): no brief, analysis, questions or review.
+  // The template's own photos can be swapped for the owner's, an optional last step (kit.json → photos).
+  const photoSlots = kits.find((k) => k.id === kit)?.photoSlots ?? [];
   const steps: Step[] = kit
-    ? ["design", ...(askName ? (["name"] as const) : []), "what"]
+    ? ["design", ...(askName ? (["name"] as const) : []), "what", ...(photoSlots.length ? (["photos"] as const) : [])]
     : [
         ...(kits.length ? (["design"] as const) : []),
         ...(askName ? (["name"] as const) : []),
@@ -546,7 +549,7 @@ export function SetupFlow({
       ? Boolean(name.trim())
       : current === "what"
         ? // Optional on a kit's last step: it creates the site, so there's nothing to skip to.
-          Boolean(what.trim()) || (lastKitStep && !finishing)
+          Boolean(what.trim()) || (Boolean(kit) && !finishing)
         : current === "brief"
           ? briefOk(brief)
           : current === "analysis"
@@ -739,6 +742,46 @@ export function SetupFlow({
           <div className="mt-5">
             <KitPicker kits={kits} value={kit} onChange={setKit} />
           </div>
+        </>
+      )}
+
+      {current === "photos" && (
+        <>
+          <h2
+            id="setup-step-title"
+            className="mt-1 text-2xl font-semibold tracking-tight"
+          >
+            Add your own photos{" "}
+            <span className="text-sm font-normal text-zinc-500">Optional</span>
+          </h2>
+          <p className="mt-2 text-sm text-zinc-500">
+            The template comes with sample photos. Add yours and they take their place, in the order
+            you add them. Anything you leave out keeps its sample photo, and you can change any of
+            them later.
+          </p>
+          <div className="mt-5">
+            <PhotosField
+              label={null}
+              photos={photos}
+              onPhotos={setPhotos}
+              onError={setError}
+            />
+          </div>
+          <ol className="mt-4 space-y-1.5 text-sm">
+            {photoSlots.map((slot, i) => (
+              <li key={slot.file} className="flex items-center gap-2">
+                <span
+                  className={`grid size-5 shrink-0 place-items-center rounded-full text-xs font-medium ${photos[i] ? "bg-foreground text-background" : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800"}`}
+                >
+                  {i + 1}
+                </span>
+                <span className={photos[i] ? "" : "text-zinc-500"}>
+                  {slot.label}
+                  {photos[i] ? "" : " (sample photo)"}
+                </span>
+              </li>
+            ))}
+          </ol>
         </>
       )}
 

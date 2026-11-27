@@ -258,7 +258,7 @@ export function Dashboard({ githubLogin, email, access: initialAccess }: { githu
                 <button
                   type="button"
                   onClick={() => setCreating(true)}
-                  className="flex h-full min-h-32 w-full flex-col items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center hover:border-foreground hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
+                  className="flex h-full min-h-32 w-full flex-col items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center hover:border-foreground hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900 cursor-pointer"
                 >
                   <span className="font-medium">+ Create a new site</span>
                   <span className="mt-1 text-xs text-zinc-500">Start another website from the same ready-made design.</span>

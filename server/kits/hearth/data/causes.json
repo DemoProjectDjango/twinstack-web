@@ -1,0 +1,35 @@
+{
+  "_comment": "What the charity raises money for. percent is raised divided by goal, as a whole number (0 to 100).",
+  "items": [
+    {
+      "title": "Weekly food parcels",
+      "summary": "Fresh and store-cupboard food for local families, packed by volunteers and delivered every Saturday.",
+      "raised": "$8,200",
+      "goal": "$12,000",
+      "percent": 68,
+      "sample": true,
+      "image": "/assets/img/kit/hearth/parcels.webp",
+      "imageAlt": "Weekly food parcels"
+    },
+    {
+      "title": "Warm winter meals",
+      "summary": "A hot meal and a warm room three evenings a week from November to March.",
+      "raised": "$3,150",
+      "goal": "$7,500",
+      "percent": 42,
+      "sample": true,
+      "image": "/assets/img/kit/hearth/meals.webp",
+      "imageAlt": "Warm winter meals"
+    },
+    {
+      "title": "School holiday lunches",
+      "summary": "Packed lunches and activities so children don't go hungry when school is out.",
+      "raised": "$4,600",
+      "goal": "$5,000",
+      "percent": 92,
+      "sample": true,
+      "image": "/assets/img/kit/hearth/lunches.webp",
+      "imageAlt": "School holiday lunches"
+    }
+  ]
+}

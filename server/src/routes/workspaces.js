@@ -1230,7 +1230,7 @@ workspacesRouter.post(
     const siteId = await openSiteId(req);
     const { setup, options } = req.body ?? {};
     const has = options && typeof options === "object" ? { hasHome: options.hasHome === true, chrome: options.chrome !== false, fresh: options.fresh === true } : {};
-    const saved = await saveSetup({ key, siteId, body: setup, options: has });
+    const saved = await saveSetup({ key, siteId, userId: req.user.id, body: setup, options: has });
     res.json({ ...saved, status: await getStatus(key) });
   }),
 );

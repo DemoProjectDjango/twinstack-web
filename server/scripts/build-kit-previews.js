@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { withDescription } from "../src/kit-text.js";
+import { copyKitFiles } from "../src/kit-files.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const KITS_DIR = path.resolve(here, "../kits");
@@ -166,10 +167,13 @@ async function buildKit(name) {
     await fs.mkdir(path.join(work, pagesDir), { recursive: true });
     for (const page of kit.pages) {
       const source = await fs.readFile(path.join(kitDir, "pages", page.file), "utf8");
-      await fs.writeFile(path.join(work, pagesDir, page.file), page.url === "/" ? withDescription(source, SAMPLE.description) : source);
+      await fs.writeFile(path.join(work, pagesDir, page.file), page.url === "/" ? withDescription(source, kit.sample?.description ?? SAMPLE.description) : source);
     }
-    Object.assign(config, { name: SAMPLE.name, shortName: SAMPLE.name, description: SAMPLE.description });
-    config.brand = { ...config.brand, logoText: SAMPLE.name };
+    await copyKitFiles({ ...kit, dir: kitDir }, work);
+    // A kit may name its own sample organisation (kit.json → sample: name, description).
+    const sample = { ...SAMPLE, ...(kit.sample ?? {}) };
+    Object.assign(config, { name: sample.name, shortName: sample.name, description: sample.description });
+    config.brand = { ...config.brand, logoText: sample.name };
     config.contact = { ...config.contact, ...SAMPLE.contact };
     await fs.writeFile(configFile, JSON.stringify(config, null, 2));
 
