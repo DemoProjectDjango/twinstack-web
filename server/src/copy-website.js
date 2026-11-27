@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { findChrome, launch, noBrowser } from "./assistant/view-page.js";
 import { FetchRefused, checkUrl, hostIsPublic, safeFetch } from "./safe-fetch.js";
-import { sitePages } from "./navigation.js";
+import { adoptCopiedMenu, sitePages } from "./navigation.js";
 import { createPageAt, readSiteConfig, saveHtmlSource } from "./site-files.js";
 import { WorkspaceError, acquire, workspaceDir } from "./workspace.js";
 import { adoptHeaderLogo } from "./brand.js";
@@ -979,6 +979,8 @@ export async function finishCopiedWebsite(key) {
     }
     // Look & logo shows the copied logo, and a header designed later keeps it.
     await adoptHeaderLogo(dir);
+    // The menu settings hold the copied menus too, for a header and footer designed later.
+    await adoptCopiedMenu(dir);
   } finally {
     release();
   }

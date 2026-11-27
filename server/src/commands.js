@@ -18,6 +18,7 @@ import {
 } from "./site-files.js";
 import { WorkspaceError, clearPreviewStamp, markInstalled, markPreviewBuilt, workspaceDir } from "./workspace.js";
 import { adoptHeaderLogo } from "./brand.js";
+import { adoptCopiedMenu } from "./navigation.js";
 import { SEO_REPORT } from "./seo.js";
 import { MAX_REFERENCES, copyReference, referencePath } from "./assistant/attachments.js";
 import { saveCheckReport } from "./site-check.js";
@@ -403,6 +404,8 @@ export const COMMANDS = {
     // A copied header's logo becomes Look & logo's first, so the new design shows the business's logo.
     prepare: async (key, input) => {
       await adoptHeaderLogo(workspaceDir(key));
+      // And its menus, so the new design links to every page the copied one did.
+      await adoptCopiedMenu(workspaceDir(key));
       if (flag(input, "dryRun")) await clearProposal(key, [HEADER_PARTIAL, FOOTER_PARTIAL]);
     },
   },

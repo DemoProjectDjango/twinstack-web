@@ -407,3 +407,288 @@ export async function saveNavigation(key, next, version) {
   }
   return getNavigation(key);
 }
+
+/* ------------------------------------------------- a copied header and footer's own menus */
+
+// A header and footer copied from a website (data-designed="copied") draw their own menus from their
+// HTML, so navigation.json keeps the template's starter links (Blog, About, Contact us, Privacy,
+// Terms, Sitemap). A header and footer designed later (a redesign) read navigation.json, and showed
+// those instead of the business's menu. So the copied menu, its dropdowns, its button, the footer's
+// columns and its legal links are read into navigation.json: when a copy finishes and before every
+// header and footer design, once per copied header (`copiedMenu` records its data-chrome-id).
+
+const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+const SKIPPED_TAGS = new Set(["script", "style", "template", "svg", "noscript", "select", "textarea"]);
+const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "–", mdash: "—", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", hellip: "…" };
+
+const decode = (text) =>
+  text.replace(/&(#x[\da-f]+|#\d+|[a-z]+);/gi, (whole, code) => {
+    if (code[0] === "#") {
+      const n = code[1].toLowerCase() === "x" ? parseInt(code.slice(2), 16) : Number(code.slice(1));
+      return Number.isFinite(n) && n > 0 && n < 0x110000 ? String.fromCodePoint(n) : " ";
+    }
+    return ENTITIES[code.toLowerCase()] ?? whole;
+  });
+
+/** A small, forgiving HTML tree: `{ tag, attrs, children, parent }` nodes and `{ text }` leaves. */
+export function htmlTree(html) {
+  const root = { tag: "#root", attrs: "", children: [], parent: null };
+  let current = root;
+  const re = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][\w:-]*)((?:\s+[^\s"'>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*))?)*)\s*\/?>|([^<]+)|</g;
+  let m;
+  while ((m = re.exec(html))) {
+    if (m[4] !== undefined) {
+      current.children.push({ text: m[4], parent: current });
+      continue;
+    }
+    if (!m[2]) continue;
+    const tag = m[2].toLowerCase();
+    if (m[1]) {
+      // A closing tag closes up to its element, if it's open; otherwise it's ignored.
+      let node = current;
+      while (node && node.tag !== tag) node = node.parent;
+      if (node && node.parent) current = node.parent;
+      continue;
+    }
+    if (SKIPPED_TAGS.has(tag)) {
+      const end = html.toLowerCase().indexOf(`</${tag}`, re.lastIndex);
+      re.lastIndex = end < 0 ? html.length : end;
+      continue;
+    }
+    // A new list item ends the open one of the same list (HTML lets </li> be left out).
+    if (tag === "li") {
+      let node = current;
+      while (node && node.tag !== "ul" && node.tag !== "ol" && node.tag !== "li") node = node.parent;
+      if (node?.tag === "li") current = node.parent;
+    }
+    const node = { tag, attrs: m[3] || "", children: [], parent: current };
+    current.children.push(node);
+    if (!VOID_TAGS.has(tag) && !m[0].endsWith("/>")) current = node;
+  }
+  return root;
+}
+
+const attrOf = (node, name) => new RegExp(`(?:^|\\s)${name}(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]*)))?(?=\\s|$)`, "i").exec(node.attrs ?? "");
+const attrValue = (node, name) => {
+  const m = attrOf(node, name);
+  return m ? decode(m[1] ?? m[2] ?? m[3] ?? "") : null;
+};
+const hiddenNode = (node) => Boolean(attrOf(node, "hidden")) || attrValue(node, "aria-hidden") === "true";
+
+function walk(node, visit) {
+  for (const child of node.children ?? []) {
+    if (child.tag) {
+      if (visit(child) === false) continue;
+      walk(child, visit);
+    }
+  }
+}
+const find = (node, test) => {
+  const out = [];
+  walk(node, (n) => {
+    if (test(n)) out.push(n);
+  });
+  return out;
+};
+const textOf = (node) => {
+  if (node.text !== undefined) return node.text;
+  if (node.tag && hiddenNode(node)) return "";
+  return (node.children ?? []).map(textOf).join(" ");
+};
+const clean = (text) => decode(text).replace(/\s+/g, " ").trim();
+const within = (node, ancestor) => {
+  for (let n = node.parent; n; n = n.parent) if (n === ancestor) return true;
+  return false;
+};
+const insideTag = (node, tags, stop) => {
+  for (let n = node.parent; n && n !== stop; n = n.parent) if (tags.includes(n.tag)) return true;
+  return false;
+};
+
+/** An anchor as a menu link `{ label, url }`, or null (hidden, no words, or no address). */
+function anchorLink(a) {
+  if (hiddenNode(a)) return null;
+  const label = (clean(textOf(a)) || clean(attrValue(a, "aria-label") ?? attrValue(a, "title") ?? "")).slice(0, 60).trim();
+  const url = (attrValue(a, "href") ?? "").trim();
+  if (!label || !url || /^javascript:/i.test(url)) return null;
+  return { label, url };
+}
+
+// All-capitals labels and headings ("SOLUTIONS BY FEATURE") are the old site's styling, not its words.
+// One word in capitals is a name or acronym (WASH, FAQ) and stays.
+const sentence = (label) => (/[a-z]/.test(label) || !/[A-Z]{2}/.test(label) || !/\s/.test(label.trim()) ? label : label.charAt(0) + label.slice(1).toLowerCase());
+
+/** The copied header's menu: `{ items, cta }`. The main menu is the top-level list with the most entries. */
+export function copiedHeaderMenu(header) {
+  const tree = htmlTree(header);
+  const lists = find(tree, (n) => (n.tag === "ul" || n.tag === "ol") && !insideTag(n, ["ul", "ol"]));
+  const entries = (list) =>
+    list.children.filter((li) => li.tag === "li").map((li) => {
+      const own = find(li, (n) => n.tag === "a" && !insideTag(n, ["ul", "ol"], li))[0];
+      return { li, link: own ? anchorLink(own) : null };
+    }).filter((e) => e.link || find(e.li, (n) => n.tag === "a").length);
+  let menu = null;
+  let best = 1;
+  for (const list of lists) {
+    const count = entries(list).length;
+    if (count > best) {
+      menu = list;
+      best = count;
+    }
+  }
+  const items = [];
+  if (menu) {
+    for (const { li, link } of entries(menu)) {
+      const children = [];
+      const seen = new Set();
+      for (const a of find(li, (n) => n.tag === "a" && insideTag(n, ["ul", "ol"], li))) {
+        const child = anchorLink(a);
+        if (!child || child.url.startsWith("#") || seen.has(child.url + child.label)) continue;
+        if (link && child.url === link.url && child.label === link.label) continue;
+        seen.add(child.url + child.label);
+        children.push({ label: sentence(child.label), url: child.url });
+      }
+      const label = link?.label ?? clean(textOf(li)).slice(0, 60);
+      if (!label) continue;
+      const url = link && !link.url.startsWith("#") ? link.url : undefined;
+      if (!url && !children.length) continue;
+      items.push({ label: sentence(label), ...(url ? { url } : {}), ...(children.length ? { children: children.slice(0, LIMITS.children) } : {}) });
+    }
+  }
+  // The button: a link outside every list (the logo, a search box and the phone menu are in lists or
+  // have no words), preferring one styled as a button.
+  const loose = find(tree, (n) => n.tag === "a" && !insideTag(n, ["ul", "ol", "nav"]) && !(menu && within(n, menu)))
+    .map((a) => ({ a, link: anchorLink(a) }))
+    .filter(({ link }) => link && link.label.length <= 40 && !/^(\/|#.*|\/index\.html)$/.test(link.url));
+  const pick = loose.find(({ a }) => /btn|button|cta/i.test(attrValue(a, "class") ?? "")) ?? loose.at(-1);
+  return { items: items.slice(0, LIMITS.items), cta: pick ? { label: sentence(pick.link.label), url: pick.link.url } : null };
+}
+
+/** The nearest short text before `node` (a heading), looking at earlier siblings, then going up. */
+function headingBefore(node, levels = 4) {
+  for (let at = node, depth = 0; at.parent && depth <= levels; at = at.parent, depth++) {
+    const siblings = at.parent.children;
+    for (let i = siblings.indexOf(at) - 1; i >= 0; i--) {
+      const sibling = siblings[i];
+      if (sibling.tag && find(sibling, (c) => c.tag === "a" && !String(attrValue(c, "href") ?? "").startsWith("#")).length) return "";
+      const words = clean(textOf(sibling));
+      if (words.length <= 40 && (words.match(/\p{L}/gu) ?? []).length >= 3) return words;
+      if (words.length > 40) return "";
+    }
+  }
+  return "";
+}
+
+/** The copied footer's link columns `[{ title, links }]` and legal links. */
+export function copiedFooterMenu(footer) {
+  const tree = htmlTree(footer);
+  // Links are grouped by what holds them: their list, or the box they sit in side by side.
+  const groups = new Map();
+  for (const a of find(tree, (n) => n.tag === "a")) {
+    const link = anchorLink(a);
+    // Phone numbers and email addresses are the site's contact details (Business info), not menu links.
+    if (!link || link.url.startsWith("#") || /^(tel|mailto|sms):/i.test(link.url)) continue;
+    let holder = a.parent;
+    if (holder.tag === "li") holder = holder.parent;
+    else if (holder.parent && holder.children.filter((c) => c.tag).length === 1 && !["ul", "ol", "nav"].includes(holder.tag)) {
+      // A link wrapped on its own (<p><a></p>, <div><a></div>) sits in the box around that wrapper.
+      const box = holder.parent;
+      if (box.children.filter((c) => c.tag).length > 1) holder = box;
+    }
+    if (!groups.has(holder)) groups.set(holder, []);
+    groups.get(holder).push({ a, link });
+  }
+  const columns = [];
+  const seen = new Set();
+  const inColumns = new Set();
+  for (const [holder, members] of groups) {
+    if (members.length < 2) continue;
+    const first = members[0].a;
+    const start = ["ul", "ol"].includes(holder.tag) ? holder : first.parent === holder ? first : first.parent;
+    const title = headingBefore(start);
+    const key = members.map((m) => m.link.url).join(" ");
+    if (!title || seen.has(key)) continue;
+    seen.add(key);
+    for (const m of members) inColumns.add(m.link.url);
+    columns.push({ title: sentence(title), links: members.slice(0, LIMITS.links).map(({ link }) => ({ label: sentence(link.label), url: link.url })) });
+  }
+  const legal = [];
+  const legalSeen = new Set();
+  for (const a of find(tree, (n) => n.tag === "a")) {
+    const link = anchorLink(a);
+    if (!link || legalSeen.has(link.url) || inColumns.has(link.url)) continue;
+    if (!/privacy|terms|cookie|legal|imprint|accessibility|disclaimer/i.test(`${link.label} ${link.url}`)) continue;
+    legalSeen.add(link.url);
+    legal.push({ label: sentence(link.label), url: link.url });
+  }
+  return { columns: columns.slice(0, LIMITS.columns), legal: legal.slice(0, LIMITS.legal) };
+}
+
+/**
+ * Writes the copied header and footer's menus into navigation.json (see above). For a caller holding
+ * the workspace's lock. Returns what it wrote (`{ items, cta, footer, legal }`), or null when there was
+ * nothing to do. Never throws.
+ */
+export async function adoptCopiedMenu(dir) {
+  try {
+    const header = (await readText(path.join(dir, "templates/partials/header.html"))) ?? "";
+    const footer = (await readText(path.join(dir, "templates/partials/footer.html"))) ?? "";
+    const strip = (html) => html.replace(/<template\b[\s\S]*?<\/template\s*>/gi, "");
+    const headerCopied = header.includes(COPIED_MARK);
+    const footerCopied = footer.includes(COPIED_MARK);
+    if (!headerCopied && !footerCopied) return null;
+    const id = /data-chrome-id\s*=\s*["']([^"']+)["']/.exec(headerCopied ? header : footer)?.[1] ?? "copied";
+    const { text: current, data } = await readJsonFile(dir, NAV_FILE, {});
+    if (data.copiedMenu === id) return null;
+    const { data: site } = await readJsonFile(dir, "site.config.json");
+    const collections = new Set(Object.keys(site.collections ?? {}));
+    const keep = (list, check) =>
+      list.flatMap((item, i) => {
+        try {
+          return [check(item, i)];
+        } catch {
+          return [];
+        }
+      });
+
+    const next = { ...data };
+    const wrote = {};
+    if (headerCopied) {
+      const menu = copiedHeaderMenu(strip(header));
+      if (menu.items.length) {
+        const items = keep(menu.items, (item, i) => headerItem(item, `Header item ${i + 1}`, collections));
+        let cta = null;
+        try {
+          cta = button(menu.cta);
+        } catch {
+          cta = null;
+        }
+        next.header = { ...(isObject(data.header) ? data.header : {}), items, cta };
+        Object.assign(wrote, { items, cta });
+      }
+    }
+    if (footerCopied) {
+      const menu = copiedFooterMenu(strip(footer));
+      // The template's starter legal links (Privacy, Terms, Sitemap) aren't the business's.
+      const legal = keep(menu.legal, (item, i) => plainLink(item, `Legal link ${i + 1}`));
+      next.legal = legal;
+      wrote.legal = legal;
+      if (menu.columns.length) {
+        const columns = keep(menu.columns, (column, i) => footerColumn(column, `Footer column ${i + 1}`, collections));
+        next.footer = columns;
+        wrote.footer = columns;
+      }
+    }
+    if (!Object.keys(wrote).length) return null;
+    next.copiedMenu = id;
+    const newline = current?.includes("\r\n") ? "\r\n" : "\n";
+    const output = `${JSON.stringify(next, null, 2)}\n`.replace(/\n/g, newline);
+    if (Buffer.byteLength(output) > MAX_BYTES) return null;
+    const file = path.join(dir, NAV_FILE);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, output);
+    return wrote;
+  } catch {
+    return null;
+  }
+}
